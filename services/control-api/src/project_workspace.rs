@@ -146,8 +146,6 @@ pub struct UpdateMilestoneStatusRequest {
 pub enum ProjectWorkspaceError {
     #[error("resource not found")]
     NotFound,
-    #[error("permission denied")]
-    PermissionDenied,
     #[error("invalid request")]
     Invalid,
     #[error(transparent)]
@@ -957,11 +955,6 @@ fn map_workspace(error: ProjectWorkspaceError) -> ApiError {
             StatusCode::NOT_FOUND,
             "PROJECT_NOT_FOUND",
             "project workspace resource not found",
-        ),
-        ProjectWorkspaceError::PermissionDenied => api_error(
-            StatusCode::FORBIDDEN,
-            "PERMISSION_DENIED",
-            "operation not permitted",
         ),
         ProjectWorkspaceError::Invalid => api_error(
             StatusCode::BAD_REQUEST,

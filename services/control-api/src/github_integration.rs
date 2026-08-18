@@ -3,7 +3,7 @@ use axum::{
     Json, Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    routing::{delete, get, post},
+    routing::{get, post},
 };
 use chrono::{DateTime, Utc};
 use reqwest::{Client, Url};
@@ -64,14 +64,14 @@ pub struct LinkRepositoryRequest {
 }
 
 #[derive(Debug, Clone)]
-struct SyncedRepository {
+pub(crate) struct SyncedRepository {
     html_url: String,
     default_branch: String,
     visibility: String,
     snapshot: RepositorySnapshot,
 }
 
-pub trait RepositoryProvider {
+pub(crate) trait RepositoryProvider {
     async fn fetch_repository(
         &self,
         owner: &str,
