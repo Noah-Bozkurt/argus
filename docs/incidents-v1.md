@@ -24,7 +24,7 @@ Incident creation stores:
 - graph distance;
 - full impact path.
 
-These values are copied into incident-owned tables. Later changes to Services, Sites, Domains or dependency edges therefore do not rewrite historical Incident impact.
+These values are copied into incident-owned tables. Later changes to Services, Sites, Domains or dependency edges therefore do not rewrite historical Incident impact. The graph is evaluated once for the create request and the resulting snapshot becomes incident-owned history.
 
 This is intentionally different from showing the current graph every time an old Incident is opened.
 
