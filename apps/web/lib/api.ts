@@ -18,6 +18,10 @@ export type SystemSnapshot = {
     listening_tcp_ports: number[]
     journals: Array<{ service: string; output: string }>
   }
+  docker: {
+    available: boolean
+    containers: Array<{ id: string; name: string; image: string; state: string; status: string; ports: string }>
+  }
   captured_at: string
 }
 
@@ -36,7 +40,7 @@ export type CommandHistoryItem = {
   command: {
     id: string
     server_id: string
-    command_type: { kind: string; service?: string }
+    command_type: { kind: string; service?: string; container?: string }
     created_at: string
     expires_at: string
     status: string
@@ -62,6 +66,7 @@ export type MaintenanceWindow = {
 }
 
 export type ServiceAction = 'start' | 'stop' | 'restart'
+export type ContainerAction = 'start' | 'stop' | 'restart'
 export type ServerOperation = 'packages.refresh' | 'packages.upgrade.security' | 'packages.upgrade.all' | 'system.reboot'
 
 const controlApi = process.env.ARGUS_CONTROL_API_URL ?? 'http://localhost:8080'
@@ -85,6 +90,10 @@ export const getMaintenanceHistory = (serverId: string): Promise<MaintenanceWind
 
 export async function serviceAction(serverId: string, service: string, action: ServiceAction): Promise<void> {
   await queue(serverId, { kind: `service.${action}`, service }, action === 'stop' ? 'HIGH' : 'MEDIUM', 60)
+}
+
+export async function containerAction(serverId: string, container: string, action: ContainerAction): Promise<void> {
+  await queue(serverId, { kind: `docker.${action}`, container }, action === 'stop' ? 'HIGH' : 'MEDIUM', 120)
 }
 
 export async function serverOperation(serverId: string, operation: ServerOperation): Promise<void> {
