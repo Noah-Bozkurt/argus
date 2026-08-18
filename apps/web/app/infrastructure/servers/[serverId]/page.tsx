@@ -1,5 +1,5 @@
 import { getCommandHistory, getMaintenanceHistory, getServer } from '../../../../lib/api'
-import { actOnServer, actOnService, beginMaintenance, finishMaintenance } from './actions'
+import { actOnContainer, actOnServer, actOnService, beginMaintenance, finishMaintenance } from './actions'
 
 export default async function ServerPage({ params }: { params: { serverId: string } }) {
   const [server, commands, maintenance] = await Promise.all([
@@ -28,17 +28,11 @@ export default async function ServerPage({ params }: { params: { serverId: strin
       <p>Uptime: {snapshot ? `${snapshot.uptime_seconds}s` : '—'}</p>
 
       <h2>Diagnostics</h2>
-      <p>
-        Failed systemd units: {snapshot?.diagnostics.failed_units.length ?? 0}
-      </p>
+      <p>Failed systemd units: {snapshot?.diagnostics.failed_units.length ?? 0}</p>
       {snapshot?.diagnostics.failed_units.length ? (
-        <ul>
-          {snapshot.diagnostics.failed_units.map((unit) => <li key={unit}>{unit}</li>)}
-        </ul>
+        <ul>{snapshot.diagnostics.failed_units.map((unit) => <li key={unit}>{unit}</li>)}</ul>
       ) : null}
-      <p>
-        Listening TCP ports: {snapshot?.diagnostics.listening_tcp_ports.join(', ') || 'none detected'}
-      </p>
+      <p>Listening TCP ports: {snapshot?.diagnostics.listening_tcp_ports.join(', ') || 'none detected'}</p>
 
       <h3>Recent service logs</h3>
       {snapshot?.diagnostics.journals.length ? snapshot.diagnostics.journals.map((journal) => (
@@ -48,45 +42,52 @@ export default async function ServerPage({ params }: { params: { serverId: strin
         </section>
       )) : <p>No journal snapshots available.</p>}
 
+      <h2>Containers</h2>
+      {!snapshot?.docker.available ? <p>Docker is unavailable on this server.</p> : null}
+      {snapshot?.docker.available && snapshot.docker.containers.length === 0 ? <p>No containers found.</p> : null}
+      {snapshot?.docker.containers.map((container) => (
+        <section key={container.id}>
+          <h3>{container.name}</h3>
+          <p>{container.image}</p>
+          <p>{container.state} — {container.status}</p>
+          <p>Ports: {container.ports || 'none'}</p>
+          {container.state === 'running' ? (
+            <form action={async () => { 'use server'; await actOnContainer(server.server_id, container.id, 'stop') }}>
+              <button type="submit">Stop</button>
+            </form>
+          ) : (
+            <form action={async () => { 'use server'; await actOnContainer(server.server_id, container.id, 'start') }}>
+              <button type="submit">Start</button>
+            </form>
+          )}
+          <form action={async () => { 'use server'; await actOnContainer(server.server_id, container.id, 'restart') }}>
+            <button type="submit">Restart</button>
+          </form>
+        </section>
+      ))}
+
       <h2>Maintenance</h2>
       {activeMaintenance ? (
         <>
           <p>ACTIVE until {activeMaintenance.ends_at} — {activeMaintenance.reason}</p>
-          <form action={async () => { 'use server'; await finishMaintenance(server.server_id) }}>
-            <button type="submit">End maintenance</button>
-          </form>
+          <form action={async () => { 'use server'; await finishMaintenance(server.server_id) }}><button type="submit">End maintenance</button></form>
         </>
       ) : (
         <>
           <p>No active maintenance window.</p>
-          <form action={async () => { 'use server'; await beginMaintenance(server.server_id, 30, 'Manual server maintenance') }}>
-            <button type="submit">Start 30 minute maintenance</button>
-          </form>
-          <form action={async () => { 'use server'; await beginMaintenance(server.server_id, 60, 'Manual server maintenance') }}>
-            <button type="submit">Start 60 minute maintenance</button>
-          </form>
+          <form action={async () => { 'use server'; await beginMaintenance(server.server_id, 30, 'Manual server maintenance') }}><button type="submit">Start 30 minute maintenance</button></form>
+          <form action={async () => { 'use server'; await beginMaintenance(server.server_id, 60, 'Manual server maintenance') }}><button type="submit">Start 60 minute maintenance</button></form>
         </>
       )}
 
       <h2>Updates</h2>
       {snapshot?.updates.supported ? (
-        <>
-          <p>Pending package updates: {snapshot.updates.pending_updates}</p>
-          <p>Reboot required: {snapshot.updates.reboot_required ? 'YES' : 'NO'}</p>
-        </>
+        <><p>Pending package updates: {snapshot.updates.pending_updates}</p><p>Reboot required: {snapshot.updates.reboot_required ? 'YES' : 'NO'}</p></>
       ) : <p>APT update inventory unavailable on this server.</p>}
-      <form action={async () => { 'use server'; await actOnServer(server.server_id, 'packages.refresh') }}>
-        <button type="submit">Check for updates</button>
-      </form>
-      <form action={async () => { 'use server'; await actOnServer(server.server_id, 'packages.upgrade.security') }}>
-        <button type="submit" disabled={!activeMaintenance}>Install security updates</button>
-      </form>
-      <form action={async () => { 'use server'; await actOnServer(server.server_id, 'packages.upgrade.all') }}>
-        <button type="submit" disabled={!activeMaintenance}>Install all updates</button>
-      </form>
-      <form action={async () => { 'use server'; await actOnServer(server.server_id, 'system.reboot') }}>
-        <button type="submit" disabled={!activeMaintenance}>Reboot server</button>
-      </form>
+      <form action={async () => { 'use server'; await actOnServer(server.server_id, 'packages.refresh') }}><button type="submit">Check for updates</button></form>
+      <form action={async () => { 'use server'; await actOnServer(server.server_id, 'packages.upgrade.security') }}><button type="submit" disabled={!activeMaintenance}>Install security updates</button></form>
+      <form action={async () => { 'use server'; await actOnServer(server.server_id, 'packages.upgrade.all') }}><button type="submit" disabled={!activeMaintenance}>Install all updates</button></form>
+      <form action={async () => { 'use server'; await actOnServer(server.server_id, 'system.reboot') }}><button type="submit" disabled={!activeMaintenance}>Reboot server</button></form>
       {!activeMaintenance && <p>Package upgrades and reboot require an active maintenance window.</p>}
 
       <h2>Services</h2>
@@ -108,18 +109,14 @@ export default async function ServerPage({ params }: { params: { serverId: strin
       <ul>
         {commands.map((item) => (
           <li key={item.command.id}>
-            {item.command.command_type.kind} {item.command.command_type.service ?? ''} — {item.command.status}
+            {item.command.command_type.kind} {item.command.command_type.service ?? item.command.command_type.container ?? ''} — {item.command.status}
             {item.error_code ? ` (${item.error_code}: ${item.error_message ?? ''})` : ''}
           </li>
         ))}
       </ul>
 
       <h2>Maintenance history</h2>
-      <ul>
-        {maintenance.slice(0, 10).map((window) => (
-          <li key={window.id}>{window.starts_at} → {window.ended_at ?? window.ends_at}: {window.reason}</li>
-        ))}
-      </ul>
+      <ul>{maintenance.slice(0, 10).map((window) => <li key={window.id}>{window.starts_at} → {window.ended_at ?? window.ends_at}: {window.reason}</li>)}</ul>
     </main>
   )
 }

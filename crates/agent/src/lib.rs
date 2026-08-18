@@ -20,7 +20,6 @@ pub struct AgentConfig {
     pub helper_socket: PathBuf,
     pub managed_services: Vec<String>,
 }
-
 impl AgentConfig {
     pub async fn load(path: &Path) -> anyhow::Result<Self> {
         Ok(serde_json::from_slice(&tokio::fs::read(path).await?)?)
@@ -94,6 +93,33 @@ impl HelperClient {
             })
             .await?
             .unwrap_or_default())
+    }
+    pub async fn docker_list(&self) -> Result<String, OperationError> {
+        Ok(self
+            .request(HelperRequest::DockerList)
+            .await?
+            .unwrap_or_default())
+    }
+    pub async fn docker_start(&self, container: &str) -> Result<(), OperationError> {
+        self.request(HelperRequest::DockerStart {
+            container: container.into(),
+        })
+        .await
+        .map(|_| ())
+    }
+    pub async fn docker_stop(&self, container: &str) -> Result<(), OperationError> {
+        self.request(HelperRequest::DockerStop {
+            container: container.into(),
+        })
+        .await
+        .map(|_| ())
+    }
+    pub async fn docker_restart(&self, container: &str) -> Result<(), OperationError> {
+        self.request(HelperRequest::DockerRestart {
+            container: container.into(),
+        })
+        .await
+        .map(|_| ())
     }
 
     async fn request(&self, request: HelperRequest) -> Result<Option<String>, OperationError> {
@@ -169,7 +195,6 @@ impl AgentRuntime {
                 &format!("missing capability {}.{}", required.name, required.version),
             );
         }
-
         let result: Result<Option<String>, OperationError> = match &command.command_type {
             protocol::CommandType::ServiceRestart { service } => {
                 self.helper.restart_service(service).await.map(|_| None)
@@ -199,8 +224,16 @@ impl AgentRuntime {
             protocol::CommandType::LogsJournal { service, lines } => {
                 self.helper.journal(service, *lines).await.map(Some)
             }
+            protocol::CommandType::DockerStart { container } => {
+                self.helper.docker_start(container).await.map(|_| None)
+            }
+            protocol::CommandType::DockerStop { container } => {
+                self.helper.docker_stop(container).await.map(|_| None)
+            }
+            protocol::CommandType::DockerRestart { container } => {
+                self.helper.docker_restart(container).await.map(|_| None)
+            }
         };
-
         match result {
             Ok(output) => CommandResult {
                 command_id: command.id,

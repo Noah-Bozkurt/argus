@@ -1,8 +1,8 @@
 use agent::{AgentConfig, AgentRuntime, HelperClient};
 use anyhow::{Context, Result};
 use protocol::{
-    AgentHandshake, Capability, Command, DiagnosticsState, EnrollmentRequest, EnrollmentResponse,
-    HeartbeatRequest, PROTOCOL_VERSION, ServiceJournal,
+    AgentHandshake, Capability, Command, DiagnosticsState, DockerContainer, DockerState,
+    EnrollmentRequest, EnrollmentResponse, HeartbeatRequest, PROTOCOL_VERSION, ServiceJournal,
 };
 use reqwest::{Client, StatusCode};
 use std::{
@@ -15,31 +15,24 @@ use uuid::Uuid;
 
 const UPDATE_INVENTORY_INTERVAL: Duration = Duration::from_secs(300);
 const DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(60);
+const DOCKER_INVENTORY_INTERVAL: Duration = Duration::from_secs(30);
 const JOURNAL_LINES: u32 = 50;
 
 fn capabilities() -> Vec<Capability> {
-    vec![
-        Capability {
-            name: "systemd".into(),
-            version: "v1".into(),
-        },
-        Capability {
-            name: "system.metrics".into(),
-            version: "v1".into(),
-        },
-        Capability {
-            name: "apt".into(),
-            version: "v1".into(),
-        },
-        Capability {
-            name: "system.reboot".into(),
-            version: "v1".into(),
-        },
-        Capability {
-            name: "logs.journal".into(),
-            version: "v1".into(),
-        },
+    [
+        "systemd",
+        "system.metrics",
+        "apt",
+        "system.reboot",
+        "logs.journal",
+        "docker",
     ]
+    .into_iter()
+    .map(|name| Capability {
+        name: name.into(),
+        version: "v1".into(),
+    })
+    .collect()
 }
 fn config_path() -> PathBuf {
     std::env::var_os("ARGUS_AGENT_CONFIG")
@@ -114,16 +107,55 @@ async fn collect_diagnostics(runtime: &AgentRuntime, services: &[String]) -> Dia
     diagnostics
 }
 
+async fn collect_docker(runtime: &AgentRuntime) -> DockerState {
+    let Ok(output) = runtime.helper.docker_list().await else {
+        return DockerState::default();
+    };
+    let containers = output
+        .lines()
+        .filter_map(|line| {
+            let value: serde_json::Value = serde_json::from_str(line).ok()?;
+            Some(DockerContainer {
+                id: value.get("ID")?.as_str()?.to_string(),
+                name: value.get("Names")?.as_str()?.to_string(),
+                image: value.get("Image")?.as_str()?.to_string(),
+                state: value
+                    .get("State")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string(),
+                status: value
+                    .get("Status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string(),
+                ports: value
+                    .get("Ports")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            })
+        })
+        .take(500)
+        .collect();
+    DockerState {
+        available: true,
+        containers,
+    }
+}
+
 async fn heartbeat(
     client: &Client,
     config: &AgentConfig,
     updates: &protocol::UpdateState,
     diagnostics: &DiagnosticsState,
+    docker: &DockerState,
 ) -> Result<()> {
     let mut snapshot =
         system::collect_snapshot(config.server_id, env!("CARGO_PKG_VERSION").to_string());
     snapshot.updates = updates.clone();
     snapshot.diagnostics = diagnostics.clone();
+    snapshot.docker = docker.clone();
     let services = system::service_statuses(&config.managed_services)?;
     client
         .post(format!("{}/agent/heartbeat", config.control_plane_url))
@@ -193,8 +225,10 @@ async fn main() -> Result<()> {
     let mut backoff = 1_u64;
     let mut updates = system::update_state();
     let mut diagnostics = collect_diagnostics(&runtime, &config.managed_services).await;
+    let mut docker = collect_docker(&runtime).await;
     let mut next_update_inventory = Instant::now() + UPDATE_INVENTORY_INTERVAL;
     let mut next_diagnostics = Instant::now() + DIAGNOSTICS_INTERVAL;
+    let mut next_docker_inventory = Instant::now() + DOCKER_INVENTORY_INTERVAL;
     info!(server_id=%config.server_id, agent_id=%config.agent_id, "argus agent started");
     loop {
         if Instant::now() >= next_update_inventory {
@@ -205,8 +239,12 @@ async fn main() -> Result<()> {
             diagnostics = collect_diagnostics(&runtime, &config.managed_services).await;
             next_diagnostics = Instant::now() + DIAGNOSTICS_INTERVAL;
         }
+        if Instant::now() >= next_docker_inventory {
+            docker = collect_docker(&runtime).await;
+            next_docker_inventory = Instant::now() + DOCKER_INVENTORY_INTERVAL;
+        }
         let cycle = async {
-            heartbeat(&client, &config, &updates, &diagnostics).await?;
+            heartbeat(&client, &config, &updates, &diagnostics, &docker).await?;
             if let Some(command) = next_command(&client, &config).await? {
                 let command_id = command.id;
                 let result = runtime.execute_command(&command).await;
@@ -214,18 +252,11 @@ async fn main() -> Result<()> {
                     warn!(%command_id, %error, "command executed but result submission failed; control plane will reconcile as unknown");
                     return Err(error);
                 }
-                if matches!(
-                    command.command_type,
-                    protocol::CommandType::PackagesRefresh
-                        | protocol::CommandType::PackagesUpgradeSecurity
-                        | protocol::CommandType::PackagesUpgradeAll
-                ) {
-                    updates = system::update_state();
-                }
+                if matches!(command.command_type, protocol::CommandType::PackagesRefresh | protocol::CommandType::PackagesUpgradeSecurity | protocol::CommandType::PackagesUpgradeAll) { updates = system::update_state(); }
+                if matches!(command.command_type, protocol::CommandType::DockerStart { .. } | protocol::CommandType::DockerStop { .. } | protocol::CommandType::DockerRestart { .. }) { docker = collect_docker(&runtime).await; }
             }
             Result::<()>::Ok(())
-        }
-        .await;
+        }.await;
         match cycle {
             Ok(()) => {
                 backoff = 1;

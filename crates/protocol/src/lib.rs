@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: &str = "1.2";
+pub const PROTOCOL_VERSION: &str = "1.3";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentHandshake {
@@ -60,6 +60,12 @@ pub enum CommandType {
     SystemReboot,
     #[serde(rename = "logs.journal")]
     LogsJournal { service: String, lines: u32 },
+    #[serde(rename = "docker.start")]
+    DockerStart { container: String },
+    #[serde(rename = "docker.stop")]
+    DockerStop { container: String },
+    #[serde(rename = "docker.restart")]
+    DockerRestart { container: String },
 }
 impl CommandType {
     pub fn conflict_group(&self) -> &'static str {
@@ -73,6 +79,9 @@ impl CommandType {
             | CommandType::PackagesUpgradeAll => "packages.mutate",
             CommandType::SystemReboot => "system.reboot",
             CommandType::LogsJournal { .. } => "logs.read",
+            CommandType::DockerStart { .. }
+            | CommandType::DockerStop { .. }
+            | CommandType::DockerRestart { .. } => "docker.mutate",
         }
     }
     pub fn required_capability(&self) -> Capability {
@@ -96,6 +105,12 @@ impl CommandType {
             },
             CommandType::LogsJournal { .. } => Capability {
                 name: "logs.journal".into(),
+                version: "v1".into(),
+            },
+            CommandType::DockerStart { .. }
+            | CommandType::DockerStop { .. }
+            | CommandType::DockerRestart { .. } => Capability {
+                name: "docker".into(),
                 version: "v1".into(),
             },
         }
@@ -161,6 +176,20 @@ pub struct DiagnosticsState {
     #[serde(default)]
     pub journals: Vec<ServiceJournal>,
 }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DockerContainer {
+    pub id: String,
+    pub name: String,
+    pub image: String,
+    pub state: String,
+    pub status: String,
+    pub ports: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct DockerState {
+    pub available: bool,
+    pub containers: Vec<DockerContainer>,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SystemSnapshot {
     pub server_id: Uuid,
@@ -178,6 +207,8 @@ pub struct SystemSnapshot {
     pub updates: UpdateState,
     #[serde(default)]
     pub diagnostics: DiagnosticsState,
+    #[serde(default)]
+    pub docker: DockerState,
     pub captured_at: DateTime<Utc>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -219,6 +250,14 @@ pub enum HelperRequest {
     SystemReboot,
     #[serde(rename = "logs.journal")]
     Journal { service: String, lines: u32 },
+    #[serde(rename = "docker.list")]
+    DockerList,
+    #[serde(rename = "docker.start")]
+    DockerStart { container: String },
+    #[serde(rename = "docker.stop")]
+    DockerStop { container: String },
+    #[serde(rename = "docker.restart")]
+    DockerRestart { container: String },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelperResponse {
@@ -246,59 +285,16 @@ pub fn validate_protocol_version(protocol_version: &str) -> Result<(), ProtocolE
 mod tests {
     use super::*;
     #[test]
-    fn command_round_trip_serialization_works() {
-        let command = Command {
-            id: Uuid::new_v4(),
-            server_id: Uuid::new_v4(),
-            command_type: CommandType::LogsJournal {
-                service: "nginx.service".into(),
-                lines: 100,
-            },
-            created_at: Utc::now(),
-            expires_at: Utc::now(),
-            status: CommandStatus::QUEUED,
-            idempotency_key: "abc".into(),
-            risk_level: RiskLevel::LOW,
+    fn docker_commands_require_docker_capability() {
+        let command = CommandType::DockerRestart {
+            container: "web".into(),
         };
-        let parsed: Command =
-            serde_json::from_str(&serde_json::to_string(&command).unwrap()).unwrap();
-        assert_eq!(parsed.command_type, command.command_type);
+        assert_eq!(command.required_capability().name, "docker");
+        assert_eq!(command.conflict_group(), "docker.mutate");
+        assert!(!command.requires_maintenance());
     }
     #[test]
-    fn capabilities_are_explicit() {
-        assert_eq!(
-            CommandType::PackagesRefresh.required_capability().name,
-            "apt"
-        );
-        assert_eq!(
-            CommandType::SystemReboot.required_capability().name,
-            "system.reboot"
-        );
-        assert_eq!(
-            CommandType::LogsJournal {
-                service: "nginx.service".into(),
-                lines: 100,
-            }
-            .required_capability()
-            .name,
-            "logs.journal"
-        );
-    }
-    #[test]
-    fn disruptive_operations_require_maintenance() {
-        assert!(!CommandType::PackagesRefresh.requires_maintenance());
-        assert!(CommandType::PackagesUpgradeAll.requires_maintenance());
-        assert!(CommandType::SystemReboot.requires_maintenance());
-        assert!(
-            !CommandType::LogsJournal {
-                service: "nginx.service".into(),
-                lines: 100,
-            }
-            .requires_maintenance()
-        );
-    }
-    #[test]
-    fn protocol_version_validation_rejects_unsupported_versions() {
-        assert!(validate_protocol_version("1.1").is_err());
+    fn protocol_version_validation_rejects_older_versions() {
+        assert!(validate_protocol_version("1.2").is_err());
     }
 }

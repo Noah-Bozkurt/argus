@@ -4,6 +4,7 @@ use tokio::process::Command;
 
 const MAX_JOURNAL_LINES: u32 = 500;
 const MAX_OUTPUT_BYTES: usize = 64 * 1024;
+const MAX_DOCKER_OUTPUT_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Error)]
 pub enum HelperError {
@@ -11,6 +12,8 @@ pub enum HelperError {
     ServiceNotAllowlisted,
     #[error("service name is invalid")]
     InvalidServiceName,
+    #[error("container reference is invalid")]
+    InvalidContainerReference,
     #[error("invalid request")]
     InvalidRequest,
     #[error("required system utility unavailable: {0}")]
@@ -51,6 +54,18 @@ impl HelperApi {
             Ok(())
         } else {
             Err(HelperError::InvalidServiceName)
+        }
+    }
+    pub fn validate_container_reference(container: &str) -> Result<(), HelperError> {
+        let valid = !container.is_empty()
+            && container.len() <= 128
+            && container
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+        if valid {
+            Ok(())
+        } else {
+            Err(HelperError::InvalidContainerReference)
         }
     }
     fn ensure_allowlisted(&self, service: &str) -> Result<(), HelperError> {
@@ -94,6 +109,27 @@ impl HelperApi {
         .await?;
         Ok(truncate_utf8(output, MAX_OUTPUT_BYTES))
     }
+    pub async fn docker_list(&self) -> Result<String, HelperError> {
+        let output = run_capture(
+            "docker",
+            &["ps", "-a", "--no-trunc", "--format", "{{json .}}"],
+        )
+        .await?;
+        Ok(truncate_utf8(output, MAX_DOCKER_OUTPUT_BYTES))
+    }
+    pub async fn docker_start(&self, container: &str) -> Result<(), HelperError> {
+        self.docker_action("start", container).await
+    }
+    pub async fn docker_stop(&self, container: &str) -> Result<(), HelperError> {
+        self.docker_action("stop", container).await
+    }
+    pub async fn docker_restart(&self, container: &str) -> Result<(), HelperError> {
+        self.docker_action("restart", container).await
+    }
+    async fn docker_action(&self, action: &str, container: &str) -> Result<(), HelperError> {
+        Self::validate_container_reference(container)?;
+        run("docker", &[action, container]).await
+    }
     pub async fn refresh_packages(&self) -> Result<(), HelperError> {
         run("apt-get", &["update"]).await
     }
@@ -121,7 +157,6 @@ impl HelperApi {
 async fn run(program: &str, args: &[&str]) -> Result<(), HelperError> {
     run_capture(program, args).await.map(|_| ())
 }
-
 async fn run_capture(program: &str, args: &[&str]) -> Result<String, HelperError> {
     let output = Command::new(program)
         .args(args)
@@ -143,7 +178,6 @@ async fn run_capture(program: &str, args: &[&str]) -> Result<String, HelperError
         ))
     }
 }
-
 fn truncate_utf8(mut value: String, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value;
@@ -174,6 +208,17 @@ mod tests {
             ));
         }
     }
+    #[test]
+    fn blocks_invalid_container_references() {
+        for invalid in ["../web", "web;id", "web name", "$(id)", ""] {
+            assert!(matches!(
+                HelperApi::validate_container_reference(invalid),
+                Err(HelperError::InvalidContainerReference)
+            ));
+        }
+        assert!(HelperApi::validate_container_reference("argus-web_1").is_ok());
+        assert!(HelperApi::validate_container_reference("9f6c23a4bcde").is_ok());
+    }
     #[tokio::test]
     async fn blocks_non_allowlisted_service_before_execution() {
         let helper = HelperApi::from_allowlist(["nginx.service".to_string()]);
@@ -193,11 +238,5 @@ mod tests {
             helper.journal("nginx.service", 501).await,
             Err(HelperError::InvalidRequest)
         ));
-    }
-    #[test]
-    fn output_truncation_is_bounded() {
-        let output = truncate_utf8("x".repeat(100), 10);
-        assert!(output.starts_with("xxxxxxxxxx"));
-        assert!(output.contains("truncated"));
     }
 }

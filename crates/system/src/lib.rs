@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::Utc;
-use protocol::{DiagnosticsState, ServiceState, SystemSnapshot, UpdateState};
+use protocol::{DiagnosticsState, DockerState, ServiceState, SystemSnapshot, UpdateState};
 use std::{collections::BTreeSet, path::Path, process::Command};
 use sysinfo::{Disks, System};
 use uuid::Uuid;
@@ -12,14 +12,12 @@ pub fn current_uptime_seconds() -> u64 {
 pub fn collect_snapshot(server_id: Uuid, agent_version: String) -> SystemSnapshot {
     let mut system = System::new_all();
     system.refresh_all();
-
     let cpu_percent = system.global_cpu_usage();
     let ram_percent = if system.total_memory() > 0 {
         (system.used_memory() as f32 / system.total_memory() as f32) * 100.0
     } else {
         0.0
     };
-
     let disks = Disks::new_with_refreshed_list();
     let (total_disk, available_disk) = disks.iter().fold((0_u64, 0_u64), |acc, disk| {
         (acc.0 + disk.total_space(), acc.1 + disk.available_space())
@@ -29,7 +27,6 @@ pub fn collect_snapshot(server_id: Uuid, agent_version: String) -> SystemSnapsho
     } else {
         0.0
     };
-
     SystemSnapshot {
         server_id,
         hostname: System::host_name().unwrap_or_else(|| "unknown".to_string()),
@@ -44,6 +41,7 @@ pub fn collect_snapshot(server_id: Uuid, agent_version: String) -> SystemSnapsho
         agent_version,
         updates: UpdateState::default(),
         diagnostics: DiagnosticsState::default(),
+        docker: DockerState::default(),
         captured_at: Utc::now(),
     }
 }
@@ -53,7 +51,6 @@ pub fn update_state() -> UpdateState {
     let output = Command::new("apt-get")
         .args(["-s", "-o", "Debug::NoLocking=1", "upgrade"])
         .output();
-
     match output {
         Ok(output) if output.status.success() => UpdateState {
             supported: true,
@@ -126,7 +123,6 @@ fn count_simulated_apt_updates(output: &str) -> u32 {
 
 pub fn service_statuses(services: &[String]) -> Result<Vec<ServiceState>> {
     let mut out = Vec::with_capacity(services.len());
-
     for service in services {
         let status = Command::new("systemctl")
             .arg("is-active")
@@ -134,20 +130,17 @@ pub fn service_statuses(services: &[String]) -> Result<Vec<ServiceState>> {
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_else(|_| "unknown".to_string());
-
         out.push(ServiceState {
             name: service.clone(),
             status,
         });
     }
-
     Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn counts_only_simulated_install_lines() {
         let output = "Reading package lists...\nInst openssl [1.0] (1.1 Ubuntu:stable)\nConf openssl (1.1 Ubuntu:stable)\nInst curl [8.0] (8.1 Ubuntu:stable)\n";

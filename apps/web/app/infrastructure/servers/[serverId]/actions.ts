@@ -1,16 +1,22 @@
 'use server'
 
 import {
+  containerAction,
   endMaintenance,
   serverOperation,
   serviceAction,
   startMaintenance,
+  type ContainerAction,
   type ServerOperation,
   type ServiceAction,
 } from '../../../../lib/api'
 
 export async function actOnService(serverId: string, service: string, action: ServiceAction) {
   await serviceAction(serverId, service, action)
+}
+
+export async function actOnContainer(serverId: string, container: string, action: ContainerAction) {
+  await containerAction(serverId, container, action)
 }
 
 export async function actOnServer(serverId: string, operation: ServerOperation) {

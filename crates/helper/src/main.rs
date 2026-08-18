@@ -18,6 +18,10 @@ fn map_error(error: HelperError) -> OperationError {
             code: "SERVICE_NOT_FOUND".into(),
             message: "invalid service name".into(),
         },
+        HelperError::InvalidContainerReference => OperationError {
+            code: "CONTAINER_NOT_FOUND".into(),
+            message: "invalid container reference".into(),
+        },
         HelperError::InvalidRequest => OperationError {
             code: "INVALID_REQUEST".into(),
             message: "invalid helper request parameters".into(),
@@ -50,6 +54,14 @@ async fn execute_request(
         HelperRequest::PackagesUpgradeAll => api.upgrade_all_packages().await.map(|_| None),
         HelperRequest::SystemReboot => api.reboot().await.map(|_| None),
         HelperRequest::Journal { service, lines } => api.journal(&service, lines).await.map(Some),
+        HelperRequest::DockerList => api.docker_list().await.map(Some),
+        HelperRequest::DockerStart { container } => {
+            api.docker_start(&container).await.map(|_| None)
+        }
+        HelperRequest::DockerStop { container } => api.docker_stop(&container).await.map(|_| None),
+        HelperRequest::DockerRestart { container } => {
+            api.docker_restart(&container).await.map(|_| None)
+        }
     }
 }
 
