@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+#[path = "jobs_admin.rs"]
+mod jobs_admin;
+
 #[derive(Debug, Deserialize)]
 pub struct ExecuteJobRequest {
     pub job_id: Uuid,
@@ -27,7 +30,9 @@ pub struct ExecuteJobResponse {
 }
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/internal/jobs/execute", post(execute_job))
+    Router::new()
+        .route("/internal/jobs/execute", post(execute_job))
+        .merge(jobs_admin::router())
 }
 
 async fn execute_job(
