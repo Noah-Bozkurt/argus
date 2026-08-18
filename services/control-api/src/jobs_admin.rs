@@ -8,10 +8,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::{PgPool, Row};
-use tokio::sync::OnceCell;
 use uuid::Uuid;
-
-static JOBS_ADMIN_STORE: OnceCell<JobsAdminStore> = OnceCell::const_new();
 
 #[derive(Debug, Clone)]
 pub struct JobsAdminStore {
@@ -208,8 +205,8 @@ async fn get_jobs(
 ) -> Result<Json<JobsAdminView>, ApiError> {
     let identity = web_identity(&state, &headers).await?;
     Ok(Json(
-        jobs_store()
-            .await?
+        state
+            .jobs_admin
             .view(identity.organization_id)
             .await
             .map_err(map_jobs)?,
@@ -222,34 +219,12 @@ async fn retry_dead_job(
     Path(job_id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
     let identity = web_identity(&state, &headers).await?;
-    jobs_store()
-        .await?
+    state
+        .jobs_admin
         .retry_dead(identity, job_id)
         .await
         .map_err(map_jobs)?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-async fn jobs_store() -> Result<&'static JobsAdminStore, ApiError> {
-    JOBS_ADMIN_STORE
-        .get_or_try_init(|| async {
-            let database_url = std::env::var("DATABASE_URL").map_err(|_| {
-                api_error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "JOBS_ADMIN_UNAVAILABLE",
-                    "DATABASE_URL is required for jobs administration",
-                )
-            })?;
-            JobsAdminStore::connect(&database_url).await.map_err(|error| {
-                tracing::error!(%error, "failed to initialize jobs administration store");
-                api_error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "JOBS_ADMIN_UNAVAILABLE",
-                    "jobs administration store is unavailable",
-                )
-            })
-        })
-        .await
 }
 
 fn map_jobs(error: JobsAdminError) -> ApiError {
