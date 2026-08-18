@@ -22,6 +22,7 @@ mod environments;
 mod github_integration;
 mod incidents;
 mod maintenance;
+mod notifications;
 mod persistence;
 mod project_workspace;
 mod readiness;
@@ -37,6 +38,7 @@ use environments::EnvironmentStore;
 use github_integration::{GitHubIntegrationStore, GitHubProvider};
 use incidents::IncidentStore;
 use maintenance::MaintenanceStore;
+use notifications::NotificationStore;
 use persistence::{Storage, StorageError, WebIdentity};
 use project_workspace::ProjectWorkspaceStore;
 use readiness::ReadinessStore;
@@ -49,6 +51,7 @@ use status_pages::StatusPageStore;
 struct AppState {
     storage: Storage,
     maintenance: MaintenanceStore,
+    notifications: NotificationStore,
     incidents: IncidentStore,
     desired_state: DesiredStateStore,
     change_correlation: ChangeCorrelationStore,
@@ -133,6 +136,7 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env().map_err(anyhow::Error::msg)?;
     let storage = Storage::connect(&config.database_url).await?;
     let maintenance = MaintenanceStore::connect(&config.database_url).await?;
+    let notifications = NotificationStore::connect(&config.database_url).await?;
     let incidents = IncidentStore::connect(&config.database_url).await?;
     let desired_state = DesiredStateStore::connect(&config.database_url).await?;
     let change_correlation = ChangeCorrelationStore::connect(&config.database_url).await?;
@@ -150,6 +154,7 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState {
         storage,
         maintenance,
+        notifications,
         incidents,
         desired_state,
         change_correlation,
@@ -199,6 +204,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(change_correlation::router())
         .merge(readiness::router())
         .merge(status_pages::router())
+        .merge(notifications::router())
         .with_state(state);
     info!(bind_addr=%config.bind_addr, "starting persistent Argus control API");
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
