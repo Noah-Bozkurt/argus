@@ -10,6 +10,7 @@ chrono = { workspace = true }
 common = { path = "../../crates/common" }
 hex = { workspace = true }
 protocol = { path = "../../crates/protocol" }
+reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
