@@ -1,13 +1,13 @@
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
 use protocol::{
-    validate_protocol_version, CommandRequest, CommandResult, EnrollmentRequest,
-    EnrollmentResponse, HeartbeatRequest,
+    CommandRequest, CommandResult, EnrollmentRequest, EnrollmentResponse, HeartbeatRequest,
+    validate_protocol_version,
 };
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, sync::Arc};
