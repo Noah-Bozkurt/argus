@@ -22,6 +22,7 @@ mod environments;
 mod github_integration;
 mod incidents;
 mod job_execution;
+mod jobs_admin;
 mod maintenance;
 mod monitor_scheduling;
 mod notifications;
@@ -39,6 +40,7 @@ use desired_state::{DesiredState, DesiredStateError, DesiredStateStore};
 use environments::EnvironmentStore;
 use github_integration::{GitHubIntegrationStore, GitHubProvider};
 use incidents::IncidentStore;
+use jobs_admin::JobsAdminStore;
 use maintenance::MaintenanceStore;
 use monitor_scheduling::MonitorSchedulingStore;
 use notifications::NotificationStore;
@@ -53,6 +55,7 @@ use status_pages::StatusPageStore;
 #[derive(Clone)]
 struct AppState {
     storage: Storage,
+    jobs_admin: JobsAdminStore,
     maintenance: MaintenanceStore,
     monitor_scheduling: MonitorSchedulingStore,
     notifications: NotificationStore,
@@ -149,6 +152,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
     let config = Config::from_env().map_err(anyhow::Error::msg)?;
     let storage = Storage::connect(&config.database_url).await?;
+    let jobs_admin = JobsAdminStore::connect(&config.database_url).await?;
     let maintenance = MaintenanceStore::connect(&config.database_url).await?;
     let monitor_scheduling = MonitorSchedulingStore::connect(&config.database_url).await?;
     let notifications = NotificationStore::connect(&config.database_url).await?;
@@ -168,6 +172,7 @@ async fn main() -> anyhow::Result<()> {
     let site_monitoring = SiteMonitoringStore::connect(&config.database_url).await?;
     let state = AppState {
         storage,
+        jobs_admin,
         maintenance,
         monitor_scheduling,
         notifications,
@@ -224,6 +229,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(status_pages::router())
         .merge(notifications::router())
         .merge(job_execution::router())
+        .merge(jobs_admin::router())
         .with_state(state);
     info!(bind_addr=%config.bind_addr, "starting persistent Argus control API");
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
