@@ -38,6 +38,7 @@ async fn execute_job(
     authorize_worker(&state, &headers)?;
     match request.kind.as_str() {
         "notifications.materialize" => execute_notification_materialization(&state, request).await,
+        "site_monitor.check" => execute_site_monitor_check(&state, request).await,
         _ => Err(api_error(
             StatusCode::BAD_REQUEST,
             "JOB_KIND_UNSUPPORTED",
@@ -58,8 +59,6 @@ async fn execute_notification_materialization(
         ));
     }
 
-    // V1 reuses the same idempotent materializer as the manual refresh path.
-    // Uuid::nil() is a reserved system-actor sentinel; it is never authenticated as a user.
     let system_identity = crate::persistence::WebIdentity {
         user_id: Uuid::nil(),
         organization_id: request.organization_id,
@@ -85,6 +84,57 @@ async fn execute_notification_materialization(
             result.scanned_events, result.created_notifications
         ),
     }))
+}
+
+async fn execute_site_monitor_check(
+    state: &AppState,
+    request: ExecuteJobRequest,
+) -> Result<Json<ExecuteJobResponse>, ApiError> {
+    let project_id = request.project_id.ok_or_else(|| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_JOB_PAYLOAD",
+            "site_monitor.check requires a project",
+        )
+    })?;
+    let site_id = payload_uuid(&request.payload, "site_id")?;
+    let actor_user_id = payload_uuid(&request.payload, "actor_user_id")?;
+    let identity = crate::persistence::WebIdentity {
+        user_id: actor_user_id,
+        organization_id: request.organization_id,
+    };
+    let check = state
+        .site_monitoring
+        .run_check(identity, project_id, site_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(job_id=%request.job_id, project_id=%project_id, site_id=%site_id, error=%error, "scheduled site monitor check failed");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "JOB_EXECUTION_FAILED",
+                "scheduled site monitor check failed",
+            )
+        })?;
+
+    Ok(Json(ExecuteJobResponse {
+        job_id: request.job_id,
+        status: "SUCCEEDED",
+        summary: format!("site check completed with {}", check.overall_status),
+    }))
+}
+
+fn payload_uuid(payload: &Value, key: &str) -> Result<Uuid, ApiError> {
+    payload
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_JOB_PAYLOAD",
+                "background job contains an invalid UUID field",
+            )
+        })
 }
 
 fn authorize_worker(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
