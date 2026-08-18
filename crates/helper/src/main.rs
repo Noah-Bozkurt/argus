@@ -25,23 +25,29 @@ fn map_error(error: HelperError) -> OperationError {
     }
 }
 
+async fn execute_request(api: &HelperApi, request: HelperRequest) -> Result<(), HelperError> {
+    match request {
+        HelperRequest::RestartService { service } => api.restart_service(&service).await,
+        HelperRequest::StartService { service } => api.start_service(&service).await,
+        HelperRequest::StopService { service } => api.stop_service(&service).await,
+    }
+}
+
 async fn handle_client(stream: UnixStream, api: Arc<HelperApi>) -> anyhow::Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
     while let Some(line) = lines.next_line().await? {
         let response = match serde_json::from_str::<HelperRequest>(&line) {
-            Ok(HelperRequest::RestartService { service }) => {
-                match api.restart_service(&service).await {
-                    Ok(()) => HelperResponse {
-                        ok: true,
-                        error: None,
-                    },
-                    Err(error) => HelperResponse {
-                        ok: false,
-                        error: Some(map_error(error)),
-                    },
-                }
-            }
+            Ok(request) => match execute_request(&api, request).await {
+                Ok(()) => HelperResponse {
+                    ok: true,
+                    error: None,
+                },
+                Err(error) => HelperResponse {
+                    ok: false,
+                    error: Some(map_error(error)),
+                },
+            },
             Err(_) => HelperResponse {
                 ok: false,
                 error: Some(OperationError {
