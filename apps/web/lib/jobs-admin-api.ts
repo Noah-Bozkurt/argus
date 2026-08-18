@@ -4,7 +4,6 @@ export type BackgroundJobView = {
   project_name: string | null
   job_kind: string
   resource_key: string
-  payload: unknown
   status: 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'DEAD'
   run_at: string
   attempts: number
