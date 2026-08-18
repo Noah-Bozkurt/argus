@@ -155,8 +155,12 @@ impl AgentRuntime {
             protocol::CommandType::ServiceRestart { service } => {
                 self.helper.restart_service(service).await
             }
-            protocol::CommandType::ServiceStart { service } => self.helper.start_service(service).await,
-            protocol::CommandType::ServiceStop { service } => self.helper.stop_service(service).await,
+            protocol::CommandType::ServiceStart { service } => {
+                self.helper.start_service(service).await
+            }
+            protocol::CommandType::ServiceStop { service } => {
+                self.helper.stop_service(service).await
+            }
             protocol::CommandType::ServiceStatus { .. } => Ok(()),
         };
 
