@@ -14,6 +14,7 @@ import {
   type ServerOperation,
   type ServiceAction,
 } from '../../../../lib/api'
+import { enableDesiredFirewall } from '../../../../lib/firewall-api'
 
 export async function actOnService(serverId: string, service: string, action: ServiceAction) {
   await serviceAction(serverId, service, action)
@@ -41,6 +42,10 @@ export async function beginMaintenance(serverId: string, durationMinutes: number
 
 export async function finishMaintenance(serverId: string) {
   await endMaintenance(serverId)
+}
+
+export async function enforceDesiredFirewall(serverId: string) {
+  await enableDesiredFirewall(serverId)
 }
 
 function optionalBoolean(value: FormDataEntryValue | null): boolean | null {
