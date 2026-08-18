@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "services/control-api",
+  "services/worker",
   "crates/agent",
   "crates/cli",
   "crates/helper",
