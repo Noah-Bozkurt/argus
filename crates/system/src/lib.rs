@@ -1,9 +1,13 @@
 use anyhow::Result;
 use chrono::Utc;
-use protocol::{ServiceState, SystemSnapshot, UpdateState};
-use std::{path::Path, process::Command};
+use protocol::{DiagnosticsState, ServiceState, SystemSnapshot, UpdateState};
+use std::{collections::BTreeSet, path::Path, process::Command};
 use sysinfo::{Disks, System};
 use uuid::Uuid;
+
+pub fn current_uptime_seconds() -> u64 {
+    System::uptime()
+}
 
 pub fn collect_snapshot(server_id: Uuid, agent_version: String) -> SystemSnapshot {
     let mut system = System::new_all();
@@ -39,6 +43,7 @@ pub fn collect_snapshot(server_id: Uuid, agent_version: String) -> SystemSnapsho
         uptime_seconds: System::uptime(),
         agent_version,
         updates: UpdateState::default(),
+        diagnostics: DiagnosticsState::default(),
         captured_at: Utc::now(),
     }
 }
@@ -61,6 +66,48 @@ pub fn update_state() -> UpdateState {
             reboot_required,
         },
     }
+}
+
+pub fn diagnostics_state() -> DiagnosticsState {
+    DiagnosticsState {
+        failed_units: failed_units(),
+        listening_tcp_ports: listening_tcp_ports(),
+    }
+}
+
+fn failed_units() -> Vec<String> {
+    Command::new("systemctl")
+        .args(["--failed", "--no-legend", "--plain"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| line.split_whitespace().next())
+                .filter(|unit| unit.ends_with(".service"))
+                .take(50)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn listening_tcp_ports() -> Vec<u16> {
+    let output = Command::new("ss").args(["-ltnH"]).output();
+    let mut ports = BTreeSet::new();
+    if let Ok(output) = output {
+        if output.status.success() {
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                if let Some(local) = line.split_whitespace().nth(3) {
+                    if let Some(port) = local.rsplit(':').next().and_then(|value| value.parse().ok()) {
+                        ports.insert(port);
+                    }
+                }
+            }
+        }
+    }
+    ports.into_iter().take(200).collect()
 }
 
 fn count_simulated_apt_updates(output: &str) -> u32 {
