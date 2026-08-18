@@ -121,6 +121,27 @@ impl HelperClient {
         .await
         .map(|_| ())
     }
+    pub async fn docker_compose_start(&self, project: &str) -> Result<(), OperationError> {
+        self.request(HelperRequest::DockerComposeStart {
+            project: project.into(),
+        })
+        .await
+        .map(|_| ())
+    }
+    pub async fn docker_compose_stop(&self, project: &str) -> Result<(), OperationError> {
+        self.request(HelperRequest::DockerComposeStop {
+            project: project.into(),
+        })
+        .await
+        .map(|_| ())
+    }
+    pub async fn docker_compose_restart(&self, project: &str) -> Result<(), OperationError> {
+        self.request(HelperRequest::DockerComposeRestart {
+            project: project.into(),
+        })
+        .await
+        .map(|_| ())
+    }
     pub async fn security_inspect(&self) -> Result<SecurityState, OperationError> {
         let output = self
             .request(HelperRequest::SecurityInspect)
@@ -271,6 +292,17 @@ impl AgentRuntime {
             protocol::CommandType::DockerRestart { container } => {
                 self.helper.docker_restart(container).await.map(|_| None)
             }
+            protocol::CommandType::DockerComposeStart { project } => {
+                self.helper.docker_compose_start(project).await.map(|_| None)
+            }
+            protocol::CommandType::DockerComposeStop { project } => {
+                self.helper.docker_compose_stop(project).await.map(|_| None)
+            }
+            protocol::CommandType::DockerComposeRestart { project } => self
+                .helper
+                .docker_compose_restart(project)
+                .await
+                .map(|_| None),
             protocol::CommandType::BackupCreate { profile } => self
                 .helper
                 .backup_create(command.id, profile)
