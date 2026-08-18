@@ -1,21 +1,23 @@
 use axum::{
-    Json, Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
+    Json, Router,
 };
 use protocol::{
-    CommandRequest, CommandResult, EnrollmentRequest, EnrollmentResponse, HeartbeatRequest,
-    validate_protocol_version,
+    validate_protocol_version, CommandRequest, CommandResult, EnrollmentRequest,
+    EnrollmentResponse, HeartbeatRequest,
 };
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, sync::Arc};
 use tracing::info;
 use uuid::Uuid;
 
+mod desired_state;
 mod maintenance;
 mod persistence;
+use desired_state::{DesiredState, DesiredStateError, DesiredStateStore};
 use maintenance::MaintenanceStore;
 use persistence::{Storage, StorageError, WebIdentity};
 
@@ -23,6 +25,7 @@ use persistence::{Storage, StorageError, WebIdentity};
 struct AppState {
     storage: Storage,
     maintenance: MaintenanceStore,
+    desired_state: DesiredStateStore,
     web_api_token: Arc<String>,
 }
 #[derive(Debug)]
@@ -94,9 +97,11 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env().map_err(anyhow::Error::msg)?;
     let storage = Storage::connect(&config.database_url).await?;
     let maintenance = MaintenanceStore::connect(&config.database_url).await?;
+    let desired_state = DesiredStateStore::connect(&config.database_url).await?;
     let state = AppState {
         storage,
         maintenance,
+        desired_state,
         web_api_token: Arc::new(config.web_api_token),
     };
     let app = Router::new()
@@ -110,6 +115,10 @@ async fn main() -> anyhow::Result<()> {
             post(start_maintenance),
         )
         .route("/servers/:server_id/maintenance/end", post(end_maintenance))
+        .route(
+            "/servers/:server_id/desired-state",
+            get(get_desired_state).put(update_desired_state),
+        )
         .route("/commands", post(queue_command))
         .route("/enrollment/tokens", post(create_enrollment_token))
         .route("/enrollment/complete", post(complete_enrollment))
@@ -308,6 +317,37 @@ async fn maintenance_history(
     ))
 }
 
+async fn get_desired_state(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(server_id): Path<Uuid>,
+) -> Result<Json<desired_state::DesiredStateView>, ApiError> {
+    let identity = web_identity(&state, &headers).await?;
+    Ok(Json(
+        state
+            .desired_state
+            .get(identity, server_id)
+            .await
+            .map_err(map_desired_state)?,
+    ))
+}
+
+async fn update_desired_state(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(server_id): Path<Uuid>,
+    Json(policy): Json<DesiredState>,
+) -> Result<Json<desired_state::DesiredStateView>, ApiError> {
+    let identity = web_identity(&state, &headers).await?;
+    Ok(Json(
+        state
+            .desired_state
+            .update(identity, server_id, policy)
+            .await
+            .map_err(map_desired_state)?,
+    ))
+}
+
 async fn queue_command(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -463,6 +503,33 @@ fn map_maintenance(error: sqlx::Error) -> ApiError {
             "INTERNAL_ERROR",
             "internal error",
         )
+    }
+}
+fn map_desired_state(error: DesiredStateError) -> ApiError {
+    match error {
+        DesiredStateError::PermissionDenied => api_error(
+            StatusCode::FORBIDDEN,
+            "PERMISSION_DENIED",
+            "operation not permitted",
+        ),
+        DesiredStateError::EnforcementUnavailable => api_error(
+            StatusCode::CONFLICT,
+            "ENFORCEMENT_UNAVAILABLE",
+            "security/network enforcement is not enabled yet; use MONITOR mode",
+        ),
+        DesiredStateError::Invalid => api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_REQUEST",
+            "invalid desired state",
+        ),
+        other => {
+            tracing::error!(error=%other, "desired state storage error");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_ERROR",
+                "internal error",
+            )
+        }
     }
 }
 fn api_error(status: StatusCode, code: &str, message: &str) -> ApiError {
