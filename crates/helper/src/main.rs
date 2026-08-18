@@ -22,6 +22,14 @@ fn map_error(error: HelperError) -> OperationError {
             code: "CONTAINER_NOT_FOUND".into(),
             message: "invalid container reference".into(),
         },
+        HelperError::InvalidComposeProject => OperationError {
+            code: "STACK_NOT_FOUND".into(),
+            message: "invalid Compose project name".into(),
+        },
+        HelperError::ComposeProjectNotFound => OperationError {
+            code: "STACK_NOT_FOUND".into(),
+            message: "Compose project was not discovered on this server".into(),
+        },
         HelperError::InvalidBackupReference => OperationError {
             code: "BACKUP_NOT_FOUND".into(),
             message: "invalid backup reference".into(),
@@ -69,6 +77,15 @@ async fn execute_request(
         HelperRequest::DockerStop { container } => api.docker_stop(&container).await.map(|_| None),
         HelperRequest::DockerRestart { container } => {
             api.docker_restart(&container).await.map(|_| None)
+        }
+        HelperRequest::DockerComposeStart { project } => {
+            api.docker_compose_start(&project).await.map(|_| None)
+        }
+        HelperRequest::DockerComposeStop { project } => {
+            api.docker_compose_stop(&project).await.map(|_| None)
+        }
+        HelperRequest::DockerComposeRestart { project } => {
+            api.docker_compose_restart(&project).await.map(|_| None)
         }
         HelperRequest::SecurityInspect => api.security_inspect().await.and_then(|state| {
             serde_json::to_string(&state)

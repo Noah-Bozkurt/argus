@@ -29,6 +29,7 @@ fn capabilities() -> Vec<Capability> {
         "system.reboot",
         "logs.journal",
         "docker",
+        "docker.compose",
         "security.inspect",
         "backup",
     ]
@@ -313,6 +314,9 @@ async fn main() -> Result<()> {
                     protocol::CommandType::DockerStart { .. }
                         | protocol::CommandType::DockerStop { .. }
                         | protocol::CommandType::DockerRestart { .. }
+                        | protocol::CommandType::DockerComposeStart { .. }
+                        | protocol::CommandType::DockerComposeStop { .. }
+                        | protocol::CommandType::DockerComposeRestart { .. }
                 ) {
                     docker = collect_docker(&runtime).await;
                 }
