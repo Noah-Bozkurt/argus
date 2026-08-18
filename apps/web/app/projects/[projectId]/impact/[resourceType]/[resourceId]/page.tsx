@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { getDependencyImpact } from '../../../../../lib/dependency-graph-api'
+import { getDependencyImpact } from '../../../../../../lib/dependency-graph-api'
 
 export default async function DependencyImpactPage({
   params,
