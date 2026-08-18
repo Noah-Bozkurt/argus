@@ -33,13 +33,20 @@ fn map_error(error: HelperError) -> OperationError {
     }
 }
 
-async fn execute_request(api: &HelperApi, request: HelperRequest) -> Result<Option<String>, HelperError> {
+async fn execute_request(
+    api: &HelperApi,
+    request: HelperRequest,
+) -> Result<Option<String>, HelperError> {
     match request {
-        HelperRequest::RestartService { service } => api.restart_service(&service).await.map(|_| None),
+        HelperRequest::RestartService { service } => {
+            api.restart_service(&service).await.map(|_| None)
+        }
         HelperRequest::StartService { service } => api.start_service(&service).await.map(|_| None),
         HelperRequest::StopService { service } => api.stop_service(&service).await.map(|_| None),
         HelperRequest::PackagesRefresh => api.refresh_packages().await.map(|_| None),
-        HelperRequest::PackagesUpgradeSecurity => api.upgrade_security_packages().await.map(|_| None),
+        HelperRequest::PackagesUpgradeSecurity => {
+            api.upgrade_security_packages().await.map(|_| None)
+        }
         HelperRequest::PackagesUpgradeAll => api.upgrade_all_packages().await.map(|_| None),
         HelperRequest::SystemReboot => api.reboot().await.map(|_| None),
         HelperRequest::Journal { service, lines } => api.journal(&service, lines).await.map(Some),

@@ -266,8 +266,14 @@ mod tests {
     }
     #[test]
     fn capabilities_are_explicit() {
-        assert_eq!(CommandType::PackagesRefresh.required_capability().name, "apt");
-        assert_eq!(CommandType::SystemReboot.required_capability().name, "system.reboot");
+        assert_eq!(
+            CommandType::PackagesRefresh.required_capability().name,
+            "apt"
+        );
+        assert_eq!(
+            CommandType::SystemReboot.required_capability().name,
+            "system.reboot"
+        );
         assert_eq!(
             CommandType::LogsJournal {
                 service: "nginx.service".into(),
@@ -283,11 +289,13 @@ mod tests {
         assert!(!CommandType::PackagesRefresh.requires_maintenance());
         assert!(CommandType::PackagesUpgradeAll.requires_maintenance());
         assert!(CommandType::SystemReboot.requires_maintenance());
-        assert!(!CommandType::LogsJournal {
-            service: "nginx.service".into(),
-            lines: 100,
-        }
-        .requires_maintenance());
+        assert!(
+            !CommandType::LogsJournal {
+                service: "nginx.service".into(),
+                lines: 100,
+            }
+            .requires_maintenance()
+        );
     }
     #[test]
     fn protocol_version_validation_rejects_unsupported_versions() {

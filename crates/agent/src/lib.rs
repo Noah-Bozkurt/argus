@@ -48,22 +48,30 @@ impl HelperClient {
         Self { socket }
     }
     pub async fn restart_service(&self, service: &str) -> Result<(), OperationError> {
-        self.request(HelperRequest::RestartService { service: service.into() })
-            .await
-            .map(|_| ())
+        self.request(HelperRequest::RestartService {
+            service: service.into(),
+        })
+        .await
+        .map(|_| ())
     }
     pub async fn start_service(&self, service: &str) -> Result<(), OperationError> {
-        self.request(HelperRequest::StartService { service: service.into() })
-            .await
-            .map(|_| ())
+        self.request(HelperRequest::StartService {
+            service: service.into(),
+        })
+        .await
+        .map(|_| ())
     }
     pub async fn stop_service(&self, service: &str) -> Result<(), OperationError> {
-        self.request(HelperRequest::StopService { service: service.into() })
-            .await
-            .map(|_| ())
+        self.request(HelperRequest::StopService {
+            service: service.into(),
+        })
+        .await
+        .map(|_| ())
     }
     pub async fn refresh_packages(&self) -> Result<(), OperationError> {
-        self.request(HelperRequest::PackagesRefresh).await.map(|_| ())
+        self.request(HelperRequest::PackagesRefresh)
+            .await
+            .map(|_| ())
     }
     pub async fn upgrade_security_packages(&self) -> Result<(), OperationError> {
         self.request(HelperRequest::PackagesUpgradeSecurity)
@@ -71,7 +79,9 @@ impl HelperClient {
             .map(|_| ())
     }
     pub async fn upgrade_all_packages(&self) -> Result<(), OperationError> {
-        self.request(HelperRequest::PackagesUpgradeAll).await.map(|_| ())
+        self.request(HelperRequest::PackagesUpgradeAll)
+            .await
+            .map(|_| ())
     }
     pub async fn reboot(&self) -> Result<(), OperationError> {
         self.request(HelperRequest::SystemReboot).await.map(|_| ())
@@ -145,7 +155,11 @@ impl AgentRuntime {
     }
     pub async fn execute_command(&self, command: &Command) -> CommandResult {
         if command.expires_at < Utc::now() {
-            return failed(command.id, "COMMAND_EXPIRED", "command expired before execution");
+            return failed(
+                command.id,
+                "COMMAND_EXPIRED",
+                "command expired before execution",
+            );
         }
         let required = command.command_type.required_capability();
         if !self.capabilities.contains(&required) {

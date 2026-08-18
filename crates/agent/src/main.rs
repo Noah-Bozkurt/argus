@@ -2,7 +2,7 @@ use agent::{AgentConfig, AgentRuntime, HelperClient};
 use anyhow::{Context, Result};
 use protocol::{
     AgentHandshake, Capability, Command, DiagnosticsState, EnrollmentRequest, EnrollmentResponse,
-    HeartbeatRequest, ServiceJournal, PROTOCOL_VERSION,
+    HeartbeatRequest, PROTOCOL_VERSION, ServiceJournal,
 };
 use reqwest::{Client, StatusCode};
 use std::{
@@ -106,7 +106,9 @@ async fn collect_diagnostics(runtime: &AgentRuntime, services: &[String]) -> Dia
                 service: service.clone(),
                 output,
             }),
-            Err(error) => warn!(service=%service, code=%error.code, "failed to collect service journal"),
+            Err(error) => {
+                warn!(service=%service, code=%error.code, "failed to collect service journal")
+            }
         }
     }
     diagnostics

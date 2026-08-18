@@ -82,7 +82,14 @@ impl HelperApi {
         let line_arg = lines.to_string();
         let output = run_capture(
             "journalctl",
-            &["--no-pager", "--output=short-iso", "-u", service, "-n", &line_arg],
+            &[
+                "--no-pager",
+                "--output=short-iso",
+                "-u",
+                service,
+                "-n",
+                &line_arg,
+            ],
         )
         .await?;
         Ok(truncate_utf8(output, MAX_OUTPUT_BYTES))

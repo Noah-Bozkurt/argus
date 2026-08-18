@@ -100,7 +100,11 @@ fn listening_tcp_ports() -> Vec<u16> {
         if output.status.success() {
             for line in String::from_utf8_lossy(&output.stdout).lines() {
                 if let Some(local) = line.split_whitespace().nth(3) {
-                    if let Some(port) = local.rsplit(':').next().and_then(|value| value.parse().ok()) {
+                    if let Some(port) = local
+                        .rsplit(':')
+                        .next()
+                        .and_then(|value| value.parse().ok())
+                    {
                         ports.insert(port);
                     }
                 }
