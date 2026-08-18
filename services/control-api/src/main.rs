@@ -105,11 +105,8 @@ async fn main() -> anyhow::Result<()> {
     let maintenance = MaintenanceStore::connect(&config.database_url).await?;
     let desired_state = DesiredStateStore::connect(&config.database_url).await?;
     let workspace = ProjectWorkspaceStore::connect(&config.database_url).await?;
-    let github = GitHubIntegrationStore::connect(
-        &config.database_url,
-        GitHubProvider::from_env()?,
-    )
-    .await?;
+    let github =
+        GitHubIntegrationStore::connect(&config.database_url, GitHubProvider::from_env()?).await?;
     let state = AppState {
         storage,
         maintenance,

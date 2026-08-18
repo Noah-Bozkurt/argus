@@ -209,9 +209,7 @@ impl RepositoryProvider for GitHubProvider {
         owner: &str,
         name: &str,
     ) -> Result<SyncedRepository, GitHubError> {
-        let repository: GitHubRepository = self
-            .get(&["repos", owner, name], &[])
-            .await?;
+        let repository: GitHubRepository = self.get(&["repos", owner, name], &[]).await?;
         let branch: GitHubBranch = self
             .get(
                 &["repos", owner, name, "branches", &repository.default_branch],
@@ -267,7 +265,14 @@ impl RepositoryProvider for GitHubProvider {
 
         let ci = match self
             .get::<GitHubCheckRuns>(
-                &["repos", owner, name, "commits", &branch.commit.sha, "check-runs"],
+                &[
+                    "repos",
+                    owner,
+                    name,
+                    "commits",
+                    &branch.commit.sha,
+                    "check-runs",
+                ],
                 &[("per_page", "100")],
             )
             .await
@@ -316,7 +321,11 @@ fn summarize_checks(checks: &GitHubCheckRuns) -> CiSummary {
             total_checks: checks.total_count,
         };
     }
-    if checks.check_runs.iter().any(|check| check.status != "completed") {
+    if checks
+        .check_runs
+        .iter()
+        .any(|check| check.status != "completed")
+    {
         return CiSummary {
             state: "RUNNING".into(),
             total_checks: checks.total_count,
@@ -409,7 +418,8 @@ impl GitHubIntegrationStore {
         project_id: Uuid,
         request: LinkRepositoryRequest,
     ) -> Result<RepositoryLink, IntegrationError> {
-        self.authorize_project(identity.organization_id, project_id).await?;
+        self.authorize_project(identity.organization_id, project_id)
+            .await?;
         let owner = validate_segment(&request.owner, 100)?;
         let name = validate_segment(&request.name, 100)?;
         let synced = self.provider.fetch_repository(&owner, &name).await?;
@@ -519,7 +529,8 @@ impl GitHubIntegrationStore {
         project_id: Uuid,
         repository_id: Uuid,
     ) -> Result<(), IntegrationError> {
-        self.authorize_project(identity.organization_id, project_id).await?;
+        self.authorize_project(identity.organization_id, project_id)
+            .await?;
         let mut tx = self.pool.begin().await?;
         let deleted = sqlx::query(
             "DELETE FROM project_repositories WHERE id=$1 AND project_id=$2 AND organization_id=$3",
@@ -724,11 +735,13 @@ async fn audit_event(
 
 fn map_integration(error: IntegrationError) -> ApiError {
     match error {
-        IntegrationError::NotFound | IntegrationError::Provider(GitHubError::NotFound) => api_error(
-            StatusCode::NOT_FOUND,
-            "REPOSITORY_NOT_FOUND",
-            "repository not found or not accessible",
-        ),
+        IntegrationError::NotFound | IntegrationError::Provider(GitHubError::NotFound) => {
+            api_error(
+                StatusCode::NOT_FOUND,
+                "REPOSITORY_NOT_FOUND",
+                "repository not found or not accessible",
+            )
+        }
         IntegrationError::Provider(GitHubError::PermissionDenied) => api_error(
             StatusCode::FORBIDDEN,
             "GITHUB_PERMISSION_DENIED",
@@ -775,7 +788,10 @@ mod tests {
                 Err(IntegrationError::Invalid)
             ));
         }
-        assert_eq!(validate_segment("Noah-Bozkurt", 100).unwrap(), "Noah-Bozkurt");
+        assert_eq!(
+            validate_segment("Noah-Bozkurt", 100).unwrap(),
+            "Noah-Bozkurt"
+        );
         assert_eq!(validate_segment("argus.rs", 100).unwrap(), "argus.rs");
     }
 
