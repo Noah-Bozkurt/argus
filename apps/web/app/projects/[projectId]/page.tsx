@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import ServiceCatalogSection from './service-catalog-section'
+import EnvironmentsSection from './environments-section'
 import { getProjectRepositories, getProjectWorkspace } from '../../../lib/api'
 import {
   createMilestoneAction,
@@ -82,6 +83,8 @@ export default async function ProjectPage({ params }: { params: { projectId: str
           ))}
         </ul>
       )}
+
+      <EnvironmentsSection projectId={project.id} />
 
       <ServiceCatalogSection projectId={project.id} />
 

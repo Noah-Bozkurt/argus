@@ -231,3 +231,55 @@ export async function updateCatalogService(
 export async function deleteCatalogService(projectId: string, serviceId: string): Promise<void> {
   await request(`/projects/${projectId}/services/${serviceId}`, { method: 'DELETE' })
 }
+
+
+export type ProjectEnvironment = {
+  id: string
+  project_id: string
+  name: string
+  environment_type: 'development' | 'preview' | 'staging' | 'production' | 'custom' | string
+  description: string
+  is_protected: boolean
+  sort_order: number
+  server_count: number
+  service_count: number
+  created_at: string
+  updated_at: string
+}
+
+export type EnvironmentInput = {
+  name: string
+  environment_type: string
+  description?: string
+  is_protected?: boolean
+}
+
+export const getProjectEnvironments = (projectId: string): Promise<ProjectEnvironment[]> =>
+  request(`/projects/${projectId}/environments`)
+
+export async function createProjectEnvironment(
+  projectId: string,
+  input: EnvironmentInput,
+): Promise<ProjectEnvironment> {
+  return request(`/projects/${projectId}/environments`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export async function updateProjectEnvironment(
+  projectId: string,
+  environmentId: string,
+  input: EnvironmentInput,
+): Promise<ProjectEnvironment> {
+  return request(`/projects/${projectId}/environments/${environmentId}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export async function deleteProjectEnvironment(projectId: string, environmentId: string): Promise<void> {
+  await request(`/projects/${projectId}/environments/${environmentId}`, { method: 'DELETE' })
+}
