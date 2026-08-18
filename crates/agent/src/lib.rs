@@ -1,6 +1,6 @@
 use chrono::Utc;
 use protocol::{
-    Capability, Command, CommandResult, CommandStatus, HelperRequest, HelperResponse,
+    BackupState, Capability, Command, CommandResult, CommandStatus, HelperRequest, HelperResponse,
     OperationError, SecurityState,
 };
 use serde::{Deserialize, Serialize};
@@ -131,6 +131,35 @@ impl HelperClient {
             })?;
         serde_json::from_str(&output).map_err(internal)
     }
+    pub async fn backup_list(&self) -> Result<BackupState, OperationError> {
+        let output = self
+            .request(HelperRequest::BackupList)
+            .await?
+            .ok_or_else(|| OperationError {
+                code: "INVALID_RESPONSE".into(),
+                message: "backup inventory returned no data".into(),
+            })?;
+        serde_json::from_str(&output).map_err(internal)
+    }
+    pub async fn backup_create(
+        &self,
+        backup_id: Uuid,
+        profile: &str,
+    ) -> Result<(), OperationError> {
+        self.request(HelperRequest::BackupCreate {
+            backup_id: backup_id.to_string(),
+            profile: profile.into(),
+        })
+        .await
+        .map(|_| ())
+    }
+    pub async fn backup_verify(&self, backup: &str) -> Result<(), OperationError> {
+        self.request(HelperRequest::BackupVerify {
+            backup: backup.into(),
+        })
+        .await
+        .map(|_| ())
+    }
     async fn request(&self, request: HelperRequest) -> Result<Option<String>, OperationError> {
         let mut stream = UnixStream::connect(&self.socket)
             .await
@@ -241,6 +270,14 @@ impl AgentRuntime {
             }
             protocol::CommandType::DockerRestart { container } => {
                 self.helper.docker_restart(container).await.map(|_| None)
+            }
+            protocol::CommandType::BackupCreate { profile } => self
+                .helper
+                .backup_create(command.id, profile)
+                .await
+                .map(|_| Some(format!("{}.tar.gz", command.id))),
+            protocol::CommandType::BackupVerify { backup } => {
+                self.helper.backup_verify(backup).await.map(|_| None)
             }
         };
         match result {
