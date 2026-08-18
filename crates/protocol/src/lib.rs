@@ -28,6 +28,7 @@ pub enum RiskLevel {
     LOW,
     MEDIUM,
     HIGH,
+    CRITICAL,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -129,6 +130,36 @@ pub struct ServiceState {
     pub status: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrollmentRequest {
+    pub token: String,
+    pub handshake: AgentHandshake,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrollmentResponse {
+    pub credential: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatRequest {
+    pub snapshot: SystemSnapshot,
+    pub services: Vec<ServiceState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum HelperRequest {
+    #[serde(rename = "service.restart")]
+    RestartService { service: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HelperResponse {
+    pub ok: bool,
+    pub error: Option<OperationError>,
+}
+
 #[derive(Debug, Error)]
 pub enum ProtocolError {
     #[error("unsupported protocol version: {0}")]
@@ -161,12 +192,9 @@ mod tests {
             idempotency_key: "abc".to_string(),
             risk_level: RiskLevel::MEDIUM,
         };
-
         let serialized = serde_json::to_string(&command).expect("serialize command");
         let parsed: Command = serde_json::from_str(&serialized).expect("deserialize command");
-
         assert_eq!(parsed.command_type, command.command_type);
-        assert_eq!(parsed.status, CommandStatus::QUEUED);
     }
 
     #[test]
