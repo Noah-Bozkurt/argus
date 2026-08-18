@@ -5,6 +5,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::post,
 };
+use protocol::{CommandRequest, CommandType, RiskLevel};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -40,6 +41,7 @@ async fn execute_job(
         "notifications.materialize" => execute_notification_materialization(&state, request).await,
         "site_monitor.check" => execute_site_monitor_check(&state, request).await,
         "site_incident.evaluate" => execute_site_incident_evaluation(&state, request).await,
+        "desired_state.reconcile" => execute_desired_state_reconciliation(&state, request).await,
         _ => Err(api_error(
             StatusCode::BAD_REQUEST,
             "JOB_KIND_UNSUPPORTED",
@@ -169,6 +171,118 @@ async fn execute_site_incident_evaluation(
                 result.action, result.consecutive_failures
             ),
         },
+    }))
+}
+
+async fn execute_desired_state_reconciliation(
+    state: &AppState,
+    request: ExecuteJobRequest,
+) -> Result<Json<ExecuteJobResponse>, ApiError> {
+    let project_id = request.project_id.ok_or_else(|| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_JOB_PAYLOAD",
+            "desired_state.reconcile requires a project",
+        )
+    })?;
+    let server_id = payload_uuid(&request.payload, "server_id")?;
+    let actor_user_id = payload_uuid(&request.payload, "actor_user_id")?;
+    let identity = crate::persistence::WebIdentity {
+        user_id: actor_user_id,
+        organization_id: request.organization_id,
+    };
+
+    let server = state.storage.get_server(identity, server_id).await.map_err(|error| {
+        tracing::error!(job_id=%request.job_id, server_id=%server_id, error=%error, "desired state reconciliation server lookup failed");
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "JOB_EXECUTION_FAILED",
+            "desired state reconciliation server lookup failed",
+        )
+    })?;
+    if server.project_id != project_id {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_JOB_PAYLOAD",
+            "desired state reconciliation server/project mismatch",
+        ));
+    }
+
+    let assessment = state
+        .desired_state
+        .assess_reconciliation(request.organization_id, server_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(job_id=%request.job_id, server_id=%server_id, error=%error, "desired state assessment failed");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "JOB_EXECUTION_FAILED",
+                "desired state assessment failed",
+            )
+        })?;
+
+    if !assessment.needs_firewall_enable {
+        return Ok(Json(ExecuteJobResponse {
+            job_id: request.job_id,
+            status: "SUCCEEDED",
+            summary: assessment.action.into(),
+        }));
+    }
+
+    if state
+        .maintenance
+        .active(request.organization_id, server_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(job_id=%request.job_id, server_id=%server_id, error=%error, "desired state maintenance lookup failed");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "JOB_EXECUTION_FAILED",
+                "desired state maintenance lookup failed",
+            )
+        })?
+        .is_none()
+    {
+        return Ok(Json(ExecuteJobResponse {
+            job_id: request.job_id,
+            status: "SUCCEEDED",
+            summary: "FIREWALL_DRIFT_BLOCKED_MAINTENANCE".into(),
+        }));
+    }
+
+    let command = state
+        .storage
+        .queue_command(
+            identity,
+            CommandRequest {
+                server_id,
+                command_type: CommandType::SecurityFirewallEnable,
+                ttl_seconds: 300,
+                idempotency_key: format!("desired-state:{}:{}", server_id, request.job_id),
+                risk_level: RiskLevel::HIGH,
+            },
+        )
+        .await;
+
+    let summary = match command {
+        Ok(command) => format!("FIREWALL_RECONCILIATION_QUEUED {}", command.id),
+        Err(crate::persistence::StorageError::Conflict) => {
+            "FIREWALL_RECONCILIATION_ALREADY_QUEUED".into()
+        }
+        Err(error) => {
+            tracing::error!(job_id=%request.job_id, server_id=%server_id, error=%error, "desired state command queue failed");
+            return Err(api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "JOB_EXECUTION_FAILED",
+                "desired state command queue failed",
+            ));
+        }
+    };
+
+    Ok(Json(ExecuteJobResponse {
+        job_id: request.job_id,
+        status: "SUCCEEDED",
+        summary,
     }))
 }
 
