@@ -29,7 +29,9 @@ pub struct HelperApi {
 
 impl HelperApi {
     pub fn from_allowlist(services: impl IntoIterator<Item = String>) -> Self {
-        Self { allowlisted_services: services.into_iter().collect() }
+        Self {
+            allowlisted_services: services.into_iter().collect(),
+        }
     }
     pub fn from_env() -> Self {
         let values = std::env::var("ARGUS_ALLOWED_SERVICES")
@@ -42,70 +44,148 @@ impl HelperApi {
         Self::from_allowlist(values)
     }
     pub fn validate_service_name(service: &str) -> Result<(), HelperError> {
-        let valid = service.ends_with(".service") && !service.is_empty() && service.len() <= 255
-            && service.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@'));
-        if valid { Ok(()) } else { Err(HelperError::InvalidServiceName) }
+        let valid = service.ends_with(".service")
+            && !service.is_empty()
+            && service.len() <= 255
+            && service
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@'));
+        if valid {
+            Ok(())
+        } else {
+            Err(HelperError::InvalidServiceName)
+        }
     }
     pub fn validate_container_reference(container: &str) -> Result<(), HelperError> {
-        let valid = !container.is_empty() && container.len() <= 128
-            && container.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
-        if valid { Ok(()) } else { Err(HelperError::InvalidContainerReference) }
+        let valid = !container.is_empty()
+            && container.len() <= 128
+            && container
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+        if valid {
+            Ok(())
+        } else {
+            Err(HelperError::InvalidContainerReference)
+        }
     }
     fn ensure_allowlisted(&self, service: &str) -> Result<(), HelperError> {
         Self::validate_service_name(service)?;
-        if self.allowlisted_services.contains(service) { Ok(()) } else { Err(HelperError::ServiceNotAllowlisted) }
+        if self.allowlisted_services.contains(service) {
+            Ok(())
+        } else {
+            Err(HelperError::ServiceNotAllowlisted)
+        }
     }
-    pub async fn restart_service(&self, service: &str) -> Result<(), HelperError> { self.service_action("restart", service).await }
-    pub async fn start_service(&self, service: &str) -> Result<(), HelperError> { self.service_action("start", service).await }
-    pub async fn stop_service(&self, service: &str) -> Result<(), HelperError> { self.service_action("stop", service).await }
+    pub async fn restart_service(&self, service: &str) -> Result<(), HelperError> {
+        self.service_action("restart", service).await
+    }
+    pub async fn start_service(&self, service: &str) -> Result<(), HelperError> {
+        self.service_action("start", service).await
+    }
+    pub async fn stop_service(&self, service: &str) -> Result<(), HelperError> {
+        self.service_action("stop", service).await
+    }
     async fn service_action(&self, action: &str, service: &str) -> Result<(), HelperError> {
         self.ensure_allowlisted(service)?;
         run("systemctl", &[action, service]).await
     }
     pub async fn journal(&self, service: &str, lines: u32) -> Result<String, HelperError> {
         self.ensure_allowlisted(service)?;
-        if lines == 0 || lines > MAX_JOURNAL_LINES { return Err(HelperError::InvalidRequest); }
+        if lines == 0 || lines > MAX_JOURNAL_LINES {
+            return Err(HelperError::InvalidRequest);
+        }
         let line_arg = lines.to_string();
-        let output = run_capture("journalctl", &["--no-pager", "--output=short-iso", "-u", service, "-n", &line_arg]).await?;
+        let output = run_capture(
+            "journalctl",
+            &[
+                "--no-pager",
+                "--output=short-iso",
+                "-u",
+                service,
+                "-n",
+                &line_arg,
+            ],
+        )
+        .await?;
         Ok(truncate_utf8(output, MAX_OUTPUT_BYTES))
     }
     pub async fn docker_list(&self) -> Result<String, HelperError> {
-        let output = run_capture("docker", &["ps", "-a", "--no-trunc", "--format", "{{json .}}"]).await?;
+        let output = run_capture(
+            "docker",
+            &["ps", "-a", "--no-trunc", "--format", "{{json .}}"],
+        )
+        .await?;
         Ok(truncate_utf8(output, MAX_DOCKER_OUTPUT_BYTES))
     }
-    pub async fn docker_start(&self, container: &str) -> Result<(), HelperError> { self.docker_action("start", container).await }
-    pub async fn docker_stop(&self, container: &str) -> Result<(), HelperError> { self.docker_action("stop", container).await }
-    pub async fn docker_restart(&self, container: &str) -> Result<(), HelperError> { self.docker_action("restart", container).await }
+    pub async fn docker_start(&self, container: &str) -> Result<(), HelperError> {
+        self.docker_action("start", container).await
+    }
+    pub async fn docker_stop(&self, container: &str) -> Result<(), HelperError> {
+        self.docker_action("stop", container).await
+    }
+    pub async fn docker_restart(&self, container: &str) -> Result<(), HelperError> {
+        self.docker_action("restart", container).await
+    }
     async fn docker_action(&self, action: &str, container: &str) -> Result<(), HelperError> {
         Self::validate_container_reference(container)?;
         run("docker", &[action, container]).await
     }
-    pub async fn refresh_packages(&self) -> Result<(), HelperError> { run("apt-get", &["update"]).await }
+    pub async fn refresh_packages(&self) -> Result<(), HelperError> {
+        run("apt-get", &["update"]).await
+    }
     pub async fn upgrade_all_packages(&self) -> Result<(), HelperError> {
-        run("apt-get", &["-y", "-o", "Dpkg::Options::=--force-confold", "upgrade"]).await
+        run(
+            "apt-get",
+            &["-y", "-o", "Dpkg::Options::=--force-confold", "upgrade"],
+        )
+        .await
     }
     pub async fn upgrade_security_packages(&self) -> Result<(), HelperError> {
-        if tokio::fs::metadata("/usr/bin/unattended-upgrade").await.is_err() {
+        if tokio::fs::metadata("/usr/bin/unattended-upgrade")
+            .await
+            .is_err()
+        {
             return Err(HelperError::UtilityUnavailable("unattended-upgrade".into()));
         }
         run("unattended-upgrade", &["--verbose"]).await
     }
-    pub async fn reboot(&self) -> Result<(), HelperError> { run("systemctl", &["reboot"]).await }
+    pub async fn reboot(&self) -> Result<(), HelperError> {
+        run("systemctl", &["reboot"]).await
+    }
 }
 
-async fn run(program: &str, args: &[&str]) -> Result<(), HelperError> { run_capture(program, args).await.map(|_| ()) }
+async fn run(program: &str, args: &[&str]) -> Result<(), HelperError> {
+    run_capture(program, args).await.map(|_| ())
+}
 async fn run_capture(program: &str, args: &[&str]) -> Result<String, HelperError> {
-    let output = Command::new(program).args(args).env("DEBIAN_FRONTEND", "noninteractive").output().await.map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound { HelperError::UtilityUnavailable(program.into()) } else { HelperError::SystemCommandFailed(e.to_string()) }
-    })?;
-    if output.status.success() { Ok(String::from_utf8_lossy(&output.stdout).into_owned()) } else {
-        Err(HelperError::SystemCommandFailed(String::from_utf8_lossy(&output.stderr).trim().to_string()))
+    let output = Command::new(program)
+        .args(args)
+        .env("DEBIAN_FRONTEND", "noninteractive")
+        .output()
+        .await
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                HelperError::UtilityUnavailable(program.into())
+            } else {
+                HelperError::SystemCommandFailed(e.to_string())
+            }
+        })?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        Err(HelperError::SystemCommandFailed(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ))
     }
 }
 fn truncate_utf8(mut value: String, max_bytes: usize) -> String {
-    if value.len() <= max_bytes { return value; }
+    if value.len() <= max_bytes {
+        return value;
+    }
     let mut boundary = max_bytes;
-    while !value.is_char_boundary(boundary) { boundary -= 1; }
+    while !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
     value.truncate(boundary);
     value.push_str("\n[output truncated]\n");
     value
@@ -116,14 +196,25 @@ mod tests {
     use super::*;
     #[test]
     fn blocks_shell_and_path_input() {
-        for invalid in ["../../etc/passwd", "nginx.service;id", "nginx service", "nginx.service$(id)"] {
-            assert!(matches!(HelperApi::validate_service_name(invalid), Err(HelperError::InvalidServiceName)));
+        for invalid in [
+            "../../etc/passwd",
+            "nginx.service;id",
+            "nginx service",
+            "nginx.service$(id)",
+        ] {
+            assert!(matches!(
+                HelperApi::validate_service_name(invalid),
+                Err(HelperError::InvalidServiceName)
+            ));
         }
     }
     #[test]
     fn blocks_invalid_container_references() {
         for invalid in ["../web", "web;id", "web name", "$(id)", ""] {
-            assert!(matches!(HelperApi::validate_container_reference(invalid), Err(HelperError::InvalidContainerReference)));
+            assert!(matches!(
+                HelperApi::validate_container_reference(invalid),
+                Err(HelperError::InvalidContainerReference)
+            ));
         }
         assert!(HelperApi::validate_container_reference("argus-web_1").is_ok());
         assert!(HelperApi::validate_container_reference("9f6c23a4bcde").is_ok());
@@ -131,12 +222,21 @@ mod tests {
     #[tokio::test]
     async fn blocks_non_allowlisted_service_before_execution() {
         let helper = HelperApi::from_allowlist(["nginx.service".to_string()]);
-        assert!(matches!(helper.restart_service("docker.service").await, Err(HelperError::ServiceNotAllowlisted)));
-        assert!(matches!(helper.journal("docker.service", 100).await, Err(HelperError::ServiceNotAllowlisted)));
+        assert!(matches!(
+            helper.restart_service("docker.service").await,
+            Err(HelperError::ServiceNotAllowlisted)
+        ));
+        assert!(matches!(
+            helper.journal("docker.service", 100).await,
+            Err(HelperError::ServiceNotAllowlisted)
+        ));
     }
     #[tokio::test]
     async fn rejects_unbounded_journal_requests_before_execution() {
         let helper = HelperApi::from_allowlist(["nginx.service".to_string()]);
-        assert!(matches!(helper.journal("nginx.service", 501).await, Err(HelperError::InvalidRequest)));
+        assert!(matches!(
+            helper.journal("nginx.service", 501).await,
+            Err(HelperError::InvalidRequest)
+        ));
     }
 }
