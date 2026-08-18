@@ -20,6 +20,10 @@ pub enum HelperError {
     InvalidServiceName,
     #[error("container reference is invalid")]
     InvalidContainerReference,
+    #[error("compose project name is invalid")]
+    InvalidComposeProject,
+    #[error("compose project was not discovered")]
+    ComposeProjectNotFound,
     #[error("backup reference is invalid")]
     InvalidBackupReference,
     #[error("backup integrity verification failed")]
@@ -81,6 +85,22 @@ impl HelperApi {
             Ok(())
         } else {
             Err(HelperError::InvalidContainerReference)
+        }
+    }
+    pub fn validate_compose_project_name(project: &str) -> Result<(), HelperError> {
+        let valid = !project.is_empty()
+            && project.len() <= 128
+            && project
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+            && project
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'));
+        if valid {
+            Ok(())
+        } else {
+            Err(HelperError::InvalidComposeProject)
         }
     }
     pub fn validate_backup_reference(backup: &str) -> Result<(), HelperError> {
@@ -160,6 +180,55 @@ impl HelperApi {
     async fn docker_action(&self, action: &str, container: &str) -> Result<(), HelperError> {
         Self::validate_container_reference(container)?;
         run("docker", &[action, container]).await
+    }
+    pub async fn docker_compose_start(&self, project: &str) -> Result<(), HelperError> {
+        self.docker_compose_action("start", project).await
+    }
+    pub async fn docker_compose_stop(&self, project: &str) -> Result<(), HelperError> {
+        self.docker_compose_action("stop", project).await
+    }
+    pub async fn docker_compose_restart(&self, project: &str) -> Result<(), HelperError> {
+        self.docker_compose_action("restart", project).await
+    }
+    async fn docker_compose_action(&self, action: &str, project: &str) -> Result<(), HelperError> {
+        Self::validate_compose_project_name(project)?;
+        let config_files = self.compose_config_files(project).await?;
+        let mut args = vec!["compose".to_string(), "-p".to_string(), project.to_string()];
+        for config_file in config_files {
+            args.push("-f".to_string());
+            args.push(config_file);
+        }
+        args.push(action.to_string());
+        run_owned("docker", &args).await
+    }
+    async fn compose_config_files(&self, project: &str) -> Result<Vec<String>, HelperError> {
+        let output = run_capture("docker", &["compose", "ls", "--format", "json"]).await?;
+        let parsed: serde_json::Value = serde_json::from_str(&output)
+            .map_err(|e| HelperError::SystemCommandFailed(format!("invalid docker compose ls output: {e}")))?;
+        let entries = parsed.as_array().ok_or_else(|| {
+            HelperError::SystemCommandFailed("docker compose ls did not return a JSON array".into())
+        })?;
+        let entry = entries
+            .iter()
+            .find(|entry| entry.get("Name").and_then(|value| value.as_str()) == Some(project))
+            .ok_or(HelperError::ComposeProjectNotFound)?;
+        let files = entry
+            .get("ConfigFiles")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if files.is_empty()
+            || files
+                .iter()
+                .any(|file| file.len() > 4096 || !Path::new(file).is_absolute())
+        {
+            return Err(HelperError::ComposeProjectNotFound);
+        }
+        Ok(files)
     }
 
     pub async fn security_inspect(&self) -> Result<SecurityState, HelperError> {
@@ -411,6 +480,10 @@ async fn sha256_file(path: &Path) -> Result<String, HelperError> {
 async fn run(program: &str, args: &[&str]) -> Result<(), HelperError> {
     run_capture(program, args).await.map(|_| ())
 }
+async fn run_owned(program: &str, args: &[String]) -> Result<(), HelperError> {
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    run(program, &args).await
+}
 async fn run_capture(program: &str, args: &[&str]) -> Result<String, HelperError> {
     let output = Command::new(program)
         .args(args)
@@ -470,6 +543,16 @@ mod tests {
                 Err(HelperError::InvalidContainerReference)
             ));
         }
+    }
+    #[test]
+    fn blocks_invalid_compose_project_names() {
+        for invalid in ["../stack", "Stack", "stack;id", "stack name", ""] {
+            assert!(matches!(
+                HelperApi::validate_compose_project_name(invalid),
+                Err(HelperError::InvalidComposeProject)
+            ));
+        }
+        assert!(HelperApi::validate_compose_project_name("stack_2").is_ok());
     }
     #[test]
     fn blocks_backup_path_traversal() {
