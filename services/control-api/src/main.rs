@@ -15,12 +15,14 @@ use tracing::info;
 use uuid::Uuid;
 
 mod desired_state;
+mod environments;
 mod github_integration;
 mod maintenance;
 mod persistence;
 mod project_workspace;
 mod service_catalog;
 use desired_state::{DesiredState, DesiredStateError, DesiredStateStore};
+use environments::EnvironmentStore;
 use github_integration::{GitHubIntegrationStore, GitHubProvider};
 use maintenance::MaintenanceStore;
 use persistence::{Storage, StorageError, WebIdentity};
@@ -32,6 +34,7 @@ struct AppState {
     storage: Storage,
     maintenance: MaintenanceStore,
     desired_state: DesiredStateStore,
+    environments: EnvironmentStore,
     workspace: ProjectWorkspaceStore,
     github: GitHubIntegrationStore,
     service_catalog: ServiceCatalogStore,
@@ -107,6 +110,7 @@ async fn main() -> anyhow::Result<()> {
     let storage = Storage::connect(&config.database_url).await?;
     let maintenance = MaintenanceStore::connect(&config.database_url).await?;
     let desired_state = DesiredStateStore::connect(&config.database_url).await?;
+    let environments = EnvironmentStore::connect(&config.database_url).await?;
     let workspace = ProjectWorkspaceStore::connect(&config.database_url).await?;
     let github =
         GitHubIntegrationStore::connect(&config.database_url, GitHubProvider::from_env()?).await?;
@@ -115,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
         storage,
         maintenance,
         desired_state,
+        environments,
         workspace,
         github,
         service_catalog,
@@ -145,6 +150,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(project_workspace::router())
         .merge(github_integration::router())
         .merge(service_catalog::router())
+        .merge(environments::router())
         .with_state(state);
     info!(bind_addr=%config.bind_addr, "starting persistent Argus control API");
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;

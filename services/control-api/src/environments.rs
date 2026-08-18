@@ -515,26 +515,15 @@ mod tests {
 
     #[test]
     fn production_is_always_protected() {
-        let environment = normalize(
-            "Production".into(),
-            "production".into(),
-            "".into(),
-            false,
-        )
-        .unwrap();
+        let environment =
+            normalize("Production".into(), "production".into(), "".into(), false).unwrap();
         assert!(environment.is_protected);
         assert_eq!(environment.sort_order, 40);
     }
 
     #[test]
     fn custom_environment_can_be_unprotected() {
-        let environment = normalize(
-            "QA 2".into(),
-            "custom".into(),
-            "".into(),
-            false,
-        )
-        .unwrap();
+        let environment = normalize("QA 2".into(), "custom".into(), "".into(), false).unwrap();
         assert!(!environment.is_protected);
         assert_eq!(environment.sort_order, 100);
     }
