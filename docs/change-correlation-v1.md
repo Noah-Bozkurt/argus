@@ -30,7 +30,7 @@ Examples:
 - a server Command on an affected Server;
 - a repository/site/domain/service event carrying an affected resource ID.
 
-This keeps an old Incident investigation stable even when the current topology is later edited.
+This keeps an old Incident investigation stable even when the current topology is later edited. A change can therefore be nearby without being impact-related, and both signals remain visible.
 
 ## Ordering
 
