@@ -1,7 +1,8 @@
 use anyhow::Result;
 use chrono::Utc;
 use protocol::{
-    DiagnosticsState, DockerState, SecurityState, ServiceState, SystemSnapshot, UpdateState,
+    BackupState, DiagnosticsState, DockerState, SecurityState, ServiceState, SystemSnapshot,
+    UpdateState,
 };
 use std::{collections::BTreeSet, path::Path, process::Command};
 use sysinfo::{Disks, System};
@@ -45,6 +46,7 @@ pub fn collect_snapshot(server_id: Uuid, agent_version: String) -> SystemSnapsho
         diagnostics: DiagnosticsState::default(),
         docker: DockerState::default(),
         security: SecurityState::default(),
+        backups: BackupState::default(),
         captured_at: Utc::now(),
     }
 }
