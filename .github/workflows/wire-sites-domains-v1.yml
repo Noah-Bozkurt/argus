@@ -1,0 +1,60 @@
+name: Wire sites domains V1
+on:
+  push:
+    branches: [agent/sites-domains-v1]
+permissions:
+  contents: write
+jobs:
+  wire:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/sites-domains-v1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Wire module and UI
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          main = Path('services/control-api/src/main.rs')
+          text = main.read_text()
+          text = text.replace('mod service_catalog;\n', 'mod service_catalog;\nmod sites_domains;\n', 1)
+          text = text.replace('use service_catalog::ServiceCatalogStore;\n', 'use service_catalog::ServiceCatalogStore;\nuse sites_domains::SiteDomainStore;\n', 1)
+          text = text.replace('    service_catalog: ServiceCatalogStore,\n', '    service_catalog: ServiceCatalogStore,\n    sites_domains: SiteDomainStore,\n', 1)
+          text = text.replace(
+              '    let service_catalog = ServiceCatalogStore::connect(&config.database_url).await?;\n',
+              '    let service_catalog = ServiceCatalogStore::connect(&config.database_url).await?;\n    let sites_domains = SiteDomainStore::connect(&config.database_url).await?;\n',
+              1,
+          )
+          text = text.replace('        service_catalog,\n        web_api_token:', '        service_catalog,\n        sites_domains,\n        web_api_token:', 1)
+          text = text.replace(
+              '        .merge(deployments_releases::router())\n        .with_state(state);',
+              '        .merge(deployments_releases::router())\n        .merge(sites_domains::router())\n        .with_state(state);',
+              1,
+          )
+          main.write_text(text)
+
+          page = Path('apps/web/app/projects/[projectId]/page.tsx')
+          text = page.read_text()
+          text = text.replace(
+              "import DeploymentsReleasesSection from './deployments-releases-section'\n",
+              "import DeploymentsReleasesSection from './deployments-releases-section'\nimport SitesDomainsSection from './sites-domains-section'\n",
+              1,
+          )
+          text = text.replace(
+              '      <DeploymentsReleasesSection projectId={project.id} />',
+              '      <DeploymentsReleasesSection projectId={project.id} />\n\n      <SitesDomainsSection projectId={project.id} />',
+              1,
+          )
+          page.write_text(text)
+          PY
+          cargo fmt --all
+          git rm .github/workflows/wire-sites-domains-v1.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add services/control-api/src/main.rs services/control-api/src/sites_domains.rs apps/web/app/projects/[projectId]/page.tsx
+          git commit -m "feat: wire sites and domains V1"
+          git push
