@@ -7,6 +7,9 @@ import {
   createProjectMilestone,
   createProjectNote,
   createProjectTask,
+  linkGitHubRepository,
+  syncProjectRepository,
+  unlinkProjectRepository,
   updateProjectMilestoneStatus,
   updateProjectNote,
   updateProjectTaskStatus,
@@ -41,6 +44,23 @@ export async function createProjectAction(formData: FormData) {
     tags: csv(text(formData, 'tags')),
   })
   redirect(`/projects/${project.id}`)
+}
+
+export async function linkRepositoryAction(projectId: string, formData: FormData) {
+  await linkGitHubRepository(projectId, text(formData, 'owner'), text(formData, 'name'))
+  revalidatePath(`/projects/${projectId}`)
+  revalidatePath('/projects')
+}
+
+export async function syncRepositoryAction(projectId: string, repositoryId: string) {
+  await syncProjectRepository(projectId, repositoryId)
+  revalidatePath(`/projects/${projectId}`)
+}
+
+export async function unlinkRepositoryAction(projectId: string, repositoryId: string) {
+  await unlinkProjectRepository(projectId, repositoryId)
+  revalidatePath(`/projects/${projectId}`)
+  revalidatePath('/projects')
 }
 
 export async function createTaskAction(projectId: string, formData: FormData) {
