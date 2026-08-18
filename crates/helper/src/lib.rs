@@ -203,8 +203,9 @@ impl HelperApi {
     }
     async fn compose_config_files(&self, project: &str) -> Result<Vec<String>, HelperError> {
         let output = run_capture("docker", &["compose", "ls", "--format", "json"]).await?;
-        let parsed: serde_json::Value = serde_json::from_str(&output)
-            .map_err(|e| HelperError::SystemCommandFailed(format!("invalid docker compose ls output: {e}")))?;
+        let parsed: serde_json::Value = serde_json::from_str(&output).map_err(|e| {
+            HelperError::SystemCommandFailed(format!("invalid docker compose ls output: {e}"))
+        })?;
         let entries = parsed.as_array().ok_or_else(|| {
             HelperError::SystemCommandFailed("docker compose ls did not return a JSON array".into())
         })?;
