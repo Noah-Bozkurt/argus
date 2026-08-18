@@ -152,6 +152,20 @@ impl HelperClient {
             })?;
         serde_json::from_str(&output).map_err(internal)
     }
+    pub async fn firewall_enable(&self, rollback_id: Uuid) -> Result<(), OperationError> {
+        self.request(HelperRequest::SecurityFirewallEnable {
+            rollback_id: rollback_id.to_string(),
+        })
+        .await
+        .map(|_| ())
+    }
+    pub async fn firewall_commit(&self, rollback_id: Uuid) -> Result<(), OperationError> {
+        self.request(HelperRequest::SecurityFirewallCommit {
+            rollback_id: rollback_id.to_string(),
+        })
+        .await
+        .map(|_| ())
+    }
     pub async fn backup_list(&self) -> Result<BackupState, OperationError> {
         let output = self
             .request(HelperRequest::BackupList)
@@ -305,6 +319,9 @@ impl AgentRuntime {
                 .docker_compose_restart(project)
                 .await
                 .map(|_| None),
+            protocol::CommandType::SecurityFirewallEnable => {
+                self.helper.firewall_enable(command.id).await.map(|_| None)
+            }
             protocol::CommandType::BackupCreate { profile } => self
                 .helper
                 .backup_create(command.id, profile)

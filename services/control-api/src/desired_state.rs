@@ -43,6 +43,7 @@ pub struct DesiredStateView {
     pub policy: DesiredState,
     pub drift: Vec<DriftItem>,
     pub enforcement_available: bool,
+    pub firewall_enforcement_available: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -112,21 +113,46 @@ impl DesiredStateStore {
             DesiredState::default()
         };
 
-        let snapshot: Option<serde_json::Value> =
-            sqlx::query_scalar("SELECT snapshot FROM agents WHERE server_id=$1")
-                .bind(server_id)
-                .fetch_optional(&self.pool)
-                .await?
-                .flatten();
-        let drift = match snapshot {
-            Some(snapshot) => calculate_drift(&policy, &serde_json::from_value(snapshot)?),
-            None => Vec::new(),
-        };
+        let snapshot: Option<SystemSnapshot> = sqlx::query_scalar::<_, Option<serde_json::Value>>(
+            "SELECT snapshot FROM agents WHERE server_id=$1",
+        )
+        .bind(server_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten()
+        .map(serde_json::from_value)
+        .transpose()?;
+        let drift = snapshot
+            .as_ref()
+            .map(|snapshot| calculate_drift(&policy, snapshot))
+            .unwrap_or_default();
+        let firewall_enforcement_available = policy.firewall_enabled == Some(true)
+            && snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.security.available);
         Ok(DesiredStateView {
             policy,
             drift,
             enforcement_available: false,
+            firewall_enforcement_available,
         })
+    }
+
+    pub async fn allows_firewall_enable(
+        &self,
+        identity: WebIdentity,
+        server_id: Uuid,
+    ) -> Result<bool, DesiredStateError> {
+        self.authorize(identity, server_id).await?;
+        let desired: Option<bool> = sqlx::query_scalar(
+            "SELECT firewall_enabled FROM server_policies WHERE server_id=$1 AND organization_id=$2",
+        )
+        .bind(server_id)
+        .bind(identity.organization_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+        Ok(desired == Some(true))
     }
 
     pub async fn update(

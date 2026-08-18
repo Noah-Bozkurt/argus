@@ -5,6 +5,7 @@ import {
   actOnService,
   beginMaintenance,
   createSystemConfigBackup,
+  enforceDesiredFirewall,
   finishMaintenance,
   saveDesiredState,
   verifySystemConfigBackup,
@@ -25,6 +26,7 @@ export default async function ServerPage({ params }: { params: { serverId: strin
       new Date(window.starts_at).getTime() <= now &&
       new Date(window.ends_at).getTime() > now,
   )
+  const firewallDrift = desiredState.drift.some((item) => item.field === 'firewall_enabled')
 
   return (
     <main>
@@ -44,8 +46,7 @@ export default async function ServerPage({ params }: { params: { serverId: strin
 
       <h2>Desired state &amp; drift</h2>
       <p>
-        Mode: <strong>{desiredState.policy.mode}</strong>. Security and network policy is monitor-only until
-        transactional preflight and rollback are implemented.
+        Mode: <strong>{desiredState.policy.mode}</strong>. Firewall activation can now be applied explicitly with SSH preflight and timed rollback. SSH settings and automatic security-update policy remain monitor-only; full ENFORCE mode is still unavailable.
       </p>
       <form action={async (formData) => { 'use server'; await saveDesiredState(server.server_id, formData) }}>
         <label>
@@ -83,6 +84,23 @@ export default async function ServerPage({ params }: { params: { serverId: strin
         </label>
         <button type="submit">Save monitored policy</button>
       </form>
+      {desiredState.policy.firewall_enabled === true ? (
+        <>
+          <p>
+            Firewall enforcement is one-way in V1: Argus may safely enable UFW but never disables it. The helper pre-opens effective SSH ports and arms a 120-second rollback before activation.
+          </p>
+          <form action={async () => { 'use server'; await enforceDesiredFirewall(server.server_id) }}>
+            <button
+              type="submit"
+              disabled={!activeMaintenance || !firewallDrift || !snapshot?.security.available}
+            >
+              Enable firewall safely
+            </button>
+          </form>
+          {!activeMaintenance ? <p>An active maintenance window is required to enforce the firewall.</p> : null}
+          {!firewallDrift && snapshot?.security.available ? <p>Firewall already satisfies the desired state.</p> : null}
+        </>
+      ) : null}
       <h3>Drift</h3>
       {desiredState.drift.length === 0 ? (
         <p>No drift detected for configured policy fields.</p>

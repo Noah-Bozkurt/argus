@@ -1,3 +1,5 @@
+mod firewall;
+
 use anyhow::Context;
 use helper::{HelperApi, HelperError};
 use protocol::{HelperRequest, HelperResponse, OperationError};
@@ -92,6 +94,12 @@ async fn execute_request(
                 .map(Some)
                 .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))
         }),
+        HelperRequest::SecurityFirewallEnable { rollback_id } => {
+            firewall::enable(&rollback_id).await.map(|_| None)
+        }
+        HelperRequest::SecurityFirewallCommit { rollback_id } => {
+            firewall::commit(&rollback_id).await.map(|_| None)
+        }
         HelperRequest::BackupList => api.backup_list().await.and_then(|state| {
             serde_json::to_string(&state)
                 .map(Some)
