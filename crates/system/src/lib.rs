@@ -72,6 +72,7 @@ pub fn diagnostics_state() -> DiagnosticsState {
     DiagnosticsState {
         failed_units: failed_units(),
         listening_tcp_ports: listening_tcp_ports(),
+        journals: Vec::new(),
     }
 }
 
