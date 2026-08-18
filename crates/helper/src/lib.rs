@@ -1,11 +1,16 @@
-use protocol::{SecurityFinding, SecurityState};
-use std::collections::HashSet;
+use protocol::{BackupArtifact, BackupState, SecurityFinding, SecurityState};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
 use thiserror::Error;
 use tokio::process::Command;
 
 const MAX_JOURNAL_LINES: u32 = 500;
 const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_DOCKER_OUTPUT_BYTES: usize = 256 * 1024;
+const MAX_BACKUPS: usize = 50;
 
 #[derive(Debug, Error)]
 pub enum HelperError {
@@ -15,6 +20,10 @@ pub enum HelperError {
     InvalidServiceName,
     #[error("container reference is invalid")]
     InvalidContainerReference,
+    #[error("backup reference is invalid")]
+    InvalidBackupReference,
+    #[error("backup integrity verification failed")]
+    BackupIntegrityFailed,
     #[error("invalid request")]
     InvalidRequest,
     #[error("required system utility unavailable: {0}")]
@@ -26,11 +35,13 @@ pub enum HelperError {
 #[derive(Debug, Clone)]
 pub struct HelperApi {
     allowlisted_services: HashSet<String>,
+    backup_dir: PathBuf,
 }
 impl HelperApi {
     pub fn from_allowlist(services: impl IntoIterator<Item = String>) -> Self {
         Self {
             allowlisted_services: services.into_iter().collect(),
+            backup_dir: PathBuf::from("/var/lib/argus/backups"),
         }
     }
     pub fn from_env() -> Self {
@@ -41,7 +52,11 @@ impl HelperApi {
             .filter(|s| !s.is_empty())
             .map(ToOwned::to_owned)
             .collect::<Vec<_>>();
-        Self::from_allowlist(values)
+        let mut api = Self::from_allowlist(values);
+        api.backup_dir = std::env::var_os("ARGUS_BACKUP_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/var/lib/argus/backups"));
+        api
     }
     pub fn validate_service_name(service: &str) -> Result<(), HelperError> {
         let valid = service.ends_with(".service")
@@ -66,6 +81,18 @@ impl HelperApi {
             Ok(())
         } else {
             Err(HelperError::InvalidContainerReference)
+        }
+    }
+    pub fn validate_backup_reference(backup: &str) -> Result<(), HelperError> {
+        let valid = backup.ends_with(".tar.gz")
+            && backup.len() <= 160
+            && backup
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+        if valid {
+            Ok(())
+        } else {
+            Err(HelperError::InvalidBackupReference)
         }
     }
     fn ensure_allowlisted(&self, service: &str) -> Result<(), HelperError> {
@@ -204,6 +231,139 @@ impl HelperApi {
         })
     }
 
+    async fn ensure_backup_dir(&self) -> Result<(), HelperError> {
+        tokio::fs::create_dir_all(&self.backup_dir)
+            .await
+            .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            tokio::fs::set_permissions(&self.backup_dir, std::fs::Permissions::from_mode(0o700))
+                .await
+                .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub async fn backup_create(&self, backup_id: &str, profile: &str) -> Result<(), HelperError> {
+        if profile != "system-config"
+            || backup_id.is_empty()
+            || backup_id.len() > 64
+            || !backup_id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            return Err(HelperError::InvalidRequest);
+        }
+        self.ensure_backup_dir().await?;
+        let name = format!("{backup_id}.tar.gz");
+        let archive = self.backup_dir.join(&name);
+        let archive_text = archive.to_string_lossy().into_owned();
+        run(
+            "tar",
+            &[
+                "-C",
+                "/",
+                "--ignore-failed-read",
+                "-czf",
+                &archive_text,
+                "etc/ssh/sshd_config",
+                "etc/ssh/sshd_config.d",
+                "etc/ufw",
+                "etc/apt/apt.conf.d/20auto-upgrades",
+            ],
+        )
+        .await?;
+        let sha = sha256_file(&archive).await?;
+        tokio::fs::write(self.backup_dir.join(format!("{name}.sha256")), format!("{sha}\n"))
+            .await
+            .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))?;
+        let _ = tokio::fs::remove_file(self.backup_dir.join(format!("{name}.verified"))).await;
+        Ok(())
+    }
+
+    pub async fn backup_verify(&self, backup: &str) -> Result<(), HelperError> {
+        Self::validate_backup_reference(backup)?;
+        self.ensure_backup_dir().await?;
+        let archive = self.backup_dir.join(backup);
+        let expected = tokio::fs::read_to_string(self.backup_dir.join(format!("{backup}.sha256")))
+            .await
+            .map_err(|_| HelperError::BackupIntegrityFailed)?;
+        let expected = expected.trim();
+        let actual = sha256_file(&archive).await?;
+        if expected.is_empty() || actual != expected {
+            return Err(HelperError::BackupIntegrityFailed);
+        }
+        let archive_text = archive.to_string_lossy().into_owned();
+        run("tar", &["-tzf", &archive_text]).await?;
+        tokio::fs::write(
+            self.backup_dir.join(format!("{backup}.verified")),
+            format!("{actual}\n"),
+        )
+        .await
+        .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    pub async fn backup_list(&self) -> Result<BackupState, HelperError> {
+        self.ensure_backup_dir().await?;
+        let mut entries = tokio::fs::read_dir(&self.backup_dir)
+            .await
+            .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))?;
+        let mut artifacts = Vec::new();
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))?
+        {
+            if artifacts.len() >= MAX_BACKUPS {
+                break;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".tar.gz") || Self::validate_backup_reference(&name).is_err() {
+                continue;
+            }
+            let metadata = entry
+                .metadata()
+                .await
+                .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))?;
+            if !metadata.is_file() {
+                continue;
+            }
+            let created_unix = metadata
+                .modified()
+                .unwrap_or(SystemTime::UNIX_EPOCH)
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let expected = tokio::fs::read_to_string(self.backup_dir.join(format!("{name}.sha256")))
+                .await
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let verified_marker = tokio::fs::read_to_string(
+                self.backup_dir.join(format!("{name}.verified")),
+            )
+            .await
+            .unwrap_or_default();
+            let verified = !expected.is_empty() && verified_marker.trim() == expected;
+            artifacts.push(BackupArtifact {
+                name,
+                profile: "system-config".into(),
+                size_bytes: metadata.len(),
+                created_unix,
+                sha256: expected,
+                verified,
+            });
+        }
+        artifacts.sort_by(|a, b| b.created_unix.cmp(&a.created_unix));
+        Ok(BackupState {
+            available: true,
+            target: self.backup_dir.display().to_string(),
+            artifacts,
+        })
+    }
+
     pub async fn refresh_packages(&self) -> Result<(), HelperError> {
         run("apt-get", &["update"]).await
     }
@@ -234,6 +394,16 @@ fn finding(severity: &str, code: &str, message: &str) -> SecurityFinding {
         code: code.into(),
         message: message.into(),
     }
+}
+async fn sha256_file(path: &Path) -> Result<String, HelperError> {
+    let value = path.to_string_lossy().into_owned();
+    let output = run_capture("sha256sum", &[&value]).await?;
+    output
+        .split_whitespace()
+        .next()
+        .filter(|hash| hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()))
+        .map(str::to_lowercase)
+        .ok_or_else(|| HelperError::SystemCommandFailed("invalid sha256sum output".into()))
 }
 async fn run(program: &str, args: &[&str]) -> Result<(), HelperError> {
     run_capture(program, args).await.map(|_| ())
@@ -297,6 +467,16 @@ mod tests {
                 Err(HelperError::InvalidContainerReference)
             ));
         }
+    }
+    #[test]
+    fn blocks_backup_path_traversal() {
+        for invalid in ["../backup.tar.gz", "/tmp/backup.tar.gz", "backup;id.tar.gz"] {
+            assert!(matches!(
+                HelperApi::validate_backup_reference(invalid),
+                Err(HelperError::InvalidBackupReference)
+            ));
+        }
+        assert!(HelperApi::validate_backup_reference("abc-123.tar.gz").is_ok());
     }
     #[test]
     fn finding_preserves_severity_and_code() {
