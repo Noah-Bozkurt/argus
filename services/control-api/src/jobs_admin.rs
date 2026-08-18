@@ -7,9 +7,11 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use serde_json::Value;
 use sqlx::{PgPool, Row};
+use tokio::sync::OnceCell;
 use uuid::Uuid;
+
+static JOBS_ADMIN_STORE: OnceCell<JobsAdminStore> = OnceCell::const_new();
 
 #[derive(Debug, Clone)]
 pub struct JobsAdminStore {
@@ -23,7 +25,6 @@ pub struct BackgroundJobView {
     pub project_name: Option<String>,
     pub job_kind: String,
     pub resource_key: String,
-    pub payload: Value,
     pub status: String,
     pub run_at: DateTime<Utc>,
     pub attempts: i32,
@@ -89,7 +90,7 @@ impl JobsAdminStore {
         .await?;
 
         let jobs = sqlx::query(
-            "SELECT j.id,j.project_id,p.name AS project_name,j.job_kind,j.resource_key,j.payload,j.status,j.run_at,j.attempts,j.max_attempts,j.lease_owner,j.lease_expires_at,j.last_error_code,j.last_error_message,j.created_at,j.updated_at,j.completed_at FROM background_jobs j LEFT JOIN projects p ON p.id=j.project_id AND p.organization_id=j.organization_id WHERE j.organization_id=$1 ORDER BY j.created_at DESC LIMIT 200",
+            "SELECT j.id,j.project_id,p.name AS project_name,j.job_kind,j.resource_key,j.status,j.run_at,j.attempts,j.max_attempts,j.lease_owner,j.lease_expires_at,j.last_error_code,j.last_error_message,j.created_at,j.updated_at,j.completed_at FROM background_jobs j LEFT JOIN projects p ON p.id=j.project_id AND p.organization_id=j.organization_id WHERE j.organization_id=$1 ORDER BY j.created_at DESC LIMIT 200",
         )
         .bind(organization_id)
         .fetch_all(&self.pool)
@@ -165,7 +166,6 @@ fn job_from_row(row: sqlx::postgres::PgRow) -> BackgroundJobView {
         project_name: row.get("project_name"),
         job_kind: row.get("job_kind"),
         resource_key: row.get("resource_key"),
-        payload: row.get("payload"),
         status: row.get("status"),
         run_at: row.get("run_at"),
         attempts: row.get("attempts"),
@@ -208,8 +208,8 @@ async fn get_jobs(
 ) -> Result<Json<JobsAdminView>, ApiError> {
     let identity = web_identity(&state, &headers).await?;
     Ok(Json(
-        state
-            .jobs_admin
+        jobs_store()
+            .await?
             .view(identity.organization_id)
             .await
             .map_err(map_jobs)?,
@@ -222,12 +222,34 @@ async fn retry_dead_job(
     Path(job_id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
     let identity = web_identity(&state, &headers).await?;
-    state
-        .jobs_admin
+    jobs_store()
+        .await?
         .retry_dead(identity, job_id)
         .await
         .map_err(map_jobs)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn jobs_store() -> Result<&'static JobsAdminStore, ApiError> {
+    JOBS_ADMIN_STORE
+        .get_or_try_init(|| async {
+            let database_url = std::env::var("DATABASE_URL").map_err(|_| {
+                api_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "JOBS_ADMIN_UNAVAILABLE",
+                    "DATABASE_URL is required for jobs administration",
+                )
+            })?;
+            JobsAdminStore::connect(&database_url).await.map_err(|error| {
+                tracing::error!(%error, "failed to initialize jobs administration store");
+                api_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "JOBS_ADMIN_UNAVAILABLE",
+                    "jobs administration store is unavailable",
+                )
+            })
+        })
+        .await
 }
 
 fn map_jobs(error: JobsAdminError) -> ApiError {
