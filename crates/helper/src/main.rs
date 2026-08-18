@@ -22,6 +22,14 @@ fn map_error(error: HelperError) -> OperationError {
             code: "CONTAINER_NOT_FOUND".into(),
             message: "invalid container reference".into(),
         },
+        HelperError::InvalidBackupReference => OperationError {
+            code: "BACKUP_NOT_FOUND".into(),
+            message: "invalid backup reference".into(),
+        },
+        HelperError::BackupIntegrityFailed => OperationError {
+            code: "BACKUP_INTEGRITY_FAILED".into(),
+            message: "backup integrity verification failed".into(),
+        },
         HelperError::InvalidRequest => OperationError {
             code: "INVALID_REQUEST".into(),
             message: "invalid helper request parameters".into(),
@@ -67,6 +75,15 @@ async fn execute_request(
                 .map(Some)
                 .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))
         }),
+        HelperRequest::BackupList => api.backup_list().await.and_then(|state| {
+            serde_json::to_string(&state)
+                .map(Some)
+                .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))
+        }),
+        HelperRequest::BackupCreate { backup_id, profile } => {
+            api.backup_create(&backup_id, &profile).await.map(|_| None)
+        }
+        HelperRequest::BackupVerify { backup } => api.backup_verify(&backup).await.map(|_| None),
     }
 }
 

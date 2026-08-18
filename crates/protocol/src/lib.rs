@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: &str = "1.4";
+pub const PROTOCOL_VERSION: &str = "1.5";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentHandshake {
@@ -66,6 +66,10 @@ pub enum CommandType {
     DockerStop { container: String },
     #[serde(rename = "docker.restart")]
     DockerRestart { container: String },
+    #[serde(rename = "backup.create")]
+    BackupCreate { profile: String },
+    #[serde(rename = "backup.verify")]
+    BackupVerify { backup: String },
 }
 impl CommandType {
     pub fn conflict_group(&self) -> &'static str {
@@ -82,6 +86,8 @@ impl CommandType {
             CommandType::DockerStart { .. }
             | CommandType::DockerStop { .. }
             | CommandType::DockerRestart { .. } => "docker.mutate",
+            CommandType::BackupCreate { .. } => "backup.create",
+            CommandType::BackupVerify { .. } => "backup.verify",
         }
     }
     pub fn required_capability(&self) -> Capability {
@@ -111,6 +117,10 @@ impl CommandType {
             | CommandType::DockerStop { .. }
             | CommandType::DockerRestart { .. } => Capability {
                 name: "docker".into(),
+                version: "v1".into(),
+            },
+            CommandType::BackupCreate { .. } | CommandType::BackupVerify { .. } => Capability {
+                name: "backup".into(),
                 version: "v1".into(),
             },
         }
@@ -206,6 +216,21 @@ pub struct SecurityState {
     pub automatic_security_updates: bool,
     pub findings: Vec<SecurityFinding>,
 }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BackupArtifact {
+    pub name: String,
+    pub profile: String,
+    pub size_bytes: u64,
+    pub created_unix: u64,
+    pub sha256: String,
+    pub verified: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BackupState {
+    pub available: bool,
+    pub target: String,
+    pub artifacts: Vec<BackupArtifact>,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SystemSnapshot {
     pub server_id: Uuid,
@@ -227,6 +252,8 @@ pub struct SystemSnapshot {
     pub docker: DockerState,
     #[serde(default)]
     pub security: SecurityState,
+    #[serde(default)]
+    pub backups: BackupState,
     pub captured_at: DateTime<Utc>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -278,6 +305,12 @@ pub enum HelperRequest {
     DockerRestart { container: String },
     #[serde(rename = "security.inspect")]
     SecurityInspect,
+    #[serde(rename = "backup.list")]
+    BackupList,
+    #[serde(rename = "backup.create")]
+    BackupCreate { backup_id: String, profile: String },
+    #[serde(rename = "backup.verify")]
+    BackupVerify { backup: String },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelperResponse {
@@ -305,12 +338,16 @@ pub fn validate_protocol_version(protocol_version: &str) -> Result<(), ProtocolE
 mod tests {
     use super::*;
     #[test]
-    fn docker_commands_require_docker_capability() {
-        let command = CommandType::DockerRestart {
-            container: "web".into(),
+    fn backup_commands_require_backup_capability() {
+        let create = CommandType::BackupCreate {
+            profile: "system-config".into(),
         };
-        assert_eq!(command.required_capability().name, "docker");
-        assert_eq!(command.conflict_group(), "docker.mutate");
+        let verify = CommandType::BackupVerify {
+            backup: "abc.tar.gz".into(),
+        };
+        assert_eq!(create.required_capability().name, "backup");
+        assert_eq!(verify.required_capability().name, "backup");
+        assert!(!create.requires_maintenance());
     }
     #[test]
     fn security_state_defaults_safe_for_backward_compatibility() {
@@ -320,6 +357,6 @@ mod tests {
     }
     #[test]
     fn protocol_version_validation_rejects_older_versions() {
-        assert!(validate_protocol_version("1.3").is_err());
+        assert!(validate_protocol_version("1.4").is_err());
     }
 }

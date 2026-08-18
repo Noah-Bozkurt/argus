@@ -254,7 +254,7 @@ fn item(field: &str, desired: bool, actual: bool, severity: &str) -> DriftItem {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use protocol::{DiagnosticsState, DockerState, SecurityState, UpdateState};
+    use protocol::{BackupState, DiagnosticsState, DockerState, SecurityState, UpdateState};
 
     fn snapshot() -> SystemSnapshot {
         SystemSnapshot {
@@ -281,6 +281,7 @@ mod tests {
                 automatic_security_updates: false,
                 findings: vec![],
             },
+            backups: BackupState::default(),
             captured_at: Utc::now(),
         }
     }

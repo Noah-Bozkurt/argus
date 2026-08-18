@@ -2,11 +2,13 @@
 
 import {
   containerAction,
+  createBackup,
   endMaintenance,
   serverOperation,
   serviceAction,
   startMaintenance,
   updateDesiredState,
+  verifyBackup,
   type ContainerAction,
   type DesiredState,
   type ServerOperation,
@@ -23,6 +25,14 @@ export async function actOnContainer(serverId: string, container: string, action
 
 export async function actOnServer(serverId: string, operation: ServerOperation) {
   await serverOperation(serverId, operation)
+}
+
+export async function createSystemConfigBackup(serverId: string) {
+  await createBackup(serverId)
+}
+
+export async function verifySystemConfigBackup(serverId: string, backup: string) {
+  await verifyBackup(serverId, backup)
 }
 
 export async function beginMaintenance(serverId: string, durationMinutes: number, reason: string) {
