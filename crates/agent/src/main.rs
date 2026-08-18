@@ -25,9 +25,16 @@ fn capabilities() -> Vec<Capability> {
             name: "system.metrics".into(),
             version: "v1".into(),
         },
+        Capability {
+            name: "apt".into(),
+            version: "v1".into(),
+        },
+        Capability {
+            name: "system.reboot".into(),
+            version: "v1".into(),
+        },
     ]
 }
-
 fn config_path() -> PathBuf {
     std::env::var_os("ARGUS_AGENT_CONFIG")
         .map(PathBuf::from)
@@ -57,13 +64,14 @@ async fn bootstrap_config(path: &Path, client: &Client) -> Result<AgentConfig> {
         architecture: snapshot.architecture,
         capabilities: capabilities(),
     };
-    let response = client
+    let enrolled: EnrollmentResponse = client
         .post(format!("{control_plane_url}/enrollment/complete"))
         .json(&EnrollmentRequest { token, handshake })
         .send()
         .await?
-        .error_for_status()?;
-    let enrolled: EnrollmentResponse = response.json().await?;
+        .error_for_status()?
+        .json()
+        .await?;
     let config = AgentConfig {
         control_plane_url,
         server_id,
@@ -107,7 +115,6 @@ async fn heartbeat(
         .error_for_status()?;
     Ok(())
 }
-
 async fn next_command(client: &Client, config: &AgentConfig) -> Result<Option<Command>> {
     let response = client
         .post(format!("{}/agent/commands/next", config.control_plane_url))
@@ -124,7 +131,6 @@ async fn next_command(client: &Client, config: &AgentConfig) -> Result<Option<Co
     }
     Ok(response.error_for_status()?.json().await?)
 }
-
 async fn submit_result(
     client: &Client,
     config: &AgentConfig,
@@ -164,27 +170,21 @@ async fn main() -> Result<()> {
     let mut updates = system::update_state();
     let mut next_update_inventory = Instant::now() + UPDATE_INVENTORY_INTERVAL;
     info!(server_id=%config.server_id, agent_id=%config.agent_id, "argus agent started");
-
     loop {
         if Instant::now() >= next_update_inventory {
             updates = system::update_state();
             next_update_inventory = Instant::now() + UPDATE_INVENTORY_INTERVAL;
         }
-
         let cycle = async {
             heartbeat(&client, &config, &updates).await?;
             if let Some(command) = next_command(&client, &config).await? {
                 let command_id = command.id;
                 let result = runtime.execute_command(&command).await;
-                if let Err(error) = submit_result(&client, &config, &result).await {
-                    warn!(%command_id, %error, "command executed but result submission failed; control plane will reconcile as unknown");
-                    return Err(error);
-                }
+                if let Err(error) = submit_result(&client, &config, &result).await { warn!(%command_id, %error, "command executed but result submission failed; control plane will reconcile as unknown"); return Err(error); }
+                if matches!(command.command_type, protocol::CommandType::PackagesRefresh | protocol::CommandType::PackagesUpgradeSecurity | protocol::CommandType::PackagesUpgradeAll) { updates = system::update_state(); }
             }
             Result::<()>::Ok(())
-        }
-        .await;
-
+        }.await;
         match cycle {
             Ok(()) => {
                 backoff = 1;

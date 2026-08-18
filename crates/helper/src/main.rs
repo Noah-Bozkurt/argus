@@ -18,6 +18,10 @@ fn map_error(error: HelperError) -> OperationError {
             code: "SERVICE_NOT_FOUND".into(),
             message: "invalid service name".into(),
         },
+        HelperError::UtilityUnavailable(name) => OperationError {
+            code: "CAPABILITY_UNAVAILABLE".into(),
+            message: format!("required utility unavailable: {name}"),
+        },
         HelperError::SystemCommandFailed(message) => OperationError {
             code: "SYSTEM_COMMAND_FAILED".into(),
             message,
@@ -30,6 +34,10 @@ async fn execute_request(api: &HelperApi, request: HelperRequest) -> Result<(), 
         HelperRequest::RestartService { service } => api.restart_service(&service).await,
         HelperRequest::StartService { service } => api.start_service(&service).await,
         HelperRequest::StopService { service } => api.stop_service(&service).await,
+        HelperRequest::PackagesRefresh => api.refresh_packages().await,
+        HelperRequest::PackagesUpgradeSecurity => api.upgrade_security_packages().await,
+        HelperRequest::PackagesUpgradeAll => api.upgrade_all_packages().await,
+        HelperRequest::SystemReboot => api.reboot().await,
     }
 }
 
