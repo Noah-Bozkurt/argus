@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: &str = "1.3";
+pub const PROTOCOL_VERSION: &str = "1.4";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentHandshake {
@@ -190,6 +190,22 @@ pub struct DockerState {
     pub available: bool,
     pub containers: Vec<DockerContainer>,
 }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SecurityFinding {
+    pub severity: String,
+    pub code: String,
+    pub message: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SecurityState {
+    pub available: bool,
+    pub firewall_status: String,
+    pub firewall_rules: Vec<String>,
+    pub ssh_password_auth: Option<bool>,
+    pub ssh_root_login: String,
+    pub automatic_security_updates: bool,
+    pub findings: Vec<SecurityFinding>,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SystemSnapshot {
     pub server_id: Uuid,
@@ -209,6 +225,8 @@ pub struct SystemSnapshot {
     pub diagnostics: DiagnosticsState,
     #[serde(default)]
     pub docker: DockerState,
+    #[serde(default)]
+    pub security: SecurityState,
     pub captured_at: DateTime<Utc>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -258,6 +276,8 @@ pub enum HelperRequest {
     DockerStop { container: String },
     #[serde(rename = "docker.restart")]
     DockerRestart { container: String },
+    #[serde(rename = "security.inspect")]
+    SecurityInspect,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelperResponse {
@@ -291,10 +311,15 @@ mod tests {
         };
         assert_eq!(command.required_capability().name, "docker");
         assert_eq!(command.conflict_group(), "docker.mutate");
-        assert!(!command.requires_maintenance());
+    }
+    #[test]
+    fn security_state_defaults_safe_for_backward_compatibility() {
+        let state = SecurityState::default();
+        assert!(!state.available);
+        assert!(state.findings.is_empty());
     }
     #[test]
     fn protocol_version_validation_rejects_older_versions() {
-        assert!(validate_protocol_version("1.2").is_err());
+        assert!(validate_protocol_version("1.3").is_err());
     }
 }

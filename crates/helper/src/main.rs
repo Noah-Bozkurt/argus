@@ -62,6 +62,11 @@ async fn execute_request(
         HelperRequest::DockerRestart { container } => {
             api.docker_restart(&container).await.map(|_| None)
         }
+        HelperRequest::SecurityInspect => api.security_inspect().await.and_then(|state| {
+            serde_json::to_string(&state)
+                .map(Some)
+                .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))
+        }),
     }
 }
 

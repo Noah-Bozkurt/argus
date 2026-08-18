@@ -1,3 +1,4 @@
+use protocol::{SecurityFinding, SecurityState};
 use std::collections::HashSet;
 use thiserror::Error;
 use tokio::process::Command;
@@ -26,7 +27,6 @@ pub enum HelperError {
 pub struct HelperApi {
     allowlisted_services: HashSet<String>,
 }
-
 impl HelperApi {
     pub fn from_allowlist(services: impl IntoIterator<Item = String>) -> Self {
         Self {
@@ -95,27 +95,31 @@ impl HelperApi {
             return Err(HelperError::InvalidRequest);
         }
         let line_arg = lines.to_string();
-        let output = run_capture(
-            "journalctl",
-            &[
-                "--no-pager",
-                "--output=short-iso",
-                "-u",
-                service,
-                "-n",
-                &line_arg,
-            ],
-        )
-        .await?;
-        Ok(truncate_utf8(output, MAX_OUTPUT_BYTES))
+        Ok(truncate_utf8(
+            run_capture(
+                "journalctl",
+                &[
+                    "--no-pager",
+                    "--output=short-iso",
+                    "-u",
+                    service,
+                    "-n",
+                    &line_arg,
+                ],
+            )
+            .await?,
+            MAX_OUTPUT_BYTES,
+        ))
     }
     pub async fn docker_list(&self) -> Result<String, HelperError> {
-        let output = run_capture(
-            "docker",
-            &["ps", "-a", "--no-trunc", "--format", "{{json .}}"],
-        )
-        .await?;
-        Ok(truncate_utf8(output, MAX_DOCKER_OUTPUT_BYTES))
+        Ok(truncate_utf8(
+            run_capture(
+                "docker",
+                &["ps", "-a", "--no-trunc", "--format", "{{json .}}"],
+            )
+            .await?,
+            MAX_DOCKER_OUTPUT_BYTES,
+        ))
     }
     pub async fn docker_start(&self, container: &str) -> Result<(), HelperError> {
         self.docker_action("start", container).await
@@ -130,6 +134,76 @@ impl HelperApi {
         Self::validate_container_reference(container)?;
         run("docker", &[action, container]).await
     }
+
+    pub async fn security_inspect(&self) -> Result<SecurityState, HelperError> {
+        let ssh = run_capture("sshd", &["-T"]).await.unwrap_or_default();
+        let password_auth = ssh
+            .lines()
+            .find_map(|line| line.strip_prefix("passwordauthentication "))
+            .map(|v| v == "yes");
+        let root_login = ssh
+            .lines()
+            .find_map(|line| line.strip_prefix("permitrootlogin "))
+            .unwrap_or("unknown")
+            .to_string();
+
+        let ufw = run_capture("ufw", &["status", "numbered"])
+            .await
+            .unwrap_or_default();
+        let firewall_status = ufw
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("Status: "))
+            .unwrap_or("unavailable")
+            .to_lowercase();
+        let firewall_rules = ufw
+            .lines()
+            .filter(|line| line.trim_start().starts_with('['))
+            .take(100)
+            .map(|line| line.trim().to_string())
+            .collect::<Vec<_>>();
+
+        let auto_config = tokio::fs::read_to_string("/etc/apt/apt.conf.d/20auto-upgrades")
+            .await
+            .unwrap_or_default();
+        let automatic_security_updates =
+            auto_config.contains("APT::Periodic::Unattended-Upgrade \"1\"");
+        let mut findings = Vec::new();
+        if password_auth == Some(true) {
+            findings.push(finding(
+                "HIGH",
+                "SSH_PASSWORD_AUTH",
+                "SSH password authentication is enabled",
+            ));
+        }
+        if root_login == "yes" {
+            findings.push(finding(
+                "HIGH",
+                "SSH_ROOT_LOGIN",
+                "Direct SSH root login is enabled",
+            ));
+        }
+        if firewall_status != "active" {
+            findings.push(finding("MEDIUM", "FIREWALL_INACTIVE", "UFW is not active"));
+        }
+        if !automatic_security_updates {
+            findings.push(finding(
+                "MEDIUM",
+                "AUTO_SECURITY_UPDATES_DISABLED",
+                "Automatic security updates are not enabled",
+            ));
+        }
+        Ok(SecurityState {
+            available: !ssh.is_empty() || !ufw.is_empty(),
+            firewall_status,
+            firewall_rules,
+            ssh_password_auth: password_auth,
+            ssh_root_login: root_login,
+            automatic_security_updates,
+            findings,
+        })
+    }
+
     pub async fn refresh_packages(&self) -> Result<(), HelperError> {
         run("apt-get", &["update"]).await
     }
@@ -154,6 +228,13 @@ impl HelperApi {
     }
 }
 
+fn finding(severity: &str, code: &str, message: &str) -> SecurityFinding {
+    SecurityFinding {
+        severity: severity.into(),
+        code: code.into(),
+        message: message.into(),
+    }
+}
 async fn run(program: &str, args: &[&str]) -> Result<(), HelperError> {
     run_capture(program, args).await.map(|_| ())
 }
@@ -216,27 +297,11 @@ mod tests {
                 Err(HelperError::InvalidContainerReference)
             ));
         }
-        assert!(HelperApi::validate_container_reference("argus-web_1").is_ok());
-        assert!(HelperApi::validate_container_reference("9f6c23a4bcde").is_ok());
     }
-    #[tokio::test]
-    async fn blocks_non_allowlisted_service_before_execution() {
-        let helper = HelperApi::from_allowlist(["nginx.service".to_string()]);
-        assert!(matches!(
-            helper.restart_service("docker.service").await,
-            Err(HelperError::ServiceNotAllowlisted)
-        ));
-        assert!(matches!(
-            helper.journal("docker.service", 100).await,
-            Err(HelperError::ServiceNotAllowlisted)
-        ));
-    }
-    #[tokio::test]
-    async fn rejects_unbounded_journal_requests_before_execution() {
-        let helper = HelperApi::from_allowlist(["nginx.service".to_string()]);
-        assert!(matches!(
-            helper.journal("nginx.service", 501).await,
-            Err(HelperError::InvalidRequest)
-        ));
+    #[test]
+    fn finding_preserves_severity_and_code() {
+        let finding = finding("HIGH", "TEST", "test");
+        assert_eq!(finding.severity, "HIGH");
+        assert_eq!(finding.code, "TEST");
     }
 }

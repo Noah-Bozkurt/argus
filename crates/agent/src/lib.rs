@@ -1,7 +1,7 @@
 use chrono::Utc;
 use protocol::{
     Capability, Command, CommandResult, CommandStatus, HelperRequest, HelperResponse,
-    OperationError,
+    OperationError, SecurityState,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -121,7 +121,16 @@ impl HelperClient {
         .await
         .map(|_| ())
     }
-
+    pub async fn security_inspect(&self) -> Result<SecurityState, OperationError> {
+        let output = self
+            .request(HelperRequest::SecurityInspect)
+            .await?
+            .ok_or_else(|| OperationError {
+                code: "INVALID_RESPONSE".into(),
+                message: "security inspection returned no data".into(),
+            })?;
+        serde_json::from_str(&output).map_err(internal)
+    }
     async fn request(&self, request: HelperRequest) -> Result<Option<String>, OperationError> {
         let mut stream = UnixStream::connect(&self.socket)
             .await

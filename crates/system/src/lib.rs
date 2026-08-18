@@ -1,6 +1,8 @@
 use anyhow::Result;
 use chrono::Utc;
-use protocol::{DiagnosticsState, DockerState, ServiceState, SystemSnapshot, UpdateState};
+use protocol::{
+    DiagnosticsState, DockerState, SecurityState, ServiceState, SystemSnapshot, UpdateState,
+};
 use std::{collections::BTreeSet, path::Path, process::Command};
 use sysinfo::{Disks, System};
 use uuid::Uuid;
@@ -42,6 +44,7 @@ pub fn collect_snapshot(server_id: Uuid, agent_version: String) -> SystemSnapsho
         updates: UpdateState::default(),
         diagnostics: DiagnosticsState::default(),
         docker: DockerState::default(),
+        security: SecurityState::default(),
         captured_at: Utc::now(),
     }
 }
@@ -72,7 +75,6 @@ pub fn diagnostics_state() -> DiagnosticsState {
         journals: Vec::new(),
     }
 }
-
 fn failed_units() -> Vec<String> {
     Command::new("systemctl")
         .args(["--failed", "--no-legend", "--plain"])
@@ -90,7 +92,6 @@ fn failed_units() -> Vec<String> {
         })
         .unwrap_or_default()
 }
-
 fn listening_tcp_ports() -> Vec<u16> {
     let output = Command::new("ss").args(["-ltnH"]).output();
     let mut ports = BTreeSet::new();
@@ -111,7 +112,6 @@ fn listening_tcp_ports() -> Vec<u16> {
     }
     ports.into_iter().take(200).collect()
 }
-
 fn count_simulated_apt_updates(output: &str) -> u32 {
     output
         .lines()
@@ -120,7 +120,6 @@ fn count_simulated_apt_updates(output: &str) -> u32 {
         .try_into()
         .unwrap_or(u32::MAX)
 }
-
 pub fn service_statuses(services: &[String]) -> Result<Vec<ServiceState>> {
     let mut out = Vec::with_capacity(services.len());
     for service in services {

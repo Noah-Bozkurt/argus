@@ -2,7 +2,8 @@ use agent::{AgentConfig, AgentRuntime, HelperClient};
 use anyhow::{Context, Result};
 use protocol::{
     AgentHandshake, Capability, Command, DiagnosticsState, DockerContainer, DockerState,
-    EnrollmentRequest, EnrollmentResponse, HeartbeatRequest, PROTOCOL_VERSION, ServiceJournal,
+    EnrollmentRequest, EnrollmentResponse, HeartbeatRequest, PROTOCOL_VERSION, SecurityState,
+    ServiceJournal,
 };
 use reqwest::{Client, StatusCode};
 use std::{
@@ -16,6 +17,7 @@ use uuid::Uuid;
 const UPDATE_INVENTORY_INTERVAL: Duration = Duration::from_secs(300);
 const DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(60);
 const DOCKER_INVENTORY_INTERVAL: Duration = Duration::from_secs(30);
+const SECURITY_INTERVAL: Duration = Duration::from_secs(300);
 const JOURNAL_LINES: u32 = 50;
 
 fn capabilities() -> Vec<Capability> {
@@ -26,6 +28,7 @@ fn capabilities() -> Vec<Capability> {
         "system.reboot",
         "logs.journal",
         "docker",
+        "security.inspect",
     ]
     .into_iter()
     .map(|name| Capability {
@@ -106,7 +109,6 @@ async fn collect_diagnostics(runtime: &AgentRuntime, services: &[String]) -> Dia
     }
     diagnostics
 }
-
 async fn collect_docker(runtime: &AgentRuntime) -> DockerState {
     let Ok(output) = runtime.helper.docker_list().await else {
         return DockerState::default();
@@ -143,6 +145,15 @@ async fn collect_docker(runtime: &AgentRuntime) -> DockerState {
         containers,
     }
 }
+async fn collect_security(runtime: &AgentRuntime) -> SecurityState {
+    match runtime.helper.security_inspect().await {
+        Ok(state) => state,
+        Err(error) => {
+            warn!(code=%error.code, "failed to collect security state");
+            SecurityState::default()
+        }
+    }
+}
 
 async fn heartbeat(
     client: &Client,
@@ -150,12 +161,14 @@ async fn heartbeat(
     updates: &protocol::UpdateState,
     diagnostics: &DiagnosticsState,
     docker: &DockerState,
+    security: &SecurityState,
 ) -> Result<()> {
     let mut snapshot =
         system::collect_snapshot(config.server_id, env!("CARGO_PKG_VERSION").to_string());
     snapshot.updates = updates.clone();
     snapshot.diagnostics = diagnostics.clone();
     snapshot.docker = docker.clone();
+    snapshot.security = security.clone();
     let services = system::service_statuses(&config.managed_services)?;
     client
         .post(format!("{}/agent/heartbeat", config.control_plane_url))
@@ -226,9 +239,11 @@ async fn main() -> Result<()> {
     let mut updates = system::update_state();
     let mut diagnostics = collect_diagnostics(&runtime, &config.managed_services).await;
     let mut docker = collect_docker(&runtime).await;
+    let mut security = collect_security(&runtime).await;
     let mut next_update_inventory = Instant::now() + UPDATE_INVENTORY_INTERVAL;
     let mut next_diagnostics = Instant::now() + DIAGNOSTICS_INTERVAL;
     let mut next_docker_inventory = Instant::now() + DOCKER_INVENTORY_INTERVAL;
+    let mut next_security = Instant::now() + SECURITY_INTERVAL;
     info!(server_id=%config.server_id, agent_id=%config.agent_id, "argus agent started");
     loop {
         if Instant::now() >= next_update_inventory {
@@ -243,16 +258,16 @@ async fn main() -> Result<()> {
             docker = collect_docker(&runtime).await;
             next_docker_inventory = Instant::now() + DOCKER_INVENTORY_INTERVAL;
         }
+        if Instant::now() >= next_security {
+            security = collect_security(&runtime).await;
+            next_security = Instant::now() + SECURITY_INTERVAL;
+        }
         let cycle = async {
-            heartbeat(&client, &config, &updates, &diagnostics, &docker).await?;
+            heartbeat(&client, &config, &updates, &diagnostics, &docker, &security).await?;
             if let Some(command) = next_command(&client, &config).await? {
-                let command_id = command.id;
-                let result = runtime.execute_command(&command).await;
-                if let Err(error) = submit_result(&client, &config, &result).await {
-                    warn!(%command_id, %error, "command executed but result submission failed; control plane will reconcile as unknown");
-                    return Err(error);
-                }
-                if matches!(command.command_type, protocol::CommandType::PackagesRefresh | protocol::CommandType::PackagesUpgradeSecurity | protocol::CommandType::PackagesUpgradeAll) { updates = system::update_state(); }
+                let command_id = command.id; let result = runtime.execute_command(&command).await;
+                if let Err(error) = submit_result(&client, &config, &result).await { warn!(%command_id, %error, "command executed but result submission failed; control plane will reconcile as unknown"); return Err(error); }
+                if matches!(command.command_type, protocol::CommandType::PackagesRefresh | protocol::CommandType::PackagesUpgradeSecurity | protocol::CommandType::PackagesUpgradeAll) { updates = system::update_state(); security = collect_security(&runtime).await; }
                 if matches!(command.command_type, protocol::CommandType::DockerStart { .. } | protocol::CommandType::DockerStop { .. } | protocol::CommandType::DockerRestart { .. }) { docker = collect_docker(&runtime).await; }
             }
             Result::<()>::Ok(())
