@@ -340,8 +340,12 @@ impl ChangeCorrelationStore {
                 occurred_at,
                 minutes_from_incident: minutes_delta(incident_started_at, occurred_at),
                 impact_related: related_resource.is_some(),
-                resource_type: related_resource.as_ref().map(|resource| resource.resource_type.clone()),
-                resource_id: related_resource.as_ref().map(|resource| resource.resource_id),
+                resource_type: related_resource
+                    .as_ref()
+                    .map(|resource| resource.resource_type.clone()),
+                resource_id: related_resource
+                    .as_ref()
+                    .map(|resource| resource.resource_id),
                 summary: summarize_project_event(&event_type, &data),
             });
         }
@@ -460,8 +464,14 @@ mod tests {
         let incident = DateTime::parse_from_rfc3339("2026-01-01T12:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        assert_eq!(minutes_delta(incident, incident - Duration::minutes(15)), -15);
-        assert_eq!(minutes_delta(incident, incident + Duration::minutes(20)), 20);
+        assert_eq!(
+            minutes_delta(incident, incident - Duration::minutes(15)),
+            -15
+        );
+        assert_eq!(
+            minutes_delta(incident, incident + Duration::minutes(20)),
+            20
+        );
     }
 
     #[test]

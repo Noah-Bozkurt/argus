@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { getIncident, type IncidentStatus } from '../../../../../lib/incidents-api'
 import { addIncidentNoteAction, updateIncidentStatusAction } from '../../incident-actions'
+import IncidentCorrelationSection from './correlation-section'
 
 function nextStatuses(status: IncidentStatus): IncidentStatus[] {
   switch (status) {
@@ -66,6 +67,8 @@ export default async function IncidentPage({
           ))}
         </ol>
       )}
+
+      <IncidentCorrelationSection projectId={params.projectId} incidentId={incident.id} />
 
       <h2>Add timeline note</h2>
       <form action={async (formData) => {
