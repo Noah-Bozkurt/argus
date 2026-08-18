@@ -17,11 +17,26 @@ function authHeaders(): Record<string, string> {
 }
 
 export async function enableDesiredFirewall(serverId: string): Promise<void> {
+  const headers = authHeaders()
+  const desiredResponse = await fetch(`${controlApi}/servers/${serverId}/desired-state`, {
+    cache: 'no-store',
+    headers,
+  })
+  if (!desiredResponse.ok) {
+    throw new Error(`Control API ${desiredResponse.status}: ${await desiredResponse.text()}`)
+  }
+  const desiredState = await desiredResponse.json() as {
+    policy?: { firewall_enabled?: boolean | null }
+  }
+  if (desiredState.policy?.firewall_enabled !== true) {
+    throw new Error('Firewall enforcement requires desired state firewall_enabled=true')
+  }
+
   const response = await fetch(`${controlApi}/commands`, {
     method: 'POST',
     cache: 'no-store',
     headers: {
-      ...authHeaders(),
+      ...headers,
       'content-type': 'application/json',
     },
     body: JSON.stringify({
