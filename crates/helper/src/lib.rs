@@ -50,16 +50,30 @@ impl HelperApi {
     }
 
     pub async fn restart_service(&self, service: &str) -> Result<(), HelperError> {
+        self.service_action("restart", service).await
+    }
+
+    pub async fn start_service(&self, service: &str) -> Result<(), HelperError> {
+        self.service_action("start", service).await
+    }
+
+    pub async fn stop_service(&self, service: &str) -> Result<(), HelperError> {
+        self.service_action("stop", service).await
+    }
+
+    async fn service_action(&self, action: &str, service: &str) -> Result<(), HelperError> {
         Self::validate_service_name(service)?;
         if !self.allowlisted_services.contains(service) {
             return Err(HelperError::ServiceNotAllowlisted);
         }
+
         let output = Command::new("systemctl")
-            .arg("restart")
+            .arg(action)
             .arg(service)
             .output()
             .await
             .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))?;
+
         if output.status.success() {
             Ok(())
         } else {
@@ -94,6 +108,14 @@ mod tests {
         let helper = HelperApi::from_allowlist(["nginx.service".to_string()]);
         assert!(matches!(
             helper.restart_service("docker.service").await,
+            Err(HelperError::ServiceNotAllowlisted)
+        ));
+        assert!(matches!(
+            helper.start_service("docker.service").await,
+            Err(HelperError::ServiceNotAllowlisted)
+        ));
+        assert!(matches!(
+            helper.stop_service("docker.service").await,
             Err(HelperError::ServiceNotAllowlisted)
         ));
     }
