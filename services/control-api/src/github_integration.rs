@@ -3,7 +3,7 @@ use axum::{
     Json, Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use chrono::{DateTime, Utc};
 use reqwest::{Client, Url};
