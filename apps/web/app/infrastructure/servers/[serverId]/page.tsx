@@ -27,6 +27,7 @@ export default async function ServerPage({ params }: { params: { serverId: strin
       new Date(window.ends_at).getTime() > now,
   )
   const firewallDrift = desiredState.drift.some((item) => item.field === 'firewall_enabled')
+  const reconcileMode = desiredState.policy.mode === 'ENFORCE'
 
   return (
     <main>
@@ -46,9 +47,16 @@ export default async function ServerPage({ params }: { params: { serverId: strin
 
       <h2>Desired state &amp; drift</h2>
       <p>
-        Mode: <strong>{desiredState.policy.mode}</strong>. Firewall activation can now be applied explicitly with SSH preflight and timed rollback. SSH settings and automatic security-update policy remain monitor-only; full ENFORCE mode is still unavailable.
+        Mode: <strong>{desiredState.policy.mode}</strong>. ENFORCE currently supports exactly one safe policy shape: firewall must be active. SSH settings and automatic security updates remain monitor-only.
       </p>
       <form action={async (formData) => { 'use server'; await saveDesiredState(server.server_id, formData) }}>
+        <label>
+          Mode
+          <select name="mode" defaultValue={desiredState.policy.mode}>
+            <option value="MONITOR">Monitor only</option>
+            <option value="ENFORCE">Reconcile supported fields</option>
+          </select>
+        </label>
         <label>
           Firewall
           <select name="firewall_enabled" defaultValue={desiredState.policy.firewall_enabled === null ? 'ignore' : String(desiredState.policy.firewall_enabled)}>
@@ -82,22 +90,32 @@ export default async function ServerPage({ params }: { params: { serverId: strin
             <option value="false">Must be disabled</option>
           </select>
         </label>
-        <button type="submit">Save monitored policy</button>
+        <button type="submit">Save desired state</button>
       </form>
+      <p>
+        To use ENFORCE in V1, set Firewall to “Must be active” and leave the three other policy fields on “Do not manage”. Any broader ENFORCE policy is rejected by the Control API.
+      </p>
+      {reconcileMode ? (
+        <p>
+          Reconciliation is evaluated every 60 seconds. Firewall drift is only changed during an active maintenance window; outside maintenance the job records the drift but performs no mutation.
+        </p>
+      ) : null}
       {desiredState.policy.firewall_enabled === true ? (
         <>
           <p>
             Firewall enforcement is one-way in V1: Argus may safely enable UFW but never disables it. The helper pre-opens effective SSH ports and arms a 120-second rollback before activation.
           </p>
-          <form action={async () => { 'use server'; await enforceDesiredFirewall(server.server_id) }}>
-            <button
-              type="submit"
-              disabled={!activeMaintenance || !firewallDrift || !snapshot?.security.available}
-            >
-              Enable firewall safely
-            </button>
-          </form>
-          {!activeMaintenance ? <p>An active maintenance window is required to enforce the firewall.</p> : null}
+          {!reconcileMode ? (
+            <form action={async () => { 'use server'; await enforceDesiredFirewall(server.server_id) }}>
+              <button
+                type="submit"
+                disabled={!activeMaintenance || !firewallDrift || !snapshot?.security.available}
+              >
+                Enable firewall safely
+              </button>
+            </form>
+          ) : null}
+          {!activeMaintenance && firewallDrift ? <p>An active maintenance window is required before firewall drift can be reconciled.</p> : null}
           {!firewallDrift && snapshot?.security.available ? <p>Firewall already satisfies the desired state.</p> : null}
         </>
       ) : null}

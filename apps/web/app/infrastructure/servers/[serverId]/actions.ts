@@ -56,8 +56,9 @@ function optionalBoolean(value: FormDataEntryValue | null): boolean | null {
 
 export async function saveDesiredState(serverId: string, formData: FormData) {
   const rootLogin = formData.get('ssh_root_login')
+  const requestedMode = String(formData.get('mode') ?? 'MONITOR')
   const policy: DesiredState = {
-    mode: 'MONITOR',
+    mode: requestedMode === 'ENFORCE' ? 'ENFORCE' : 'MONITOR',
     firewall_enabled: optionalBoolean(formData.get('firewall_enabled')),
     ssh_password_auth: optionalBoolean(formData.get('ssh_password_auth')),
     ssh_root_login:
