@@ -27,6 +27,27 @@ export default async function ServerPage({ params }: { params: { serverId: strin
       <p>Load: {snapshot?.load ?? '—'}</p>
       <p>Uptime: {snapshot ? `${snapshot.uptime_seconds}s` : '—'}</p>
 
+      <h2>Diagnostics</h2>
+      <p>
+        Failed systemd units: {snapshot?.diagnostics.failed_units.length ?? 0}
+      </p>
+      {snapshot?.diagnostics.failed_units.length ? (
+        <ul>
+          {snapshot.diagnostics.failed_units.map((unit) => <li key={unit}>{unit}</li>)}
+        </ul>
+      ) : null}
+      <p>
+        Listening TCP ports: {snapshot?.diagnostics.listening_tcp_ports.join(', ') || 'none detected'}
+      </p>
+
+      <h3>Recent service logs</h3>
+      {snapshot?.diagnostics.journals.length ? snapshot.diagnostics.journals.map((journal) => (
+        <section key={journal.service}>
+          <h4>{journal.service}</h4>
+          <pre>{journal.output || 'No recent journal entries.'}</pre>
+        </section>
+      )) : <p>No journal snapshots available.</p>}
+
       <h2>Maintenance</h2>
       {activeMaintenance ? (
         <>
