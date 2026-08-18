@@ -15,6 +15,7 @@ use tracing::info;
 use uuid::Uuid;
 
 mod change_correlation;
+mod compose_stacks;
 mod dependency_graph;
 mod deployments_releases;
 mod desired_state;
@@ -35,6 +36,7 @@ mod site_monitoring;
 mod sites_domains;
 mod status_pages;
 use change_correlation::ChangeCorrelationStore;
+use compose_stacks::ComposeStackStore;
 use dependency_graph::DependencyGraphStore;
 use deployments_releases::DeploymentReleaseStore;
 use desired_state::{DesiredState, DesiredStateError, DesiredStateStore};
@@ -68,6 +70,7 @@ struct AppState {
     dependency_graph: DependencyGraphStore,
     deployments_releases: DeploymentReleaseStore,
     environments: EnvironmentStore,
+    compose_stacks: ComposeStackStore,
     workspace: ProjectWorkspaceStore,
     readiness: ReadinessStore,
     github: GitHubIntegrationStore,
@@ -166,6 +169,7 @@ async fn main() -> anyhow::Result<()> {
     let dependency_graph = DependencyGraphStore::connect(&config.database_url).await?;
     let deployments_releases = DeploymentReleaseStore::connect(&config.database_url).await?;
     let environments = EnvironmentStore::connect(&config.database_url).await?;
+    let compose_stacks = ComposeStackStore::connect(&config.database_url).await?;
     let workspace = ProjectWorkspaceStore::connect(&config.database_url).await?;
     let readiness = ReadinessStore::connect(&config.database_url).await?;
     let github =
@@ -187,6 +191,7 @@ async fn main() -> anyhow::Result<()> {
         dependency_graph,
         deployments_releases,
         environments,
+        compose_stacks,
         workspace,
         readiness,
         github,
@@ -223,6 +228,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(github_integration::router())
         .merge(service_catalog::router())
         .merge(environments::router())
+        .merge(compose_stacks::router())
         .merge(deployments_releases::router())
         .merge(sites_domains::router())
         .merge(site_monitoring::router())
