@@ -38,7 +38,7 @@ pub fn collect_snapshot(server_id: Uuid, agent_version: String) -> SystemSnapsho
         load: System::load_average().one,
         uptime_seconds: System::uptime(),
         agent_version,
-        updates: update_state(),
+        updates: UpdateState::default(),
         captured_at: Utc::now(),
     }
 }
