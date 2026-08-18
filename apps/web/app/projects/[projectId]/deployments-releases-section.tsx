@@ -1,5 +1,5 @@
+import { getDeploymentReleaseView } from '../../../lib/deployments-releases-api'
 import {
-  getDeploymentReleaseView,
   getProjectEnvironments,
   getProjectRepositories,
   getProjectServices,
