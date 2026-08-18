@@ -231,7 +231,8 @@ impl ServiceCatalogStore {
         )
         .await?;
         tx.commit().await?;
-        self.get(identity.organization_id, project_id, service_id).await
+        self.get(identity.organization_id, project_id, service_id)
+            .await
     }
 
     pub async fn delete(
@@ -531,7 +532,10 @@ fn optional_text(value: &str, max: usize) -> Result<String, ServiceCatalogError>
     }
 }
 
-fn optional_value(value: Option<String>, max: usize) -> Result<Option<String>, ServiceCatalogError> {
+fn optional_value(
+    value: Option<String>,
+    max: usize,
+) -> Result<Option<String>, ServiceCatalogError> {
     match value.map(|value| value.trim().to_string()) {
         Some(value) if value.is_empty() => Ok(None),
         Some(value) if value.len() <= max => Ok(Some(value)),
