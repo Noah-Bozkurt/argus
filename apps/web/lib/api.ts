@@ -22,6 +22,15 @@ export type SystemSnapshot = {
     available: boolean
     containers: Array<{ id: string; name: string; image: string; state: string; status: string; ports: string }>
   }
+  security: {
+    available: boolean
+    firewall_status: string
+    firewall_rules: string[]
+    ssh_password_auth: boolean | null
+    ssh_root_login: string
+    automatic_security_updates: boolean
+    findings: Array<{ severity: string; code: string; message: string }>
+  }
   captured_at: string
 }
 
@@ -91,29 +100,18 @@ export const getMaintenanceHistory = (serverId: string): Promise<MaintenanceWind
 export async function serviceAction(serverId: string, service: string, action: ServiceAction): Promise<void> {
   await queue(serverId, { kind: `service.${action}`, service }, action === 'stop' ? 'HIGH' : 'MEDIUM', 60)
 }
-
 export async function containerAction(serverId: string, container: string, action: ContainerAction): Promise<void> {
   await queue(serverId, { kind: `docker.${action}`, container }, action === 'stop' ? 'HIGH' : 'MEDIUM', 120)
 }
-
 export async function serverOperation(serverId: string, operation: ServerOperation): Promise<void> {
   const risk = operation === 'system.reboot' ? 'CRITICAL' : operation === 'packages.refresh' ? 'MEDIUM' : 'HIGH'
   const ttl = operation.startsWith('packages.upgrade') ? 3600 : 300
   await queue(serverId, { kind: operation }, risk, ttl)
 }
-
 async function queue(serverId: string, commandType: Record<string, string>, riskLevel: string, ttlSeconds: number): Promise<void> {
-  await request('/commands', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ server_id: serverId, command_type: commandType, risk_level: riskLevel, ttl_seconds: ttlSeconds, idempotency_key: randomUUID() }),
-  })
+  await request('/commands', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ server_id: serverId, command_type: commandType, risk_level: riskLevel, ttl_seconds: ttlSeconds, idempotency_key: randomUUID() }) })
 }
-
 export async function startMaintenance(serverId: string, durationMinutes: number, reason: string): Promise<void> {
   await request(`/servers/${serverId}/maintenance/start`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ duration_minutes: durationMinutes, reason }) })
 }
-
-export async function endMaintenance(serverId: string): Promise<void> {
-  await request(`/servers/${serverId}/maintenance/end`, { method: 'POST' })
-}
+export async function endMaintenance(serverId: string): Promise<void> { await request(`/servers/${serverId}/maintenance/end`, { method: 'POST' }) }
