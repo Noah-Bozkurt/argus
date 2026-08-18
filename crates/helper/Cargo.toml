@@ -1,0 +1,19 @@
+[package]
+name = "helper"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "helper"
+path = "src/lib.rs"
+
+[[bin]]
+name = "argus-helper"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+protocol = { path = "../protocol" }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

@@ -1,0 +1,13 @@
+{
+  "name": "argus",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "echo \"No JS tests configured yet\"",
+    "lint": "echo \"No JS lint configured yet\""
+  }
+}

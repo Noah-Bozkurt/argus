@@ -1,0 +1,19 @@
+[package]
+name = "control-api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { workspace = true }
+axum = { workspace = true }
+chrono = { workspace = true }
+common = { path = "../../crates/common" }
+protocol = { path = "../../crates/protocol" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }

@@ -1,0 +1,23 @@
+[package]
+name = "agent"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "argus-agent"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+helper = { path = "../helper" }
+protocol = { path = "../protocol" }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }

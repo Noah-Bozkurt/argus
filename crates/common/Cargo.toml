@@ -1,0 +1,11 @@
+[package]
+name = "common"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = { workspace = true }
+protocol = { path = "../protocol" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }

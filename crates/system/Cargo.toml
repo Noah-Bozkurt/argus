@@ -1,0 +1,12 @@
+[package]
+name = "system"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+protocol = { path = "../protocol" }
+sysinfo = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
