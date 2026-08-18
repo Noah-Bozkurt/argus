@@ -1,8 +1,8 @@
 use agent::{AgentConfig, AgentRuntime, HelperClient};
 use anyhow::{Context, Result};
 use protocol::{
-    AgentHandshake, Capability, Command, EnrollmentRequest, EnrollmentResponse, HeartbeatRequest,
-    PROTOCOL_VERSION,
+    AgentHandshake, Capability, Command, DiagnosticsState, EnrollmentRequest, EnrollmentResponse,
+    HeartbeatRequest, PROTOCOL_VERSION,
 };
 use reqwest::{Client, StatusCode};
 use std::{
@@ -14,6 +14,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 const UPDATE_INVENTORY_INTERVAL: Duration = Duration::from_secs(300);
+const DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(60);
 
 fn capabilities() -> Vec<Capability> {
     vec![
@@ -31,6 +32,10 @@ fn capabilities() -> Vec<Capability> {
         },
         Capability {
             name: "system.reboot".into(),
+            version: "v1".into(),
+        },
+        Capability {
+            name: "logs.journal".into(),
             version: "v1".into(),
         },
     ]
@@ -96,10 +101,12 @@ async fn heartbeat(
     client: &Client,
     config: &AgentConfig,
     updates: &protocol::UpdateState,
+    diagnostics: &DiagnosticsState,
 ) -> Result<()> {
     let mut snapshot =
         system::collect_snapshot(config.server_id, env!("CARGO_PKG_VERSION").to_string());
     snapshot.updates = updates.clone();
+    snapshot.diagnostics = diagnostics.clone();
     let services = system::service_statuses(&config.managed_services)?;
     client
         .post(format!("{}/agent/heartbeat", config.control_plane_url))
@@ -168,23 +175,40 @@ async fn main() -> Result<()> {
     );
     let mut backoff = 1_u64;
     let mut updates = system::update_state();
+    let mut diagnostics = system::diagnostics_state();
     let mut next_update_inventory = Instant::now() + UPDATE_INVENTORY_INTERVAL;
+    let mut next_diagnostics = Instant::now() + DIAGNOSTICS_INTERVAL;
     info!(server_id=%config.server_id, agent_id=%config.agent_id, "argus agent started");
     loop {
         if Instant::now() >= next_update_inventory {
             updates = system::update_state();
             next_update_inventory = Instant::now() + UPDATE_INVENTORY_INTERVAL;
         }
+        if Instant::now() >= next_diagnostics {
+            diagnostics = system::diagnostics_state();
+            next_diagnostics = Instant::now() + DIAGNOSTICS_INTERVAL;
+        }
         let cycle = async {
-            heartbeat(&client, &config, &updates).await?;
+            heartbeat(&client, &config, &updates, &diagnostics).await?;
             if let Some(command) = next_command(&client, &config).await? {
                 let command_id = command.id;
                 let result = runtime.execute_command(&command).await;
-                if let Err(error) = submit_result(&client, &config, &result).await { warn!(%command_id, %error, "command executed but result submission failed; control plane will reconcile as unknown"); return Err(error); }
-                if matches!(command.command_type, protocol::CommandType::PackagesRefresh | protocol::CommandType::PackagesUpgradeSecurity | protocol::CommandType::PackagesUpgradeAll) { updates = system::update_state(); }
+                if let Err(error) = submit_result(&client, &config, &result).await {
+                    warn!(%command_id, %error, "command executed but result submission failed; control plane will reconcile as unknown");
+                    return Err(error);
+                }
+                if matches!(
+                    command.command_type,
+                    protocol::CommandType::PackagesRefresh
+                        | protocol::CommandType::PackagesUpgradeSecurity
+                        | protocol::CommandType::PackagesUpgradeAll
+                ) {
+                    updates = system::update_state();
+                }
             }
             Result::<()>::Ok(())
-        }.await;
+        }
+        .await;
         match cycle {
             Ok(()) => {
                 backoff = 1;
