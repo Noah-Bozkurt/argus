@@ -20,6 +20,7 @@ mod deployments_releases;
 mod desired_state;
 mod environments;
 mod github_integration;
+mod incident_automation;
 mod incidents;
 mod job_execution;
 mod jobs_admin;
@@ -39,6 +40,7 @@ use deployments_releases::DeploymentReleaseStore;
 use desired_state::{DesiredState, DesiredStateError, DesiredStateStore};
 use environments::EnvironmentStore;
 use github_integration::{GitHubIntegrationStore, GitHubProvider};
+use incident_automation::IncidentAutomationStore;
 use incidents::IncidentStore;
 use jobs_admin::JobsAdminStore;
 use maintenance::MaintenanceStore;
@@ -59,6 +61,7 @@ struct AppState {
     maintenance: MaintenanceStore,
     monitor_scheduling: MonitorSchedulingStore,
     notifications: NotificationStore,
+    incident_automation: IncidentAutomationStore,
     incidents: IncidentStore,
     desired_state: DesiredStateStore,
     change_correlation: ChangeCorrelationStore,
@@ -156,6 +159,7 @@ async fn main() -> anyhow::Result<()> {
     let maintenance = MaintenanceStore::connect(&config.database_url).await?;
     let monitor_scheduling = MonitorSchedulingStore::connect(&config.database_url).await?;
     let notifications = NotificationStore::connect(&config.database_url).await?;
+    let incident_automation = IncidentAutomationStore::connect(&config.database_url).await?;
     let incidents = IncidentStore::connect(&config.database_url).await?;
     let desired_state = DesiredStateStore::connect(&config.database_url).await?;
     let change_correlation = ChangeCorrelationStore::connect(&config.database_url).await?;
@@ -176,6 +180,7 @@ async fn main() -> anyhow::Result<()> {
         maintenance,
         monitor_scheduling,
         notifications,
+        incident_automation,
         incidents,
         desired_state,
         change_correlation,
@@ -223,6 +228,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(site_monitoring::router())
         .merge(monitor_scheduling::router())
         .merge(dependency_graph::router())
+        .merge(incident_automation::router())
         .merge(incidents::router())
         .merge(change_correlation::router())
         .merge(readiness::router())
