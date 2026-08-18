@@ -9,7 +9,7 @@ import {
   updateReleaseStatus,
   type DeploymentStatus,
   type ReleaseStatus,
-} from '../../../lib/api'
+} from '../../../lib/deployments-releases-api'
 
 function text(formData: FormData, name: string): string {
   return String(formData.get(name) ?? '').trim()
