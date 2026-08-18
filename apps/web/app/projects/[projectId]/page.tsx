@@ -1,9 +1,12 @@
 import Link from 'next/link'
-import { getProjectWorkspace } from '../../../lib/api'
+import { getProjectRepositories, getProjectWorkspace } from '../../../lib/api'
 import {
   createMilestoneAction,
   createNoteAction,
   createTaskAction,
+  linkRepositoryAction,
+  syncRepositoryAction,
+  unlinkRepositoryAction,
   updateMilestoneStatusAction,
   updateNoteAction,
   updateTaskStatusAction,
@@ -14,7 +17,10 @@ function formatDate(value: string | null): string {
 }
 
 export default async function ProjectPage({ params }: { params: { projectId: string } }) {
-  const workspace = await getProjectWorkspace(params.projectId)
+  const [workspace, repositories] = await Promise.all([
+    getProjectWorkspace(params.projectId),
+    getProjectRepositories(params.projectId),
+  ])
   const { project, tasks, notes, milestones, activity } = workspace
 
   return (
@@ -24,6 +30,57 @@ export default async function ProjectPage({ params }: { params: { projectId: str
       <p>{project.description || 'No project description.'}</p>
       <p>Preset: {project.preset} — Status: {project.status} — Open tasks: {project.open_tasks}</p>
       <p>Tags: {project.tags.join(', ') || 'none'}</p>
+
+      <h2>Repositories</h2>
+      <p>Link GitHub repositories to this project. Argus reads project-relevant metadata; GitHub remains the source of truth for code, PRs and issues.</p>
+      <form action={async (formData) => { 'use server'; await linkRepositoryAction(project.id, formData) }}>
+        <label>
+          GitHub owner
+          <input name="owner" required maxLength={100} placeholder="Noah-Bozkurt" />
+        </label>
+        <label>
+          Repository
+          <input name="name" required maxLength={100} placeholder="argus" />
+        </label>
+        <button type="submit">Link repository</button>
+      </form>
+      {repositories.length === 0 ? <p>No repositories linked.</p> : (
+        <ul>
+          {repositories.map((repository) => (
+            <li key={repository.id}>
+              <p>
+                <a href={repository.html_url} target="_blank" rel="noreferrer"><strong>{repository.owner}/{repository.name}</strong></a>
+                {' — '}{repository.visibility} — {repository.default_branch} — sync {repository.sync_status}
+              </p>
+              {repository.sync_error ? <p>Sync error: {repository.sync_error}</p> : null}
+              <p>
+                PRs: {repository.snapshot.open_pull_requests}{repository.snapshot.counts_truncated ? '+' : ''}
+                {' — '}Issues: {repository.snapshot.open_issues}{repository.snapshot.counts_truncated ? '+' : ''}
+                {' — '}CI: {repository.snapshot.ci.state} ({repository.snapshot.ci.total_checks} checks)
+              </p>
+              {repository.snapshot.latest_commit ? (
+                <p>
+                  Latest commit: <code>{repository.snapshot.latest_commit.sha.slice(0, 12)}</code>
+                  {' — '}{repository.snapshot.latest_commit.message.split('\n')[0]}
+                  {' — '}{formatDate(repository.snapshot.latest_commit.committed_at)}
+                </p>
+              ) : <p>No commit metadata available.</p>}
+              {repository.snapshot.warnings.length ? (
+                <ul>
+                  {repository.snapshot.warnings.map((warning) => <li key={warning}>Warning: {warning}</li>)}
+                </ul>
+              ) : null}
+              <p>Last synced: {formatDate(repository.last_synced_at)}</p>
+              <form action={async () => { 'use server'; await syncRepositoryAction(project.id, repository.id) }}>
+                <button type="submit">Sync now</button>
+              </form>
+              <form action={async () => { 'use server'; await unlinkRepositoryAction(project.id, repository.id) }}>
+                <button type="submit">Unlink</button>
+              </form>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <h2>Tasks</h2>
       <form action={async (formData) => { 'use server'; await createTaskAction(project.id, formData) }}>

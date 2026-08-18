@@ -15,10 +15,12 @@ use tracing::info;
 use uuid::Uuid;
 
 mod desired_state;
+mod github_integration;
 mod maintenance;
 mod persistence;
 mod project_workspace;
 use desired_state::{DesiredState, DesiredStateError, DesiredStateStore};
+use github_integration::{GitHubIntegrationStore, GitHubProvider};
 use maintenance::MaintenanceStore;
 use persistence::{Storage, StorageError, WebIdentity};
 use project_workspace::ProjectWorkspaceStore;
@@ -29,6 +31,7 @@ struct AppState {
     maintenance: MaintenanceStore,
     desired_state: DesiredStateStore,
     workspace: ProjectWorkspaceStore,
+    github: GitHubIntegrationStore,
     web_api_token: Arc<String>,
 }
 #[derive(Debug)]
@@ -102,11 +105,14 @@ async fn main() -> anyhow::Result<()> {
     let maintenance = MaintenanceStore::connect(&config.database_url).await?;
     let desired_state = DesiredStateStore::connect(&config.database_url).await?;
     let workspace = ProjectWorkspaceStore::connect(&config.database_url).await?;
+    let github =
+        GitHubIntegrationStore::connect(&config.database_url, GitHubProvider::from_env()?).await?;
     let state = AppState {
         storage,
         maintenance,
         desired_state,
         workspace,
+        github,
         web_api_token: Arc::new(config.web_api_token),
     };
     let app = Router::new()
@@ -132,6 +138,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/agent/commands/next", post(next_command))
         .route("/agent/commands/result", post(command_result))
         .merge(project_workspace::router())
+        .merge(github_integration::router())
         .with_state(state);
     info!(bind_addr=%config.bind_addr, "starting persistent Argus control API");
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;

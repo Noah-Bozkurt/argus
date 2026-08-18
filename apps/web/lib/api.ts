@@ -65,6 +65,31 @@ export type CreateProjectInput = { name: string; description?: string; preset?: 
 export type CreateTaskInput = { title: string; description?: string; priority?: ProjectTask['priority']; due_at?: string | null; milestone_id?: string | null; assignee_user_id?: string | null; labels?: string[] }
 export type CreateMilestoneInput = { name: string; description?: string; due_at?: string | null }
 
+export type RepositoryLink = {
+  id: string
+  project_id: string
+  provider: 'github'
+  owner: string
+  name: string
+  html_url: string
+  default_branch: string
+  visibility: string
+  snapshot: {
+    default_branch: string
+    latest_commit: { sha: string; message: string; committed_at: string | null } | null
+    open_pull_requests: number
+    open_issues: number
+    counts_truncated: boolean
+    ci: { state: 'NONE' | 'RUNNING' | 'SUCCESS' | 'FAILURE' | 'UNAVAILABLE' | string; total_checks: number }
+    warnings: string[]
+  }
+  sync_status: 'PENDING' | 'SYNCED' | 'ERROR'
+  sync_error: string | null
+  last_synced_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 export type ServiceAction = 'start' | 'stop' | 'restart'
 export type ContainerAction = 'start' | 'stop' | 'restart'
 export type ServerOperation = 'packages.refresh' | 'packages.upgrade.security' | 'packages.upgrade.all' | 'system.reboot'
@@ -105,6 +130,17 @@ export async function createProjectMilestone(projectId: string, input: CreateMil
 }
 export async function updateProjectMilestoneStatus(projectId: string, milestoneId: string, status: Milestone['status']): Promise<Milestone> {
   return request(`/projects/${projectId}/milestones/${milestoneId}/status`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status }) })
+}
+
+export const getProjectRepositories = (projectId: string): Promise<RepositoryLink[]> => request(`/projects/${projectId}/repositories`)
+export async function linkGitHubRepository(projectId: string, owner: string, name: string): Promise<RepositoryLink> {
+  return request(`/projects/${projectId}/repositories`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ owner, name }) })
+}
+export async function syncProjectRepository(projectId: string, repositoryId: string): Promise<RepositoryLink> {
+  return request(`/projects/${projectId}/repositories/${repositoryId}/sync`, { method: 'POST' })
+}
+export async function unlinkProjectRepository(projectId: string, repositoryId: string): Promise<void> {
+  await request(`/projects/${projectId}/repositories/${repositoryId}`, { method: 'DELETE' })
 }
 
 export const getServers = (): Promise<ServerView[]> => request('/servers')
