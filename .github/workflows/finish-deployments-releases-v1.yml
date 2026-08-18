@@ -1,0 +1,73 @@
+name: Finish deployments releases V1
+on:
+  push:
+    branches: [agent/deployments-releases-v1]
+permissions:
+  contents: write
+jobs:
+  finish:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/deployments-releases-v1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Wire module and project page
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main = Path('services/control-api/src/main.rs')
+          text = main.read_text()
+          text = text.replace('mod desired_state;\n', 'mod desired_state;\nmod deployments_releases;\n', 1)
+          text = text.replace(
+              'use desired_state::{DesiredState, DesiredStateError, DesiredStateStore};\n',
+              'use desired_state::{DesiredState, DesiredStateError, DesiredStateStore};\nuse deployments_releases::DeploymentReleaseStore;\n',
+              1,
+          )
+          text = text.replace(
+              '    desired_state: DesiredStateStore,\n',
+              '    desired_state: DesiredStateStore,\n    deployments_releases: DeploymentReleaseStore,\n',
+              1,
+          )
+          text = text.replace(
+              '    let desired_state = DesiredStateStore::connect(&config.database_url).await?;\n',
+              '    let desired_state = DesiredStateStore::connect(&config.database_url).await?;\n    let deployments_releases = DeploymentReleaseStore::connect(&config.database_url).await?;\n',
+              1,
+          )
+          text = text.replace(
+              '        desired_state,\n        environments,\n',
+              '        desired_state,\n        deployments_releases,\n        environments,\n',
+              1,
+          )
+          text = text.replace(
+              '        .merge(environments::router())\n        .with_state(state);',
+              '        .merge(environments::router())\n        .merge(deployments_releases::router())\n        .with_state(state);',
+              1,
+          )
+          main.write_text(text)
+
+          page = Path('apps/web/app/projects/[projectId]/page.tsx')
+          text = page.read_text()
+          text = text.replace(
+              "import EnvironmentsSection from './environments-section'\n",
+              "import EnvironmentsSection from './environments-section'\nimport DeploymentsReleasesSection from './deployments-releases-section'\n",
+              1,
+          )
+          text = text.replace(
+              '      <ServiceCatalogSection projectId={project.id} />',
+              '      <ServiceCatalogSection projectId={project.id} />\n\n      <DeploymentsReleasesSection projectId={project.id} />',
+              1,
+          )
+          page.write_text(text)
+          PY
+          cargo fmt --all
+          git rm .github/workflows/finish-deployments-releases-v1.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add services/control-api/src/main.rs services/control-api/src/deployments_releases.rs apps/web/app/projects/[projectId]/page.tsx
+          git commit -m "feat: finish deployments releases V1"
+          git push
