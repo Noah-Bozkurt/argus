@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-
 use thiserror::Error;
 use tokio::process::Command;
 
@@ -20,9 +19,7 @@ pub struct HelperApi {
 
 impl HelperApi {
     pub fn from_allowlist(allowlisted_services: impl IntoIterator<Item = String>) -> Self {
-        Self {
-            allowlisted_services: allowlisted_services.into_iter().collect(),
-        }
+        Self { allowlisted_services: allowlisted_services.into_iter().collect() }
     }
 
     pub fn from_env() -> Self {
@@ -36,28 +33,29 @@ impl HelperApi {
         Self::from_allowlist(values)
     }
 
-    pub async fn restart_service(&self, service: &str) -> Result<(), HelperError> {
-        if !service.ends_with(".service") || service.contains(' ') {
-            return Err(HelperError::InvalidServiceName);
-        }
+    pub fn validate_service_name(service: &str) -> Result<(), HelperError> {
+        let valid = service.ends_with(".service")
+            && !service.is_empty()
+            && service.len() <= 255
+            && service.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@'));
+        if valid { Ok(()) } else { Err(HelperError::InvalidServiceName) }
+    }
 
+    pub async fn restart_service(&self, service: &str) -> Result<(), HelperError> {
+        Self::validate_service_name(service)?;
         if !self.allowlisted_services.contains(service) {
             return Err(HelperError::ServiceNotAllowlisted);
         }
-
         let output = Command::new("systemctl")
             .arg("restart")
             .arg(service)
             .output()
             .await
             .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))?;
-
         if output.status.success() {
             Ok(())
         } else {
-            Err(HelperError::SystemCommandFailed(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ))
+            Err(HelperError::SystemCommandFailed(String::from_utf8_lossy(&output.stderr).trim().to_string()))
         }
     }
 }
@@ -66,23 +64,16 @@ impl HelperApi {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn blocks_non_allowlisted_service() {
-        let helper = HelperApi::from_allowlist(vec!["nginx.service".to_string()]);
-        let error = helper
-            .restart_service("docker.service")
-            .await
-            .expect_err("must reject");
-        assert!(matches!(error, HelperError::ServiceNotAllowlisted));
+    #[test]
+    fn blocks_shell_and_path_input() {
+        for invalid in ["../../etc/passwd", "nginx.service;id", "nginx service", "nginx.service$(id)"] {
+            assert!(matches!(HelperApi::validate_service_name(invalid), Err(HelperError::InvalidServiceName)));
+        }
     }
 
     #[tokio::test]
-    async fn blocks_invalid_name() {
-        let helper = HelperApi::from_allowlist(vec!["nginx.service".to_string()]);
-        let error = helper
-            .restart_service("../../etc/passwd")
-            .await
-            .expect_err("must reject");
-        assert!(matches!(error, HelperError::InvalidServiceName));
+    async fn blocks_non_allowlisted_service_before_execution() {
+        let helper = HelperApi::from_allowlist(["nginx.service".to_string()]);
+        assert!(matches!(helper.restart_service("docker.service").await, Err(HelperError::ServiceNotAllowlisted)));
     }
 }

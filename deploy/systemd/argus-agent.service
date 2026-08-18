@@ -1,0 +1,22 @@
+[Unit]
+Description=Argus server agent
+After=network-online.target argus-helper.service
+Wants=network-online.target
+Requires=argus-helper.service
+
+[Service]
+Type=simple
+User=argus
+Group=argus
+EnvironmentFile=-/etc/argus/agent.env
+ExecStart=/usr/local/bin/argus-agent
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/argus /run/argus
+
+[Install]
+WantedBy=multi-user.target
