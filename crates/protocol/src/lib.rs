@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: &str = "1.6";
+pub const PROTOCOL_VERSION: &str = "1.7";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentHandshake {
@@ -72,6 +72,8 @@ pub enum CommandType {
     DockerComposeStop { project: String },
     #[serde(rename = "docker.compose.restart")]
     DockerComposeRestart { project: String },
+    #[serde(rename = "security.firewall.enable")]
+    SecurityFirewallEnable,
     #[serde(rename = "backup.create")]
     BackupCreate { profile: String },
     #[serde(rename = "backup.verify")]
@@ -95,6 +97,7 @@ impl CommandType {
             | CommandType::DockerComposeStart { .. }
             | CommandType::DockerComposeStop { .. }
             | CommandType::DockerComposeRestart { .. } => "docker.mutate",
+            CommandType::SecurityFirewallEnable => "security.mutate",
             CommandType::BackupCreate { .. } => "backup.create",
             CommandType::BackupVerify { .. } => "backup.verify",
         }
@@ -134,6 +137,10 @@ impl CommandType {
                 name: "docker.compose".into(),
                 version: "v1".into(),
             },
+            CommandType::SecurityFirewallEnable => Capability {
+                name: "security.firewall".into(),
+                version: "v1".into(),
+            },
             CommandType::BackupCreate { .. } | CommandType::BackupVerify { .. } => Capability {
                 name: "backup".into(),
                 version: "v1".into(),
@@ -146,6 +153,7 @@ impl CommandType {
             CommandType::PackagesUpgradeSecurity
                 | CommandType::PackagesUpgradeAll
                 | CommandType::SystemReboot
+                | CommandType::SecurityFirewallEnable
         )
     }
 }
@@ -326,6 +334,10 @@ pub enum HelperRequest {
     DockerComposeRestart { project: String },
     #[serde(rename = "security.inspect")]
     SecurityInspect,
+    #[serde(rename = "security.firewall.enable")]
+    SecurityFirewallEnable { rollback_id: String },
+    #[serde(rename = "security.firewall.commit")]
+    SecurityFirewallCommit { rollback_id: String },
     #[serde(rename = "backup.list")]
     BackupList,
     #[serde(rename = "backup.create")]
@@ -379,6 +391,13 @@ mod tests {
         assert_eq!(command.conflict_group(), "docker.mutate");
     }
     #[test]
+    fn firewall_enable_is_high_risk_maintenance_work() {
+        let command = CommandType::SecurityFirewallEnable;
+        assert_eq!(command.required_capability().name, "security.firewall");
+        assert_eq!(command.conflict_group(), "security.mutate");
+        assert!(command.requires_maintenance());
+    }
+    #[test]
     fn security_state_defaults_safe_for_backward_compatibility() {
         let state = SecurityState::default();
         assert!(!state.available);
@@ -386,6 +405,6 @@ mod tests {
     }
     #[test]
     fn protocol_version_validation_rejects_older_versions() {
-        assert!(validate_protocol_version("1.5").is_err());
+        assert!(validate_protocol_version("1.6").is_err());
     }
 }
