@@ -18,6 +18,10 @@ fn map_error(error: HelperError) -> OperationError {
             code: "SERVICE_NOT_FOUND".into(),
             message: "invalid service name".into(),
         },
+        HelperError::InvalidRequest => OperationError {
+            code: "INVALID_REQUEST".into(),
+            message: "invalid helper request parameters".into(),
+        },
         HelperError::UtilityUnavailable(name) => OperationError {
             code: "CAPABILITY_UNAVAILABLE".into(),
             message: format!("required utility unavailable: {name}"),
@@ -29,15 +33,16 @@ fn map_error(error: HelperError) -> OperationError {
     }
 }
 
-async fn execute_request(api: &HelperApi, request: HelperRequest) -> Result<(), HelperError> {
+async fn execute_request(api: &HelperApi, request: HelperRequest) -> Result<Option<String>, HelperError> {
     match request {
-        HelperRequest::RestartService { service } => api.restart_service(&service).await,
-        HelperRequest::StartService { service } => api.start_service(&service).await,
-        HelperRequest::StopService { service } => api.stop_service(&service).await,
-        HelperRequest::PackagesRefresh => api.refresh_packages().await,
-        HelperRequest::PackagesUpgradeSecurity => api.upgrade_security_packages().await,
-        HelperRequest::PackagesUpgradeAll => api.upgrade_all_packages().await,
-        HelperRequest::SystemReboot => api.reboot().await,
+        HelperRequest::RestartService { service } => api.restart_service(&service).await.map(|_| None),
+        HelperRequest::StartService { service } => api.start_service(&service).await.map(|_| None),
+        HelperRequest::StopService { service } => api.stop_service(&service).await.map(|_| None),
+        HelperRequest::PackagesRefresh => api.refresh_packages().await.map(|_| None),
+        HelperRequest::PackagesUpgradeSecurity => api.upgrade_security_packages().await.map(|_| None),
+        HelperRequest::PackagesUpgradeAll => api.upgrade_all_packages().await.map(|_| None),
+        HelperRequest::SystemReboot => api.reboot().await.map(|_| None),
+        HelperRequest::Journal { service, lines } => api.journal(&service, lines).await.map(Some),
     }
 }
 
@@ -47,13 +52,15 @@ async fn handle_client(stream: UnixStream, api: Arc<HelperApi>) -> anyhow::Resul
     while let Some(line) = lines.next_line().await? {
         let response = match serde_json::from_str::<HelperRequest>(&line) {
             Ok(request) => match execute_request(&api, request).await {
-                Ok(()) => HelperResponse {
+                Ok(output) => HelperResponse {
                     ok: true,
                     error: None,
+                    output,
                 },
                 Err(error) => HelperResponse {
                     ok: false,
                     error: Some(map_error(error)),
+                    output: None,
                 },
             },
             Err(_) => HelperResponse {
@@ -62,6 +69,7 @@ async fn handle_client(stream: UnixStream, api: Arc<HelperApi>) -> anyhow::Resul
                     code: "INVALID_REQUEST".into(),
                     message: "invalid helper request".into(),
                 }),
+                output: None,
             },
         };
         writer
