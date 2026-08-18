@@ -93,7 +93,10 @@ impl Config {
             return Err("ARGUS_WEB_API_TOKEN must be at least 32 characters".into());
         }
         let worker_api_token = std::env::var("ARGUS_WORKER_TOKEN").ok();
-        if worker_api_token.as_ref().is_some_and(|token| token.len() < 32) {
+        if worker_api_token
+            .as_ref()
+            .is_some_and(|token| token.len() < 32)
+        {
             return Err("ARGUS_WORKER_TOKEN must be at least 32 characters when configured".into());
         }
         Ok(Self {
