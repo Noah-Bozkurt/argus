@@ -80,13 +80,10 @@ async fn execute_request(
                 .map(Some)
                 .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))
         }),
-        HelperRequest::BackupCreate { backup_id, profile } => api
-            .backup_create(&backup_id, &profile)
-            .await
-            .map(|_| None),
-        HelperRequest::BackupVerify { backup } => {
-            api.backup_verify(&backup).await.map(|_| None)
+        HelperRequest::BackupCreate { backup_id, profile } => {
+            api.backup_create(&backup_id, &profile).await.map(|_| None)
         }
+        HelperRequest::BackupVerify { backup } => api.backup_verify(&backup).await.map(|_| None),
     }
 }
 
