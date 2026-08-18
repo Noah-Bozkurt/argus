@@ -52,33 +52,51 @@ impl HelperClient {
             service: service.into(),
         })
         .await
+        .map(|_| ())
     }
     pub async fn start_service(&self, service: &str) -> Result<(), OperationError> {
         self.request(HelperRequest::StartService {
             service: service.into(),
         })
         .await
+        .map(|_| ())
     }
     pub async fn stop_service(&self, service: &str) -> Result<(), OperationError> {
         self.request(HelperRequest::StopService {
             service: service.into(),
         })
         .await
+        .map(|_| ())
     }
     pub async fn refresh_packages(&self) -> Result<(), OperationError> {
-        self.request(HelperRequest::PackagesRefresh).await
+        self.request(HelperRequest::PackagesRefresh)
+            .await
+            .map(|_| ())
     }
     pub async fn upgrade_security_packages(&self) -> Result<(), OperationError> {
-        self.request(HelperRequest::PackagesUpgradeSecurity).await
+        self.request(HelperRequest::PackagesUpgradeSecurity)
+            .await
+            .map(|_| ())
     }
     pub async fn upgrade_all_packages(&self) -> Result<(), OperationError> {
-        self.request(HelperRequest::PackagesUpgradeAll).await
+        self.request(HelperRequest::PackagesUpgradeAll)
+            .await
+            .map(|_| ())
     }
     pub async fn reboot(&self) -> Result<(), OperationError> {
-        self.request(HelperRequest::SystemReboot).await
+        self.request(HelperRequest::SystemReboot).await.map(|_| ())
+    }
+    pub async fn journal(&self, service: &str, lines: u32) -> Result<String, OperationError> {
+        Ok(self
+            .request(HelperRequest::Journal {
+                service: service.into(),
+                lines,
+            })
+            .await?
+            .unwrap_or_default())
     }
 
-    async fn request(&self, request: HelperRequest) -> Result<(), OperationError> {
+    async fn request(&self, request: HelperRequest) -> Result<Option<String>, OperationError> {
         let mut stream = UnixStream::connect(&self.socket)
             .await
             .map_err(|e| OperationError {
@@ -101,7 +119,7 @@ impl HelperClient {
             .map_err(io_error)?;
         let response: HelperResponse = serde_json::from_str(&line).map_err(internal)?;
         if response.ok {
-            Ok(())
+            Ok(response.output)
         } else {
             Err(response.error.unwrap_or(OperationError {
                 code: "HELPER_FAILED".into(),
@@ -151,36 +169,56 @@ impl AgentRuntime {
                 &format!("missing capability {}.{}", required.name, required.version),
             );
         }
-        let result = match &command.command_type {
+
+        let result: Result<Option<String>, OperationError> = match &command.command_type {
             protocol::CommandType::ServiceRestart { service } => {
-                self.helper.restart_service(service).await
+                self.helper.restart_service(service).await.map(|_| None)
             }
             protocol::CommandType::ServiceStart { service } => {
-                self.helper.start_service(service).await
+                self.helper.start_service(service).await.map(|_| None)
             }
             protocol::CommandType::ServiceStop { service } => {
-                self.helper.stop_service(service).await
+                self.helper.stop_service(service).await.map(|_| None)
             }
-            protocol::CommandType::ServiceStatus { .. } => Ok(()),
-            protocol::CommandType::PackagesRefresh => self.helper.refresh_packages().await,
+            protocol::CommandType::ServiceStatus { .. } => Ok(None),
+            protocol::CommandType::PackagesRefresh => {
+                self.helper.refresh_packages().await.map(|_| None)
+            }
             protocol::CommandType::PackagesUpgradeSecurity => {
-                self.helper.upgrade_security_packages().await
+                self.helper.upgrade_security_packages().await.map(|_| None)
             }
-            protocol::CommandType::PackagesUpgradeAll => self.helper.upgrade_all_packages().await,
-            protocol::CommandType::SystemReboot => self.helper.reboot().await,
+            protocol::CommandType::PackagesUpgradeAll => {
+                self.helper.upgrade_all_packages().await.map(|_| None)
+            }
+            protocol::CommandType::SystemReboot => self.helper.reboot().await.map(|_| {
+                Some(format!(
+                    "{{\"reboot_requested_at_uptime\":{}}}",
+                    system::current_uptime_seconds()
+                ))
+            }),
+            protocol::CommandType::LogsJournal { service, lines } => {
+                self.helper.journal(service, *lines).await.map(Some)
+            }
         };
+
         match result {
-            Ok(()) => CommandResult {
+            Ok(output) => CommandResult {
                 command_id: command.id,
-                status: CommandStatus::SUCCEEDED,
+                status: if matches!(command.command_type, protocol::CommandType::SystemReboot) {
+                    CommandStatus::UNKNOWN
+                } else {
+                    CommandStatus::SUCCEEDED
+                },
                 finished_at: Utc::now(),
                 error: None,
+                output,
             },
             Err(error) => CommandResult {
                 command_id: command.id,
                 status: CommandStatus::FAILED,
                 finished_at: Utc::now(),
                 error: Some(error),
+                output: None,
             },
         }
     }
@@ -194,5 +232,6 @@ fn failed(command_id: Uuid, code: &str, message: &str) -> CommandResult {
             code: code.into(),
             message: message.into(),
         }),
+        output: None,
     }
 }

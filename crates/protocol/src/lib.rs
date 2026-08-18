@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: &str = "1.1";
+pub const PROTOCOL_VERSION: &str = "1.2";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentHandshake {
@@ -58,6 +58,8 @@ pub enum CommandType {
     PackagesUpgradeAll,
     #[serde(rename = "system.reboot")]
     SystemReboot,
+    #[serde(rename = "logs.journal")]
+    LogsJournal { service: String, lines: u32 },
 }
 impl CommandType {
     pub fn conflict_group(&self) -> &'static str {
@@ -70,6 +72,7 @@ impl CommandType {
             | CommandType::PackagesUpgradeSecurity
             | CommandType::PackagesUpgradeAll => "packages.mutate",
             CommandType::SystemReboot => "system.reboot",
+            CommandType::LogsJournal { .. } => "logs.read",
         }
     }
     pub fn required_capability(&self) -> Capability {
@@ -89,6 +92,10 @@ impl CommandType {
             },
             CommandType::SystemReboot => Capability {
                 name: "system.reboot".into(),
+                version: "v1".into(),
+            },
+            CommandType::LogsJournal { .. } => Capability {
+                name: "logs.journal".into(),
                 version: "v1".into(),
             },
         }
@@ -133,12 +140,26 @@ pub struct CommandResult {
     pub status: CommandStatus,
     pub finished_at: DateTime<Utc>,
     pub error: Option<OperationError>,
+    #[serde(default)]
+    pub output: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct UpdateState {
     pub supported: bool,
     pub pending_updates: u32,
     pub reboot_required: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ServiceJournal {
+    pub service: String,
+    pub output: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct DiagnosticsState {
+    pub failed_units: Vec<String>,
+    pub listening_tcp_ports: Vec<u16>,
+    #[serde(default)]
+    pub journals: Vec<ServiceJournal>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SystemSnapshot {
@@ -155,6 +176,8 @@ pub struct SystemSnapshot {
     pub agent_version: String,
     #[serde(default)]
     pub updates: UpdateState,
+    #[serde(default)]
+    pub diagnostics: DiagnosticsState,
     pub captured_at: DateTime<Utc>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -194,11 +217,15 @@ pub enum HelperRequest {
     PackagesUpgradeAll,
     #[serde(rename = "system.reboot")]
     SystemReboot,
+    #[serde(rename = "logs.journal")]
+    Journal { service: String, lines: u32 },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelperResponse {
     pub ok: bool,
     pub error: Option<OperationError>,
+    #[serde(default)]
+    pub output: Option<String>,
 }
 #[derive(Debug, Error)]
 pub enum ProtocolError {
@@ -223,19 +250,22 @@ mod tests {
         let command = Command {
             id: Uuid::new_v4(),
             server_id: Uuid::new_v4(),
-            command_type: CommandType::SystemReboot,
+            command_type: CommandType::LogsJournal {
+                service: "nginx.service".into(),
+                lines: 100,
+            },
             created_at: Utc::now(),
             expires_at: Utc::now(),
             status: CommandStatus::QUEUED,
             idempotency_key: "abc".into(),
-            risk_level: RiskLevel::CRITICAL,
+            risk_level: RiskLevel::LOW,
         };
         let parsed: Command =
             serde_json::from_str(&serde_json::to_string(&command).unwrap()).unwrap();
         assert_eq!(parsed.command_type, command.command_type);
     }
     #[test]
-    fn update_and_reboot_capabilities_are_explicit() {
+    fn capabilities_are_explicit() {
         assert_eq!(
             CommandType::PackagesRefresh.required_capability().name,
             "apt"
@@ -244,15 +274,31 @@ mod tests {
             CommandType::SystemReboot.required_capability().name,
             "system.reboot"
         );
+        assert_eq!(
+            CommandType::LogsJournal {
+                service: "nginx.service".into(),
+                lines: 100,
+            }
+            .required_capability()
+            .name,
+            "logs.journal"
+        );
     }
     #[test]
     fn disruptive_operations_require_maintenance() {
         assert!(!CommandType::PackagesRefresh.requires_maintenance());
         assert!(CommandType::PackagesUpgradeAll.requires_maintenance());
         assert!(CommandType::SystemReboot.requires_maintenance());
+        assert!(
+            !CommandType::LogsJournal {
+                service: "nginx.service".into(),
+                lines: 100,
+            }
+            .requires_maintenance()
+        );
     }
     #[test]
     fn protocol_version_validation_rejects_unsupported_versions() {
-        assert!(validate_protocol_version("1.0").is_err());
+        assert!(validate_protocol_version("1.1").is_err());
     }
 }

@@ -13,6 +13,11 @@ export type SystemSnapshot = {
   uptime_seconds: number
   agent_version: string
   updates: { supported: boolean; pending_updates: number; reboot_required: boolean }
+  diagnostics: {
+    failed_units: string[]
+    listening_tcp_ports: number[]
+    journals: Array<{ service: string; output: string }>
+  }
   captured_at: string
 }
 
