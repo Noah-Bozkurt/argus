@@ -16,12 +16,14 @@ use uuid::Uuid;
 
 mod desired_state;
 mod environments;
+mod environments;
 mod github_integration;
 mod maintenance;
 mod persistence;
 mod project_workspace;
 mod service_catalog;
 use desired_state::{DesiredState, DesiredStateError, DesiredStateStore};
+use environments::EnvironmentStore;
 use environments::EnvironmentStore;
 use github_integration::{GitHubIntegrationStore, GitHubProvider};
 use maintenance::MaintenanceStore;
@@ -34,6 +36,7 @@ struct AppState {
     storage: Storage,
     maintenance: MaintenanceStore,
     desired_state: DesiredStateStore,
+    environments: EnvironmentStore,
     environments: EnvironmentStore,
     workspace: ProjectWorkspaceStore,
     github: GitHubIntegrationStore,
@@ -110,6 +113,7 @@ async fn main() -> anyhow::Result<()> {
     let storage = Storage::connect(&config.database_url).await?;
     let maintenance = MaintenanceStore::connect(&config.database_url).await?;
     let desired_state = DesiredStateStore::connect(&config.database_url).await?;
+    let environments = EnvironmentStore::connect(&config.database_url).await?;
     let environments = EnvironmentStore::connect(&config.database_url).await?;
     let workspace = ProjectWorkspaceStore::connect(&config.database_url).await?;
     let github =
