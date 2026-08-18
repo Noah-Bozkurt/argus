@@ -458,7 +458,8 @@ impl DeploymentReleaseStore {
         )
         .await?;
         tx.commit().await?;
-        self.get_release(identity.organization_id, project_id, id).await
+        self.get_release(identity.organization_id, project_id, id)
+            .await
     }
 
     pub async fn add_release_component(
@@ -681,10 +682,7 @@ pub fn router() -> Router<AppState> {
             "/projects/:project_id/deployments-releases",
             get(get_deployment_release_view),
         )
-        .route(
-            "/projects/:project_id/deployments",
-            post(create_deployment),
-        )
+        .route("/projects/:project_id/deployments", post(create_deployment))
         .route(
             "/projects/:project_id/deployments/:deployment_id/status",
             axum::routing::put(update_deployment_status),
@@ -857,11 +855,7 @@ fn release_transition_allowed(current: &str, next: &str) -> bool {
     )
 }
 
-fn required_text(
-    value: &str,
-    min: usize,
-    max: usize,
-) -> Result<String, DeploymentReleaseError> {
+fn required_text(value: &str, min: usize, max: usize) -> Result<String, DeploymentReleaseError> {
     let value = value.trim();
     if value.len() < min || value.len() > max {
         Err(DeploymentReleaseError::Invalid)
