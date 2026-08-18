@@ -23,6 +23,7 @@ mod github_integration;
 mod incidents;
 mod job_execution;
 mod maintenance;
+mod monitor_scheduling;
 mod notifications;
 mod persistence;
 mod project_workspace;
@@ -39,6 +40,7 @@ use environments::EnvironmentStore;
 use github_integration::{GitHubIntegrationStore, GitHubProvider};
 use incidents::IncidentStore;
 use maintenance::MaintenanceStore;
+use monitor_scheduling::MonitorSchedulingStore;
 use notifications::NotificationStore;
 use persistence::{Storage, StorageError, WebIdentity};
 use project_workspace::ProjectWorkspaceStore;
@@ -52,6 +54,7 @@ use status_pages::StatusPageStore;
 struct AppState {
     storage: Storage,
     maintenance: MaintenanceStore,
+    monitor_scheduling: MonitorSchedulingStore,
     notifications: NotificationStore,
     incidents: IncidentStore,
     desired_state: DesiredStateStore,
@@ -147,6 +150,7 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env().map_err(anyhow::Error::msg)?;
     let storage = Storage::connect(&config.database_url).await?;
     let maintenance = MaintenanceStore::connect(&config.database_url).await?;
+    let monitor_scheduling = MonitorSchedulingStore::connect(&config.database_url).await?;
     let notifications = NotificationStore::connect(&config.database_url).await?;
     let incidents = IncidentStore::connect(&config.database_url).await?;
     let desired_state = DesiredStateStore::connect(&config.database_url).await?;
@@ -165,6 +169,7 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState {
         storage,
         maintenance,
+        monitor_scheduling,
         notifications,
         incidents,
         desired_state,
@@ -211,6 +216,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(deployments_releases::router())
         .merge(sites_domains::router())
         .merge(site_monitoring::router())
+        .merge(monitor_scheduling::router())
         .merge(dependency_graph::router())
         .merge(incidents::router())
         .merge(change_correlation::router())
