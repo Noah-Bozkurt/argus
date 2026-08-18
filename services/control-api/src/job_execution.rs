@@ -39,6 +39,7 @@ async fn execute_job(
     match request.kind.as_str() {
         "notifications.materialize" => execute_notification_materialization(&state, request).await,
         "site_monitor.check" => execute_site_monitor_check(&state, request).await,
+        "site_incident.evaluate" => execute_site_incident_evaluation(&state, request).await,
         _ => Err(api_error(
             StatusCode::BAD_REQUEST,
             "JOB_KIND_UNSUPPORTED",
@@ -120,6 +121,54 @@ async fn execute_site_monitor_check(
         job_id: request.job_id,
         status: "SUCCEEDED",
         summary: format!("site check completed with {}", check.overall_status),
+    }))
+}
+
+async fn execute_site_incident_evaluation(
+    state: &AppState,
+    request: ExecuteJobRequest,
+) -> Result<Json<ExecuteJobResponse>, ApiError> {
+    let project_id = request.project_id.ok_or_else(|| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_JOB_PAYLOAD",
+            "site_incident.evaluate requires a project",
+        )
+    })?;
+    let site_id = payload_uuid(&request.payload, "site_id")?;
+    let check_id = payload_uuid(&request.payload, "check_id")?;
+    let result = state
+        .incident_automation
+        .evaluate(
+            state,
+            request.organization_id,
+            project_id,
+            site_id,
+            check_id,
+        )
+        .await
+        .map_err(|error| {
+            tracing::error!(job_id=%request.job_id, project_id=%project_id, site_id=%site_id, check_id=%check_id, error=%error, "Site Incident automation evaluation failed");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "JOB_EXECUTION_FAILED",
+                "Site Incident automation evaluation failed",
+            )
+        })?;
+
+    Ok(Json(ExecuteJobResponse {
+        job_id: request.job_id,
+        status: "SUCCEEDED",
+        summary: match result.incident_id {
+            Some(incident_id) => format!(
+                "{} after {} consecutive failures: incident {}",
+                result.action, result.consecutive_failures, incident_id
+            ),
+            None => format!(
+                "{} after {} consecutive failures",
+                result.action, result.consecutive_failures
+            ),
+        },
     }))
 }
 
