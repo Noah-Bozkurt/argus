@@ -7,6 +7,7 @@ export default function DashboardPage() {
       <ul>
         <li><Link href="/projects">Projects</Link></li>
         <li><Link href="/notifications">Notifications</Link></li>
+        <li><Link href="/jobs">Background Jobs</Link></li>
         <li><Link href="/infrastructure/servers">Infrastructure / Servers</Link></li>
       </ul>
     </main>
