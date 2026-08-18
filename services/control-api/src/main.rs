@@ -14,6 +14,7 @@ use std::{net::SocketAddr, sync::Arc};
 use tracing::info;
 use uuid::Uuid;
 
+mod change_correlation;
 mod dependency_graph;
 mod deployments_releases;
 mod desired_state;
@@ -26,6 +27,7 @@ mod project_workspace;
 mod service_catalog;
 mod site_monitoring;
 mod sites_domains;
+use change_correlation::ChangeCorrelationStore;
 use dependency_graph::DependencyGraphStore;
 use deployments_releases::DeploymentReleaseStore;
 use desired_state::{DesiredState, DesiredStateError, DesiredStateStore};
@@ -45,6 +47,7 @@ struct AppState {
     maintenance: MaintenanceStore,
     incidents: IncidentStore,
     desired_state: DesiredStateStore,
+    change_correlation: ChangeCorrelationStore,
     dependency_graph: DependencyGraphStore,
     deployments_releases: DeploymentReleaseStore,
     environments: EnvironmentStore,
@@ -126,6 +129,7 @@ async fn main() -> anyhow::Result<()> {
     let maintenance = MaintenanceStore::connect(&config.database_url).await?;
     let incidents = IncidentStore::connect(&config.database_url).await?;
     let desired_state = DesiredStateStore::connect(&config.database_url).await?;
+    let change_correlation = ChangeCorrelationStore::connect(&config.database_url).await?;
     let dependency_graph = DependencyGraphStore::connect(&config.database_url).await?;
     let deployments_releases = DeploymentReleaseStore::connect(&config.database_url).await?;
     let environments = EnvironmentStore::connect(&config.database_url).await?;
@@ -140,6 +144,7 @@ async fn main() -> anyhow::Result<()> {
         maintenance,
         incidents,
         desired_state,
+        change_correlation,
         dependency_graph,
         deployments_releases,
         environments,
@@ -181,6 +186,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(site_monitoring::router())
         .merge(dependency_graph::router())
         .merge(incidents::router())
+        .merge(change_correlation::router())
         .with_state(state);
     info!(bind_addr=%config.bind_addr, "starting persistent Argus control API");
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
