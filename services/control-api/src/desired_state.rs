@@ -133,13 +133,12 @@ impl DesiredStateStore {
         self.authorize(identity, server_id).await?;
         validate_policy(&policy)?;
 
-        let project_id: Uuid = sqlx::query_scalar(
-            "SELECT project_id FROM servers WHERE id=$1 AND organization_id=$2",
-        )
-        .bind(server_id)
-        .bind(identity.organization_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let project_id: Uuid =
+            sqlx::query_scalar("SELECT project_id FROM servers WHERE id=$1 AND organization_id=$2")
+                .bind(server_id)
+                .bind(identity.organization_id)
+                .fetch_one(&self.pool)
+                .await?;
         let reconciliation_enabled = policy.mode == "ENFORCE";
         let payload = serde_json::json!({
             "server_id": server_id,
