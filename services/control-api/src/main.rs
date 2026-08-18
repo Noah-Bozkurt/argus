@@ -21,6 +21,7 @@ mod desired_state;
 mod environments;
 mod github_integration;
 mod incidents;
+mod job_execution;
 mod maintenance;
 mod notifications;
 mod persistence;
@@ -66,12 +67,14 @@ struct AppState {
     status_pages: StatusPageStore,
     site_monitoring: SiteMonitoringStore,
     web_api_token: Arc<String>,
+    worker_api_token: Option<Arc<String>>,
 }
 #[derive(Debug)]
 struct Config {
     bind_addr: SocketAddr,
     database_url: String,
     web_api_token: String,
+    worker_api_token: Option<String>,
 }
 impl Config {
     fn from_env() -> Result<Self, String> {
@@ -89,10 +92,15 @@ impl Config {
         if web_api_token.len() < 32 {
             return Err("ARGUS_WEB_API_TOKEN must be at least 32 characters".into());
         }
+        let worker_api_token = std::env::var("ARGUS_WORKER_TOKEN").ok();
+        if worker_api_token.as_ref().is_some_and(|token| token.len() < 32) {
+            return Err("ARGUS_WORKER_TOKEN must be at least 32 characters when configured".into());
+        }
         Ok(Self {
             bind_addr,
             database_url,
             web_api_token,
+            worker_api_token,
         })
     }
 }
@@ -169,6 +177,7 @@ async fn main() -> anyhow::Result<()> {
         status_pages,
         site_monitoring,
         web_api_token: Arc::new(config.web_api_token),
+        worker_api_token: config.worker_api_token.map(Arc::new),
     };
     let app = Router::new()
         .route("/health", get(health))
@@ -205,6 +214,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(readiness::router())
         .merge(status_pages::router())
         .merge(notifications::router())
+        .merge(job_execution::router())
         .with_state(state);
     info!(bind_addr=%config.bind_addr, "starting persistent Argus control API");
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
