@@ -24,6 +24,7 @@ mod incidents;
 mod maintenance;
 mod persistence;
 mod project_workspace;
+mod readiness;
 mod service_catalog;
 mod site_monitoring;
 mod sites_domains;
@@ -38,6 +39,7 @@ use incidents::IncidentStore;
 use maintenance::MaintenanceStore;
 use persistence::{Storage, StorageError, WebIdentity};
 use project_workspace::ProjectWorkspaceStore;
+use readiness::ReadinessStore;
 use service_catalog::ServiceCatalogStore;
 use site_monitoring::SiteMonitoringStore;
 use sites_domains::SiteDomainStore;
@@ -54,6 +56,7 @@ struct AppState {
     deployments_releases: DeploymentReleaseStore,
     environments: EnvironmentStore,
     workspace: ProjectWorkspaceStore,
+    readiness: ReadinessStore,
     github: GitHubIntegrationStore,
     service_catalog: ServiceCatalogStore,
     sites_domains: SiteDomainStore,
@@ -137,6 +140,7 @@ async fn main() -> anyhow::Result<()> {
     let deployments_releases = DeploymentReleaseStore::connect(&config.database_url).await?;
     let environments = EnvironmentStore::connect(&config.database_url).await?;
     let workspace = ProjectWorkspaceStore::connect(&config.database_url).await?;
+    let readiness = ReadinessStore::connect(&config.database_url).await?;
     let github =
         GitHubIntegrationStore::connect(&config.database_url, GitHubProvider::from_env()?).await?;
     let service_catalog = ServiceCatalogStore::connect(&config.database_url).await?;
@@ -153,6 +157,7 @@ async fn main() -> anyhow::Result<()> {
         deployments_releases,
         environments,
         workspace,
+        readiness,
         github,
         service_catalog,
         sites_domains,
@@ -192,6 +197,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(dependency_graph::router())
         .merge(incidents::router())
         .merge(change_correlation::router())
+        .merge(readiness::router())
         .merge(status_pages::router())
         .with_state(state);
     info!(bind_addr=%config.bind_addr, "starting persistent Argus control API");
