@@ -1,0 +1,21 @@
+[Unit]
+Description=Argus privileged helper
+After=local-fs.target
+
+[Service]
+Type=simple
+User=root
+Group=argus
+RuntimeDirectory=argus
+RuntimeDirectoryMode=0750
+EnvironmentFile=-/etc/argus/helper.env
+ExecStart=/usr/local/bin/argus-helper
+Restart=on-failure
+RestartSec=2
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/argus
+
+[Install]
+WantedBy=multi-user.target
