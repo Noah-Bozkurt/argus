@@ -2,6 +2,7 @@ import Link from 'next/link'
 import ServiceCatalogSection from './service-catalog-section'
 import EnvironmentsSection from './environments-section'
 import DeploymentsReleasesSection from './deployments-releases-section'
+import ReadinessSection from './readiness-section'
 import SitesDomainsSection from './sites-domains-section'
 import SiteMonitoringSection from './site-monitoring-section'
 import DependencyGraphSection from './dependency-graph-section'
@@ -95,6 +96,8 @@ export default async function ProjectPage({ params }: { params: { projectId: str
       <ServiceCatalogSection projectId={project.id} />
 
       <DeploymentsReleasesSection projectId={project.id} />
+
+      <ReadinessSection projectId={project.id} />
 
       <SitesDomainsSection projectId={project.id} />
 
