@@ -59,6 +59,10 @@ Environment create/update/delete operations write both audit events and project-
 - `environment.updated`
 - `environment.deleted`
 
+## Validation gate
+
+The phase is only mergeable after the normal repository checks pass: Rust workspace tests, `cargo fmt --all -- --check`, and the web TypeScript check.
+
 ## Next phase
 
 Deployments and releases can now target a stable Service + Environment pair. The next phase should record immutable deployment attempts, source commit/version, actor, provider, status, duration and rollback relationship rather than storing "current deployment" directly on the environment.
