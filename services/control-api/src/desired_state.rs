@@ -112,13 +112,12 @@ impl DesiredStateStore {
             DesiredState::default()
         };
 
-        let snapshot: Option<serde_json::Value> = sqlx::query_scalar(
-            "SELECT snapshot FROM agents WHERE server_id=$1",
-        )
-        .bind(server_id)
-        .fetch_optional(&self.pool)
-        .await?
-        .flatten();
+        let snapshot: Option<serde_json::Value> =
+            sqlx::query_scalar("SELECT snapshot FROM agents WHERE server_id=$1")
+                .bind(server_id)
+                .fetch_optional(&self.pool)
+                .await?
+                .flatten();
         let drift = match snapshot {
             Some(snapshot) => calculate_drift(&policy, &serde_json::from_value(snapshot)?),
             None => Vec::new(),
@@ -151,6 +150,7 @@ impl DesiredStateStore {
             return Err(DesiredStateError::Invalid);
         }
 
+        let mut tx = self.pool.begin().await?;
         sqlx::query(
             "INSERT INTO server_policies(server_id,organization_id,mode,firewall_enabled,ssh_password_auth,ssh_root_login,automatic_security_updates,updated_by,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW()) ON CONFLICT(server_id) DO UPDATE SET mode=EXCLUDED.mode,firewall_enabled=EXCLUDED.firewall_enabled,ssh_password_auth=EXCLUDED.ssh_password_auth,ssh_root_login=EXCLUDED.ssh_root_login,automatic_security_updates=EXCLUDED.automatic_security_updates,updated_by=EXCLUDED.updated_by,updated_at=NOW()",
         )
@@ -162,8 +162,35 @@ impl DesiredStateStore {
         .bind(&policy.ssh_root_login)
         .bind(policy.automatic_security_updates)
         .bind(identity.user_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+
+        sqlx::query(
+            "INSERT INTO audit_events(id,organization_id,actor,resource,action,request_id,result,source,timestamp) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW())",
+        )
+        .bind(Uuid::new_v4())
+        .bind(identity.organization_id)
+        .bind(identity.user_id.to_string())
+        .bind(server_id.to_string())
+        .bind("server.desired_state.updated")
+        .bind(Uuid::new_v4().to_string())
+        .bind("SUCCEEDED")
+        .bind("web")
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            "INSERT INTO domain_events(id,organization_id,event_type,resource_id,data,occurred_at) VALUES($1,$2,$3,$4,$5,NOW())",
+        )
+        .bind(Uuid::new_v4())
+        .bind(identity.organization_id)
+        .bind("server.desired_state.updated")
+        .bind(server_id)
+        .bind(serde_json::json!({"mode": policy.mode}))
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+
         self.get(identity, server_id).await
     }
 }
@@ -226,8 +253,8 @@ fn item(field: &str, desired: bool, actual: bool, severity: &str) -> DriftItem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use protocol::{DiagnosticsState, DockerState, SecurityState, UpdateState};
     use chrono::Utc;
+    use protocol::{DiagnosticsState, DockerState, SecurityState, UpdateState};
 
     fn snapshot() -> SystemSnapshot {
         SystemSnapshot {
@@ -268,5 +295,10 @@ mod tests {
             automatic_security_updates: Some(true),
         };
         assert_eq!(calculate_drift(&policy, &snapshot()).len(), 4);
+    }
+
+    #[test]
+    fn ignores_unconfigured_policy_fields() {
+        assert!(calculate_drift(&DesiredState::default(), &snapshot()).is_empty());
     }
 }
