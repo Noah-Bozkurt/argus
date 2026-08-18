@@ -16,11 +16,16 @@ export type SystemSnapshot = {
   diagnostics: { failed_units: string[]; listening_tcp_ports: number[]; journals: Array<{ service: string; output: string }> }
   docker: { available: boolean; containers: Array<{ id: string; name: string; image: string; state: string; status: string; ports: string }> }
   security: { available: boolean; firewall_status: string; firewall_rules: string[]; ssh_password_auth: boolean | null; ssh_root_login: string; automatic_security_updates: boolean; findings: Array<{ severity: string; code: string; message: string }> }
+  backups: {
+    available: boolean
+    target: string
+    artifacts: Array<{ name: string; profile: string; size_bytes: number; created_unix: number; sha256: string; verified: boolean }>
+  }
   captured_at: string
 }
 
 export type ServerView = { server_id: string; project_id: string; environment_id: string; hostname: string; online: boolean; last_heartbeat: string | null; snapshot: SystemSnapshot | null; services: Array<{ name: string; status: string }> }
-export type CommandHistoryItem = { command: { id: string; server_id: string; command_type: { kind: string; service?: string; container?: string }; created_at: string; expires_at: string; status: string; idempotency_key: string; risk_level: string }; started_at: string | null; finished_at: string | null; error_code: string | null; error_message: string | null; actor_user_id: string | null }
+export type CommandHistoryItem = { command: { id: string; server_id: string; command_type: { kind: string; service?: string; container?: string; profile?: string; backup?: string }; created_at: string; expires_at: string; status: string; idempotency_key: string; risk_level: string }; started_at: string | null; finished_at: string | null; error_code: string | null; error_message: string | null; actor_user_id: string | null }
 export type MaintenanceWindow = { id: string; server_id: string; starts_at: string; ends_at: string; reason: string; created_by: string; created_at: string; ended_at: string | null }
 export type DesiredState = { mode: 'MONITOR' | 'ENFORCE'; firewall_enabled: boolean | null; ssh_password_auth: boolean | null; ssh_root_login: string | null; automatic_security_updates: boolean | null }
 export type DesiredStateView = { policy: DesiredState; drift: Array<{ field: string; desired: string; actual: string; severity: string }>; enforcement_available: boolean }
@@ -54,6 +59,8 @@ export async function updateDesiredState(serverId: string, policy: DesiredState)
 }
 export async function serviceAction(serverId: string, service: string, action: ServiceAction): Promise<void> { await queue(serverId, { kind: `service.${action}`, service }, action === 'stop' ? 'HIGH' : 'MEDIUM', 60) }
 export async function containerAction(serverId: string, container: string, action: ContainerAction): Promise<void> { await queue(serverId, { kind: `docker.${action}`, container }, action === 'stop' ? 'HIGH' : 'MEDIUM', 120) }
+export async function createBackup(serverId: string): Promise<void> { await queue(serverId, { kind: 'backup.create', profile: 'system-config' }, 'MEDIUM', 600) }
+export async function verifyBackup(serverId: string, backup: string): Promise<void> { await queue(serverId, { kind: 'backup.verify', backup }, 'LOW', 300) }
 export async function serverOperation(serverId: string, operation: ServerOperation): Promise<void> {
   const risk = operation === 'system.reboot' ? 'CRITICAL' : operation === 'packages.refresh' ? 'MEDIUM' : 'HIGH'
   const ttl = operation.startsWith('packages.upgrade') ? 3600 : 300
