@@ -7,11 +7,13 @@ use protocol::{
 use reqwest::{Client, StatusCode};
 use std::{
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 use uuid::Uuid;
+
+const UPDATE_INVENTORY_INTERVAL: Duration = Duration::from_secs(300);
 
 fn capabilities() -> Vec<Capability> {
     vec![
@@ -82,9 +84,14 @@ async fn bootstrap_config(path: &Path, client: &Client) -> Result<AgentConfig> {
     Ok(config)
 }
 
-async fn heartbeat(client: &Client, config: &AgentConfig) -> Result<()> {
-    let snapshot =
+async fn heartbeat(
+    client: &Client,
+    config: &AgentConfig,
+    updates: &protocol::UpdateState,
+) -> Result<()> {
+    let mut snapshot =
         system::collect_snapshot(config.server_id, env!("CARGO_PKG_VERSION").to_string());
+    snapshot.updates = updates.clone();
     let services = system::service_statuses(&config.managed_services)?;
     client
         .post(format!("{}/agent/heartbeat", config.control_plane_url))
@@ -154,11 +161,18 @@ async fn main() -> Result<()> {
         capabilities(),
     );
     let mut backoff = 1_u64;
+    let mut updates = system::update_state();
+    let mut next_update_inventory = Instant::now() + UPDATE_INVENTORY_INTERVAL;
     info!(server_id=%config.server_id, agent_id=%config.agent_id, "argus agent started");
 
     loop {
+        if Instant::now() >= next_update_inventory {
+            updates = system::update_state();
+            next_update_inventory = Instant::now() + UPDATE_INVENTORY_INTERVAL;
+        }
+
         let cycle = async {
-            heartbeat(&client, &config).await?;
+            heartbeat(&client, &config, &updates).await?;
             if let Some(command) = next_command(&client, &config).await? {
                 let command_id = command.id;
                 let result = runtime.execute_command(&command).await;
@@ -168,7 +182,8 @@ async fn main() -> Result<()> {
                 }
             }
             Result::<()>::Ok(())
-        }.await;
+        }
+        .await;
 
         match cycle {
             Ok(()) => {
