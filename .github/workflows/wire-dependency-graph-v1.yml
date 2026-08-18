@@ -1,0 +1,60 @@
+name: Wire dependency graph V1
+on:
+  push:
+    branches: [agent/dependency-graph-v1]
+permissions:
+  contents: write
+jobs:
+  wire:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/dependency-graph-v1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Wire module and project UI
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          main = Path('services/control-api/src/main.rs')
+          text = main.read_text()
+          text = text.replace('mod deployments_releases;\n', 'mod dependency_graph;\nmod deployments_releases;\n', 1)
+          text = text.replace('use deployments_releases::DeploymentReleaseStore;\n', 'use dependency_graph::DependencyGraphStore;\nuse deployments_releases::DeploymentReleaseStore;\n', 1)
+          text = text.replace('    deployments_releases: DeploymentReleaseStore,\n', '    dependency_graph: DependencyGraphStore,\n    deployments_releases: DeploymentReleaseStore,\n', 1)
+          text = text.replace(
+              '    let deployments_releases = DeploymentReleaseStore::connect(&config.database_url).await?;\n',
+              '    let dependency_graph = DependencyGraphStore::connect(&config.database_url).await?;\n    let deployments_releases = DeploymentReleaseStore::connect(&config.database_url).await?;\n',
+              1,
+          )
+          text = text.replace('        deployments_releases,\n', '        dependency_graph,\n        deployments_releases,\n', 1)
+          text = text.replace(
+              '        .merge(site_monitoring::router())\n        .with_state(state);',
+              '        .merge(site_monitoring::router())\n        .merge(dependency_graph::router())\n        .with_state(state);',
+              1,
+          )
+          main.write_text(text)
+
+          page = Path('apps/web/app/projects/[projectId]/page.tsx')
+          text = page.read_text()
+          text = text.replace(
+              "import SiteMonitoringSection from './site-monitoring-section'\n",
+              "import SiteMonitoringSection from './site-monitoring-section'\nimport DependencyGraphSection from './dependency-graph-section'\n",
+              1,
+          )
+          text = text.replace(
+              '      <SiteMonitoringSection projectId={project.id} />',
+              '      <SiteMonitoringSection projectId={project.id} />\n\n      <DependencyGraphSection projectId={project.id} />',
+              1,
+          )
+          page.write_text(text)
+          PY
+          cargo fmt --all
+          git rm .github/workflows/wire-dependency-graph-v1.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add services/control-api/src/main.rs services/control-api/src/dependency_graph.rs apps/web/app/projects/[projectId]/page.tsx
+          git commit -m "feat: wire dependency graph V1"
+          git push
