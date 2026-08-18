@@ -82,4 +82,4 @@ Site Monitoring V1 should build on this inventory with safe outbound HTTP/DNS/TL
 
 ## Validation gate
 
-Merge only after Rust workspace tests, `cargo fmt --all -- --check`, and the web TypeScript check pass.
+Merge only after Rust workspace tests, `cargo fmt --all -- --check`, and the web TypeScript check pass. The final branch must not contain temporary branch-specific workflow files.
