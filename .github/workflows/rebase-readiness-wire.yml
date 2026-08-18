@@ -1,0 +1,53 @@
+name: Wire rebased readiness V1
+on:
+  push:
+    branches: [agent/readiness-v1]
+permissions:
+  contents: write
+jobs:
+  wire:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/readiness-v1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Wire readiness without dropping status pages
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main = Path('services/control-api/src/main.rs')
+          text = main.read_text()
+          if 'mod readiness;' not in text:
+              text = text.replace('mod project_workspace;\n', 'mod project_workspace;\nmod readiness;\n', 1)
+          if 'use readiness::ReadinessStore;' not in text:
+              text = text.replace('use project_workspace::ProjectWorkspaceStore;\n', 'use project_workspace::ProjectWorkspaceStore;\nuse readiness::ReadinessStore;\n', 1)
+          if '    readiness: ReadinessStore,\n' not in text:
+              text = text.replace('    workspace: ProjectWorkspaceStore,\n', '    workspace: ProjectWorkspaceStore,\n    readiness: ReadinessStore,\n', 1)
+          if 'let readiness = ReadinessStore::connect' not in text:
+              text = text.replace('    let workspace = ProjectWorkspaceStore::connect(&config.database_url).await?;\n', '    let workspace = ProjectWorkspaceStore::connect(&config.database_url).await?;\n    let readiness = ReadinessStore::connect(&config.database_url).await?;\n', 1)
+          if '        readiness,\n' not in text:
+              text = text.replace('        workspace,\n        github,\n', '        workspace,\n        readiness,\n        github,\n', 1)
+          if '.merge(readiness::router())' not in text:
+              text = text.replace('        .merge(change_correlation::router())\n        .merge(status_pages::router())', '        .merge(change_correlation::router())\n        .merge(readiness::router())\n        .merge(status_pages::router())', 1)
+          main.write_text(text)
+
+          page = Path('apps/web/app/projects/[projectId]/page.tsx')
+          text = page.read_text()
+          if "import ReadinessSection from './readiness-section'" not in text:
+              text = text.replace("import DeploymentsReleasesSection from './deployments-releases-section'\n", "import DeploymentsReleasesSection from './deployments-releases-section'\nimport ReadinessSection from './readiness-section'\n", 1)
+          if '<ReadinessSection projectId={project.id} />' not in text:
+              text = text.replace('      <DeploymentsReleasesSection projectId={project.id} />', '      <DeploymentsReleasesSection projectId={project.id} />\n\n      <ReadinessSection projectId={project.id} />', 1)
+          page.write_text(text)
+          PY
+          cargo fmt --all
+          git rm .github/workflows/rebase-readiness-wire.yml .argus-readiness-trigger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add services/control-api/src/main.rs services/control-api/src/readiness.rs apps/web/app/projects/[projectId]/page.tsx
+          git commit -m "feat: wire readiness V1 after status pages"
+          git push
