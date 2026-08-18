@@ -6,6 +6,7 @@ import ReadinessSection from './readiness-section'
 import SitesDomainsSection from './sites-domains-section'
 import SiteMonitoringSection from './site-monitoring-section'
 import MonitorSchedulesSection from './monitor-schedules-section'
+import IncidentAutomationSection from './incident-automation-section'
 import DependencyGraphSection from './dependency-graph-section'
 import IncidentsSection from './incidents-section'
 import StatusPagesSection from './status-pages-section'
@@ -105,6 +106,8 @@ export default async function ProjectPage({ params }: { params: { projectId: str
       <SiteMonitoringSection projectId={project.id} />
 
       <MonitorSchedulesSection projectId={project.id} />
+
+      <IncidentAutomationSection projectId={project.id} />
 
       <DependencyGraphSection projectId={project.id} />
 
