@@ -4,8 +4,10 @@ import { revalidatePath } from 'next/cache'
 import {
   createProjectComposeStack,
   deleteProjectComposeStack,
+  runProjectComposeStackAction,
   updateProjectComposeStack,
   type ComposeStack,
+  type ComposeStackAction,
 } from '../../../lib/compose-stacks-api'
 
 function text(formData: FormData, name: string): string {
@@ -40,4 +42,13 @@ export async function deleteComposeStackAction(projectId: string, stackId: strin
   await deleteProjectComposeStack(projectId, stackId)
   revalidatePath(`/projects/${projectId}`)
   revalidatePath('/projects')
+}
+
+export async function runComposeStackAction(
+  projectId: string,
+  stackId: string,
+  action: ComposeStackAction,
+) {
+  await runProjectComposeStackAction(projectId, stackId, action)
+  revalidatePath(`/projects/${projectId}`)
 }
