@@ -226,7 +226,8 @@ impl ComposeStackStore {
         )
         .await?;
         tx.commit().await?;
-        self.get(identity.organization_id, project_id, stack_id).await
+        self.get(identity.organization_id, project_id, stack_id)
+            .await
     }
 
     pub async fn delete(
