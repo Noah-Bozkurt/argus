@@ -110,12 +110,14 @@ async fn main() -> anyhow::Result<()> {
     let workspace = ProjectWorkspaceStore::connect(&config.database_url).await?;
     let github =
         GitHubIntegrationStore::connect(&config.database_url, GitHubProvider::from_env()?).await?;
+    let service_catalog = ServiceCatalogStore::connect(&config.database_url).await?;
     let state = AppState {
         storage,
         maintenance,
         desired_state,
         workspace,
         github,
+        service_catalog,
         web_api_token: Arc::new(config.web_api_token),
     };
     let app = Router::new()
