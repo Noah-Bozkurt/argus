@@ -14,6 +14,7 @@ use std::{net::SocketAddr, sync::Arc};
 use tracing::info;
 use uuid::Uuid;
 
+mod dependency_graph;
 mod deployments_releases;
 mod desired_state;
 mod environments;
@@ -24,6 +25,7 @@ mod project_workspace;
 mod service_catalog;
 mod site_monitoring;
 mod sites_domains;
+use dependency_graph::DependencyGraphStore;
 use deployments_releases::DeploymentReleaseStore;
 use desired_state::{DesiredState, DesiredStateError, DesiredStateStore};
 use environments::EnvironmentStore;
@@ -40,6 +42,7 @@ struct AppState {
     storage: Storage,
     maintenance: MaintenanceStore,
     desired_state: DesiredStateStore,
+    dependency_graph: DependencyGraphStore,
     deployments_releases: DeploymentReleaseStore,
     environments: EnvironmentStore,
     workspace: ProjectWorkspaceStore,
@@ -119,6 +122,7 @@ async fn main() -> anyhow::Result<()> {
     let storage = Storage::connect(&config.database_url).await?;
     let maintenance = MaintenanceStore::connect(&config.database_url).await?;
     let desired_state = DesiredStateStore::connect(&config.database_url).await?;
+    let dependency_graph = DependencyGraphStore::connect(&config.database_url).await?;
     let deployments_releases = DeploymentReleaseStore::connect(&config.database_url).await?;
     let environments = EnvironmentStore::connect(&config.database_url).await?;
     let workspace = ProjectWorkspaceStore::connect(&config.database_url).await?;
@@ -131,6 +135,7 @@ async fn main() -> anyhow::Result<()> {
         storage,
         maintenance,
         desired_state,
+        dependency_graph,
         deployments_releases,
         environments,
         workspace,
@@ -169,6 +174,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(deployments_releases::router())
         .merge(sites_domains::router())
         .merge(site_monitoring::router())
+        .merge(dependency_graph::router())
         .with_state(state);
     info!(bind_addr=%config.bind_addr, "starting persistent Argus control API");
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;

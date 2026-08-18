@@ -287,9 +287,7 @@ impl DependencyGraphStore {
             .map(|node| (NodeKey::new(&node.resource_type, node.resource_id), node))
             .collect();
         let root_key = NodeKey::new(&resource_type, resource_id);
-        let root_node = nodes
-            .get(&root_key)
-            .ok_or(DependencyGraphError::NotFound)?;
+        let root_node = nodes.get(&root_key).ok_or(DependencyGraphError::NotFound)?;
         let root = resource_ref(root_node);
 
         let mut reverse: HashMap<NodeKey, Vec<NodeKey>> = HashMap::new();
@@ -331,7 +329,11 @@ impl DependencyGraphStore {
         affected.sort_by(|left, right| {
             left.distance
                 .cmp(&right.distance)
-                .then_with(|| left.resource.resource_type.cmp(&right.resource.resource_type))
+                .then_with(|| {
+                    left.resource
+                        .resource_type
+                        .cmp(&right.resource.resource_type)
+                })
                 .then_with(|| left.resource.name.cmp(&right.resource.name))
         });
         Ok(ImpactView {
@@ -418,13 +420,7 @@ impl DependencyGraphStore {
                 status: Some(row.get("health_status")),
             });
             if let Some(service_id) = row.get::<Option<Uuid>, _>("service_id") {
-                edges.push(derived_edge(
-                    "SITE",
-                    id,
-                    "SERVICE",
-                    service_id,
-                    "BACKED_BY",
-                ));
+                edges.push(derived_edge("SITE", id, "SERVICE", service_id, "BACKED_BY"));
             }
         }
         for row in domain_rows {
@@ -436,13 +432,7 @@ impl DependencyGraphStore {
                 status: Some(row.get("tls_status")),
             });
             if let Some(site_id) = row.get::<Option<Uuid>, _>("site_id") {
-                edges.push(derived_edge(
-                    "DOMAIN",
-                    id,
-                    "SITE",
-                    site_id,
-                    "ROUTES_TO",
-                ));
+                edges.push(derived_edge("DOMAIN", id, "SITE", site_id, "ROUTES_TO"));
             }
         }
         for row in server_rows {
