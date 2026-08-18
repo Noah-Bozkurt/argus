@@ -27,6 +27,7 @@ mod project_workspace;
 mod service_catalog;
 mod site_monitoring;
 mod sites_domains;
+mod status_pages;
 use change_correlation::ChangeCorrelationStore;
 use dependency_graph::DependencyGraphStore;
 use deployments_releases::DeploymentReleaseStore;
@@ -40,6 +41,7 @@ use project_workspace::ProjectWorkspaceStore;
 use service_catalog::ServiceCatalogStore;
 use site_monitoring::SiteMonitoringStore;
 use sites_domains::SiteDomainStore;
+use status_pages::StatusPageStore;
 
 #[derive(Clone)]
 struct AppState {
@@ -55,6 +57,7 @@ struct AppState {
     github: GitHubIntegrationStore,
     service_catalog: ServiceCatalogStore,
     sites_domains: SiteDomainStore,
+    status_pages: StatusPageStore,
     site_monitoring: SiteMonitoringStore,
     web_api_token: Arc<String>,
 }
@@ -138,6 +141,7 @@ async fn main() -> anyhow::Result<()> {
         GitHubIntegrationStore::connect(&config.database_url, GitHubProvider::from_env()?).await?;
     let service_catalog = ServiceCatalogStore::connect(&config.database_url).await?;
     let sites_domains = SiteDomainStore::connect(&config.database_url).await?;
+    let status_pages = StatusPageStore::connect(&config.database_url).await?;
     let site_monitoring = SiteMonitoringStore::connect(&config.database_url).await?;
     let state = AppState {
         storage,
@@ -152,6 +156,7 @@ async fn main() -> anyhow::Result<()> {
         github,
         service_catalog,
         sites_domains,
+        status_pages,
         site_monitoring,
         web_api_token: Arc::new(config.web_api_token),
     };
@@ -187,6 +192,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(dependency_graph::router())
         .merge(incidents::router())
         .merge(change_correlation::router())
+        .merge(status_pages::router())
         .with_state(state);
     info!(bind_addr=%config.bind_addr, "starting persistent Argus control API");
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;

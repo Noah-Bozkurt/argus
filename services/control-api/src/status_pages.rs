@@ -792,7 +792,10 @@ fn overall_status(
     if incident_level == 2 {
         return "DEGRADED".into();
     }
-    if components.iter().any(|component| component.public_status == "OUTAGE") {
+    if components
+        .iter()
+        .any(|component| component.public_status == "OUTAGE")
+    {
         return "PARTIAL_OUTAGE".into();
     }
     if components
@@ -843,8 +846,12 @@ async fn ensure_project_resource(
     resource_id: Uuid,
 ) -> Result<(), StatusPageError> {
     let sql = match table {
-        "sites" => "SELECT EXISTS(SELECT 1 FROM sites WHERE id=$1 AND organization_id=$2 AND project_id=$3)",
-        "services" => "SELECT EXISTS(SELECT 1 FROM services WHERE id=$1 AND organization_id=$2 AND project_id=$3)",
+        "sites" => {
+            "SELECT EXISTS(SELECT 1 FROM sites WHERE id=$1 AND organization_id=$2 AND project_id=$3)"
+        }
+        "services" => {
+            "SELECT EXISTS(SELECT 1 FROM services WHERE id=$1 AND organization_id=$2 AND project_id=$3)"
+        }
         _ => return Err(StatusPageError::Invalid),
     };
     let exists: bool = sqlx::query_scalar(sql)
@@ -861,7 +868,8 @@ async fn ensure_project_resource(
 }
 
 fn map_write_error(error: sqlx::Error) -> Result<StatusPageView, StatusPageError> {
-    if matches!(&error, sqlx::Error::Database(database) if database.code().as_deref() == Some("23505")) {
+    if matches!(&error, sqlx::Error::Database(database) if database.code().as_deref() == Some("23505"))
+    {
         Err(StatusPageError::Conflict)
     } else {
         Err(StatusPageError::Sql(error))
