@@ -19,6 +19,7 @@ mod deployments_releases;
 mod desired_state;
 mod environments;
 mod github_integration;
+mod incidents;
 mod maintenance;
 mod persistence;
 mod project_workspace;
@@ -30,6 +31,7 @@ use deployments_releases::DeploymentReleaseStore;
 use desired_state::{DesiredState, DesiredStateError, DesiredStateStore};
 use environments::EnvironmentStore;
 use github_integration::{GitHubIntegrationStore, GitHubProvider};
+use incidents::IncidentStore;
 use maintenance::MaintenanceStore;
 use persistence::{Storage, StorageError, WebIdentity};
 use project_workspace::ProjectWorkspaceStore;
@@ -41,6 +43,7 @@ use sites_domains::SiteDomainStore;
 struct AppState {
     storage: Storage,
     maintenance: MaintenanceStore,
+    incidents: IncidentStore,
     desired_state: DesiredStateStore,
     dependency_graph: DependencyGraphStore,
     deployments_releases: DeploymentReleaseStore,
@@ -121,6 +124,7 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env().map_err(anyhow::Error::msg)?;
     let storage = Storage::connect(&config.database_url).await?;
     let maintenance = MaintenanceStore::connect(&config.database_url).await?;
+    let incidents = IncidentStore::connect(&config.database_url).await?;
     let desired_state = DesiredStateStore::connect(&config.database_url).await?;
     let dependency_graph = DependencyGraphStore::connect(&config.database_url).await?;
     let deployments_releases = DeploymentReleaseStore::connect(&config.database_url).await?;
@@ -134,6 +138,7 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState {
         storage,
         maintenance,
+        incidents,
         desired_state,
         dependency_graph,
         deployments_releases,
@@ -175,6 +180,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(sites_domains::router())
         .merge(site_monitoring::router())
         .merge(dependency_graph::router())
+        .merge(incidents::router())
         .with_state(state);
     info!(bind_addr=%config.bind_addr, "starting persistent Argus control API");
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;

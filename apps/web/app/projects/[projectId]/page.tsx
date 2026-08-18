@@ -5,6 +5,7 @@ import DeploymentsReleasesSection from './deployments-releases-section'
 import SitesDomainsSection from './sites-domains-section'
 import SiteMonitoringSection from './site-monitoring-section'
 import DependencyGraphSection from './dependency-graph-section'
+import IncidentsSection from './incidents-section'
 import { getProjectRepositories, getProjectWorkspace } from '../../../lib/api'
 import {
   createMilestoneAction,
@@ -99,6 +100,8 @@ export default async function ProjectPage({ params }: { params: { projectId: str
       <SiteMonitoringSection projectId={project.id} />
 
       <DependencyGraphSection projectId={project.id} />
+
+      <IncidentsSection projectId={project.id} />
 
       <h2>Tasks</h2>
       <form action={async (formData) => { 'use server'; await createTaskAction(project.id, formData) }}>
