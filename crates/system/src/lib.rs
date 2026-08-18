@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::Utc;
-use protocol::{ServiceState, SystemSnapshot};
-use std::process::Command;
+use protocol::{ServiceState, SystemSnapshot, UpdateState};
+use std::{path::Path, process::Command};
 use sysinfo::{Disks, System};
 use uuid::Uuid;
 
@@ -17,16 +17,14 @@ pub fn collect_snapshot(server_id: Uuid, agent_version: String) -> SystemSnapsho
     };
 
     let disks = Disks::new_with_refreshed_list();
-    let (total_disk, available_disk) = disks
-        .iter()
-        .fold((0_u64, 0_u64), |acc, disk| (acc.0 + disk.total_space(), acc.1 + disk.available_space()));
+    let (total_disk, available_disk) = disks.iter().fold((0_u64, 0_u64), |acc, disk| {
+        (acc.0 + disk.total_space(), acc.1 + disk.available_space())
+    });
     let disk_percent = if total_disk > 0 {
         ((total_disk - available_disk) as f32 / total_disk as f32) * 100.0
     } else {
         0.0
     };
-
-    let load = System::load_average().one;
 
     SystemSnapshot {
         server_id,
@@ -37,11 +35,41 @@ pub fn collect_snapshot(server_id: Uuid, agent_version: String) -> SystemSnapsho
         cpu_percent,
         ram_percent,
         disk_percent,
-        load,
+        load: System::load_average().one,
         uptime_seconds: System::uptime(),
         agent_version,
+        updates: UpdateState::default(),
         captured_at: Utc::now(),
     }
+}
+
+pub fn update_state() -> UpdateState {
+    let reboot_required = Path::new("/var/run/reboot-required").exists();
+    let output = Command::new("apt-get")
+        .args(["-s", "-o", "Debug::NoLocking=1", "upgrade"])
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => UpdateState {
+            supported: true,
+            pending_updates: count_simulated_apt_updates(&String::from_utf8_lossy(&output.stdout)),
+            reboot_required,
+        },
+        _ => UpdateState {
+            supported: false,
+            pending_updates: 0,
+            reboot_required,
+        },
+    }
+}
+
+fn count_simulated_apt_updates(output: &str) -> u32 {
+    output
+        .lines()
+        .filter(|line| line.starts_with("Inst "))
+        .count()
+        .try_into()
+        .unwrap_or(u32::MAX)
 }
 
 pub fn service_statuses(services: &[String]) -> Result<Vec<ServiceState>> {
@@ -62,4 +90,15 @@ pub fn service_statuses(services: &[String]) -> Result<Vec<ServiceState>> {
     }
 
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn counts_only_simulated_install_lines() {
+        let output = "Reading package lists...\nInst openssl [1.0] (1.1 Ubuntu:stable)\nConf openssl (1.1 Ubuntu:stable)\nInst curl [8.0] (8.1 Ubuntu:stable)\n";
+        assert_eq!(count_simulated_apt_updates(output), 2);
+    }
 }

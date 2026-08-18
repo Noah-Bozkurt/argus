@@ -1,5 +1,5 @@
 import { getCommandHistory, getServer } from '../../../../lib/api'
-import { restart } from './actions'
+import { actOnService } from './actions'
 
 export default async function ServerPage({ params }: { params: { serverId: string } }) {
   const [server, commands] = await Promise.all([
@@ -22,12 +22,31 @@ export default async function ServerPage({ params }: { params: { serverId: strin
       <p>Load: {snapshot?.load ?? '—'}</p>
       <p>Uptime: {snapshot ? `${snapshot.uptime_seconds}s` : '—'}</p>
 
+      <h2>Updates</h2>
+      {snapshot?.updates.supported ? (
+        <>
+          <p>Pending package updates: {snapshot.updates.pending_updates}</p>
+          <p>Reboot required: {snapshot.updates.reboot_required ? 'YES' : 'NO'}</p>
+        </>
+      ) : (
+        <p>APT update inventory unavailable on this server.</p>
+      )}
+
       <h2>Services</h2>
       <ul>
         {server.services.map((service) => (
           <li key={service.name}>
             {service.name} — {service.status}
-            <form action={async () => { 'use server'; await restart(server.server_id, service.name) }}>
+            {service.status === 'active' ? (
+              <form action={async () => { 'use server'; await actOnService(server.server_id, service.name, 'stop') }}>
+                <button type="submit">Stop</button>
+              </form>
+            ) : (
+              <form action={async () => { 'use server'; await actOnService(server.server_id, service.name, 'start') }}>
+                <button type="submit">Start</button>
+              </form>
+            )}
+            <form action={async () => { 'use server'; await actOnService(server.server_id, service.name, 'restart') }}>
               <button type="submit">Restart</button>
             </form>
           </li>

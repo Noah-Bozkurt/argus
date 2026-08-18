@@ -47,6 +47,10 @@ pub enum CommandStatus {
 pub enum CommandType {
     #[serde(rename = "service.restart")]
     ServiceRestart { service: String },
+    #[serde(rename = "service.start")]
+    ServiceStart { service: String },
+    #[serde(rename = "service.stop")]
+    ServiceStop { service: String },
     #[serde(rename = "service.status")]
     ServiceStatus { service: String },
 }
@@ -54,19 +58,20 @@ pub enum CommandType {
 impl CommandType {
     pub fn conflict_group(&self) -> &'static str {
         match self {
-            CommandType::ServiceRestart { .. } => "service.mutate",
+            CommandType::ServiceRestart { .. }
+            | CommandType::ServiceStart { .. }
+            | CommandType::ServiceStop { .. } => "service.mutate",
             CommandType::ServiceStatus { .. } => "service.read",
         }
     }
 
     pub fn required_capability(&self) -> Capability {
         match self {
-            CommandType::ServiceRestart { .. } => Capability {
+            CommandType::ServiceRestart { .. }
+            | CommandType::ServiceStart { .. }
+            | CommandType::ServiceStop { .. }
+            | CommandType::ServiceStatus { .. } => Capability {
                 name: "systemd".to_string(),
-                version: "v1".to_string(),
-            },
-            CommandType::ServiceStatus { .. } => Capability {
-                name: "system.metrics".to_string(),
                 version: "v1".to_string(),
             },
         }
@@ -108,6 +113,23 @@ pub struct CommandResult {
     pub error: Option<OperationError>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpdateState {
+    pub supported: bool,
+    pub pending_updates: u32,
+    pub reboot_required: bool,
+}
+
+impl Default for UpdateState {
+    fn default() -> Self {
+        Self {
+            supported: false,
+            pending_updates: 0,
+            reboot_required: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SystemSnapshot {
     pub server_id: Uuid,
@@ -121,6 +143,8 @@ pub struct SystemSnapshot {
     pub load: f64,
     pub uptime_seconds: u64,
     pub agent_version: String,
+    #[serde(default)]
+    pub updates: UpdateState,
     pub captured_at: DateTime<Utc>,
 }
 
@@ -152,6 +176,10 @@ pub struct HeartbeatRequest {
 pub enum HelperRequest {
     #[serde(rename = "service.restart")]
     RestartService { service: String },
+    #[serde(rename = "service.start")]
+    StartService { service: String },
+    #[serde(rename = "service.stop")]
+    StopService { service: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,7 +198,9 @@ pub fn validate_protocol_version(protocol_version: &str) -> Result<(), ProtocolE
     if protocol_version == PROTOCOL_VERSION {
         Ok(())
     } else {
-        Err(ProtocolError::UnsupportedVersion(protocol_version.to_string()))
+        Err(ProtocolError::UnsupportedVersion(
+            protocol_version.to_string(),
+        ))
     }
 }
 
@@ -195,6 +225,29 @@ mod tests {
         let serialized = serde_json::to_string(&command).expect("serialize command");
         let parsed: Command = serde_json::from_str(&serialized).expect("deserialize command");
         assert_eq!(parsed.command_type, command.command_type);
+    }
+
+    #[test]
+    fn service_actions_require_systemd_capability() {
+        for command in [
+            CommandType::ServiceStart {
+                service: "nginx.service".to_string(),
+            },
+            CommandType::ServiceStop {
+                service: "nginx.service".to_string(),
+            },
+            CommandType::ServiceRestart {
+                service: "nginx.service".to_string(),
+            },
+        ] {
+            assert_eq!(
+                command.required_capability(),
+                Capability {
+                    name: "systemd".to_string(),
+                    version: "v1".to_string(),
+                }
+            );
+        }
     }
 
     #[test]

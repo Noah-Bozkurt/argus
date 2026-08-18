@@ -1,7 +1,11 @@
 'use server'
 
-import { restartService } from '../../../../lib/api'
+import { serviceAction, type ServiceAction } from '../../../../lib/api'
 
-export async function restart(serverId: string, service: string) {
-  await restartService(serverId, service)
+export async function actOnService(
+  serverId: string,
+  service: string,
+  action: ServiceAction,
+) {
+  await serviceAction(serverId, service, action)
 }

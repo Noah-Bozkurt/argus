@@ -118,7 +118,11 @@ impl CommandQueue {
         }
     }
 
-    pub fn enqueue(&mut self, request: CommandRequest, now: DateTime<Utc>) -> Result<Command, QueueError> {
+    pub fn enqueue(
+        &mut self,
+        request: CommandRequest,
+        now: DateTime<Utc>,
+    ) -> Result<Command, QueueError> {
         if request.ttl_seconds <= 0 {
             return Err(QueueError::InvalidTtl);
         }
@@ -151,8 +155,10 @@ impl CommandQueue {
             .push_back(command.clone());
         self.command_server.insert(command.id, command.server_id);
         self.command_index.insert(command.id, command.clone());
-        self.idempotency_index
-            .insert((command.server_id, command.idempotency_key.clone()), command.id);
+        self.idempotency_index.insert(
+            (command.server_id, command.idempotency_key.clone()),
+            command.id,
+        );
 
         Ok(command)
     }
@@ -212,14 +218,11 @@ impl CommandQueue {
         self.running_conflicts
             .get(&server_id)
             .is_some_and(|running| running.contains(command_type.conflict_group()))
-            || self
-                .queues
-                .get(&server_id)
-                .is_some_and(|queue| {
-                    queue
-                        .iter()
-                        .any(|queued| queued.command_type.conflict_group() == command_type.conflict_group())
+            || self.queues.get(&server_id).is_some_and(|queue| {
+                queue.iter().any(|queued| {
+                    queued.command_type.conflict_group() == command_type.conflict_group()
                 })
+            })
     }
 }
 
@@ -262,7 +265,9 @@ mod tests {
         };
 
         queue.enqueue(request.clone(), now).expect("first enqueue");
-        let error = queue.enqueue(request, now).expect_err("must reject duplicate");
+        let error = queue
+            .enqueue(request, now)
+            .expect_err("must reject duplicate");
         assert!(matches!(error, QueueError::Duplicate(_)));
     }
 

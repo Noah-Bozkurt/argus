@@ -12,6 +12,11 @@ export type SystemSnapshot = {
   load: number
   uptime_seconds: number
   agent_version: string
+  updates: {
+    supported: boolean
+    pending_updates: number
+    reboot_required: boolean
+  }
   captured_at: string
 }
 
@@ -43,6 +48,8 @@ export type CommandHistoryItem = {
   error_message: string | null
   actor_user_id: string | null
 }
+
+export type ServiceAction = 'start' | 'stop' | 'restart'
 
 const controlApi = process.env.ARGUS_CONTROL_API_URL ?? 'http://localhost:8080'
 
@@ -85,14 +92,18 @@ export function getCommandHistory(serverId: string): Promise<CommandHistoryItem[
   return request(`/servers/${serverId}/commands`)
 }
 
-export async function restartService(serverId: string, service: string): Promise<void> {
+export async function serviceAction(
+  serverId: string,
+  service: string,
+  action: ServiceAction,
+): Promise<void> {
   await request('/commands', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       server_id: serverId,
-      command_type: { kind: 'service.restart', service },
-      risk_level: 'MEDIUM',
+      command_type: { kind: `service.${action}`, service },
+      risk_level: action === 'stop' ? 'HIGH' : 'MEDIUM',
       ttl_seconds: 60,
       idempotency_key: randomUUID(),
     }),
