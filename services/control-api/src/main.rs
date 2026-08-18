@@ -22,6 +22,7 @@ mod maintenance;
 mod persistence;
 mod project_workspace;
 mod service_catalog;
+mod site_monitoring;
 mod sites_domains;
 use deployments_releases::DeploymentReleaseStore;
 use desired_state::{DesiredState, DesiredStateError, DesiredStateStore};
@@ -31,6 +32,7 @@ use maintenance::MaintenanceStore;
 use persistence::{Storage, StorageError, WebIdentity};
 use project_workspace::ProjectWorkspaceStore;
 use service_catalog::ServiceCatalogStore;
+use site_monitoring::SiteMonitoringStore;
 use sites_domains::SiteDomainStore;
 
 #[derive(Clone)]
@@ -44,6 +46,7 @@ struct AppState {
     github: GitHubIntegrationStore,
     service_catalog: ServiceCatalogStore,
     sites_domains: SiteDomainStore,
+    site_monitoring: SiteMonitoringStore,
     web_api_token: Arc<String>,
 }
 #[derive(Debug)]
@@ -123,6 +126,7 @@ async fn main() -> anyhow::Result<()> {
         GitHubIntegrationStore::connect(&config.database_url, GitHubProvider::from_env()?).await?;
     let service_catalog = ServiceCatalogStore::connect(&config.database_url).await?;
     let sites_domains = SiteDomainStore::connect(&config.database_url).await?;
+    let site_monitoring = SiteMonitoringStore::connect(&config.database_url).await?;
     let state = AppState {
         storage,
         maintenance,
@@ -133,6 +137,7 @@ async fn main() -> anyhow::Result<()> {
         github,
         service_catalog,
         sites_domains,
+        site_monitoring,
         web_api_token: Arc::new(config.web_api_token),
     };
     let app = Router::new()
@@ -163,6 +168,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(environments::router())
         .merge(deployments_releases::router())
         .merge(sites_domains::router())
+        .merge(site_monitoring::router())
         .with_state(state);
     info!(bind_addr=%config.bind_addr, "starting persistent Argus control API");
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;

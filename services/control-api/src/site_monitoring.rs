@@ -195,13 +195,8 @@ impl SiteMonitoringStore {
             return Err(SiteMonitoringError::Invalid);
         }
         let target = normalize_target_url(&request.target_url)?;
-        self.ensure_target_belongs_to_site(
-            identity.organization_id,
-            project_id,
-            site_id,
-            &target,
-        )
-        .await?;
+        self.ensure_target_belongs_to_site(identity.organization_id, project_id, site_id, &target)
+            .await?;
         let id = Uuid::new_v4();
         let mut tx = self.pool.begin().await?;
         sqlx::query(
@@ -243,13 +238,8 @@ impl SiteMonitoringStore {
             .get_config(identity.organization_id, project_id, site_id)
             .await?;
         let target = normalize_target_url(&config.target_url)?;
-        self.ensure_target_belongs_to_site(
-            identity.organization_id,
-            project_id,
-            site_id,
-            &target,
-        )
-        .await?;
+        self.ensure_target_belongs_to_site(identity.organization_id, project_id, site_id, &target)
+            .await?;
 
         let result = probe(&config, &target).await;
         let id = Uuid::new_v4();
@@ -306,7 +296,8 @@ impl SiteMonitoringStore {
         )
         .await?;
         tx.commit().await?;
-        self.get_check(identity.organization_id, project_id, id).await
+        self.get_check(identity.organization_id, project_id, id)
+            .await
     }
 
     async fn get_config(
@@ -546,7 +537,9 @@ async fn probe(config: &SiteMonitorConfig, target: &Url) -> ProbeResult {
                     result.overall_status = "DEGRADED".into();
                 }
             }
-            Err(error) => mark_auxiliary_error(&mut result, "ROBOTS_CHECK_FAILED", &error.to_string()),
+            Err(error) => {
+                mark_auxiliary_error(&mut result, "ROBOTS_CHECK_FAILED", &error.to_string())
+            }
         }
     }
     if config.check_sitemap {
@@ -557,7 +550,9 @@ async fn probe(config: &SiteMonitorConfig, target: &Url) -> ProbeResult {
                     result.overall_status = "DEGRADED".into();
                 }
             }
-            Err(error) => mark_auxiliary_error(&mut result, "SITEMAP_CHECK_FAILED", &error.to_string()),
+            Err(error) => {
+                mark_auxiliary_error(&mut result, "SITEMAP_CHECK_FAILED", &error.to_string())
+            }
         }
     }
     result
@@ -598,11 +593,15 @@ fn normalize_target_url(value: &str) -> Result<Url, SiteMonitoringError> {
         || url.host_str().is_none()
         || !url.username().is_empty()
         || url.password().is_some()
-        || url.host_str().is_some_and(|host| host.parse::<IpAddr>().is_ok())
+        || url
+            .host_str()
+            .is_some_and(|host| host.parse::<IpAddr>().is_ok())
     {
         return Err(SiteMonitoringError::Invalid);
     }
-    let port = url.port_or_known_default().ok_or(SiteMonitoringError::Invalid)?;
+    let port = url
+        .port_or_known_default()
+        .ok_or(SiteMonitoringError::Invalid)?;
     if !matches!(port, 80 | 443) {
         return Err(SiteMonitoringError::Invalid);
     }
@@ -667,7 +666,8 @@ fn config_from_row(row: sqlx::postgres::PgRow) -> Result<SiteMonitorConfig, Site
 
 fn check_from_row(row: sqlx::postgres::PgRow) -> Result<SiteMonitorCheck, SiteMonitoringError> {
     let resolved: serde_json::Value = row.get("resolved_ips");
-    let resolved_ips = serde_json::from_value(resolved).map_err(|_| SiteMonitoringError::Invalid)?;
+    let resolved_ips =
+        serde_json::from_value(resolved).map_err(|_| SiteMonitoringError::Invalid)?;
     Ok(SiteMonitorCheck {
         id: row.get("id"),
         site_id: row.get("site_id"),
