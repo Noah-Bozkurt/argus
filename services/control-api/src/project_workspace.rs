@@ -1,9 +1,9 @@
-use crate::{api_error, web_identity, ApiError, AppState};
+use crate::{ApiError, AppState, api_error, web_identity};
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     routing::{get, post, put},
-    Json, Router,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -266,7 +266,10 @@ impl ProjectWorkspaceStore {
         .bind(organization_id)
         .fetch_all(&self.pool)
         .await?;
-        let tasks = task_rows.into_iter().map(task_from_row).collect::<Result<_, _>>()?;
+        let tasks = task_rows
+            .into_iter()
+            .map(task_from_row)
+            .collect::<Result<_, _>>()?;
 
         let note_rows = sqlx::query(
             "SELECT id,project_id,title,content,created_by,created_at,updated_at FROM project_notes WHERE project_id=$1 AND organization_id=$2 ORDER BY updated_at DESC LIMIT 100",
@@ -275,7 +278,10 @@ impl ProjectWorkspaceStore {
         .bind(organization_id)
         .fetch_all(&self.pool)
         .await?;
-        let notes = note_rows.into_iter().map(note_from_row).collect::<Result<_, _>>()?;
+        let notes = note_rows
+            .into_iter()
+            .map(note_from_row)
+            .collect::<Result<_, _>>()?;
 
         let milestone_rows = sqlx::query(
             "SELECT id,project_id,name,description,status,due_at,created_by,created_at,updated_at FROM milestones WHERE project_id=$1 AND organization_id=$2 ORDER BY CASE status WHEN 'OPEN' THEN 0 ELSE 1 END,due_at NULLS LAST,created_at DESC",
@@ -425,7 +431,8 @@ impl ProjectWorkspaceStore {
         )
         .await?;
         tx.commit().await?;
-        self.task(identity.organization_id, project_id, task_id).await
+        self.task(identity.organization_id, project_id, task_id)
+            .await
     }
 
     async fn task(
@@ -518,7 +525,8 @@ impl ProjectWorkspaceStore {
         )
         .await?;
         tx.commit().await?;
-        self.note(identity.organization_id, project_id, note_id).await
+        self.note(identity.organization_id, project_id, note_id)
+            .await
     }
 
     async fn note(
@@ -573,7 +581,8 @@ impl ProjectWorkspaceStore {
         )
         .await?;
         tx.commit().await?;
-        self.milestone(identity.organization_id, project_id, id).await
+        self.milestone(identity.organization_id, project_id, id)
+            .await
     }
 
     pub async fn update_milestone_status(
