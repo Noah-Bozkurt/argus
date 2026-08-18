@@ -166,3 +166,68 @@ async function queue(serverId: string, commandType: Record<string, string>, risk
 }
 export async function startMaintenance(serverId: string, durationMinutes: number, reason: string): Promise<void> { await request(`/servers/${serverId}/maintenance/start`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ duration_minutes: durationMinutes, reason }) }) }
 export async function endMaintenance(serverId: string): Promise<void> { await request(`/servers/${serverId}/maintenance/end`, { method: 'POST' }) }
+
+
+export type CatalogService = {
+  id: string
+  project_id: string
+  environment_id: string | null
+  server_id: string | null
+  repository_id: string | null
+  name: string
+  description: string
+  service_type: 'web' | 'api' | 'worker' | 'database' | 'queue' | 'cron' | 'other' | string
+  runtime: string | null
+  owner_user_id: string | null
+  endpoint_url: string | null
+  lifecycle_status: 'ACTIVE' | 'PAUSED' | 'ARCHIVED'
+  health_status: string
+  created_at: string
+  updated_at: string
+}
+
+export type CreateCatalogServiceInput = {
+  name: string
+  description?: string
+  service_type: string
+  runtime?: string | null
+  repository_id?: string | null
+  environment_id?: string | null
+  server_id?: string | null
+  owner_user_id?: string | null
+  endpoint_url?: string | null
+}
+
+export type UpdateCatalogServiceInput = CreateCatalogServiceInput & {
+  lifecycle_status: CatalogService['lifecycle_status']
+}
+
+export const getProjectServices = (projectId: string): Promise<CatalogService[]> =>
+  request(`/projects/${projectId}/services`)
+
+export async function createCatalogService(
+  projectId: string,
+  input: CreateCatalogServiceInput,
+): Promise<CatalogService> {
+  return request(`/projects/${projectId}/services`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export async function updateCatalogService(
+  projectId: string,
+  serviceId: string,
+  input: UpdateCatalogServiceInput,
+): Promise<CatalogService> {
+  return request(`/projects/${projectId}/services/${serviceId}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export async function deleteCatalogService(projectId: string, serviceId: string): Promise<void> {
+  await request(`/projects/${projectId}/services/${serviceId}`, { method: 'DELETE' })
+}
