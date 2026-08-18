@@ -1,9 +1,9 @@
 use agent::{AgentConfig, AgentRuntime, HelperClient};
 use anyhow::{Context, Result};
 use protocol::{
-    AgentHandshake, BackupState, Capability, Command, DiagnosticsState, DockerContainer, DockerState,
-    EnrollmentRequest, EnrollmentResponse, HeartbeatRequest, PROTOCOL_VERSION, SecurityState,
-    ServiceJournal,
+    AgentHandshake, BackupState, Capability, Command, DiagnosticsState, DockerContainer,
+    DockerState, EnrollmentRequest, EnrollmentResponse, HeartbeatRequest, PROTOCOL_VERSION,
+    SecurityState, ServiceJournal,
 };
 use reqwest::{Client, StatusCode};
 use std::{
