@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: &str = "1.5";
+pub const PROTOCOL_VERSION: &str = "1.6";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentHandshake {
@@ -66,6 +66,12 @@ pub enum CommandType {
     DockerStop { container: String },
     #[serde(rename = "docker.restart")]
     DockerRestart { container: String },
+    #[serde(rename = "docker.compose.start")]
+    DockerComposeStart { project: String },
+    #[serde(rename = "docker.compose.stop")]
+    DockerComposeStop { project: String },
+    #[serde(rename = "docker.compose.restart")]
+    DockerComposeRestart { project: String },
     #[serde(rename = "backup.create")]
     BackupCreate { profile: String },
     #[serde(rename = "backup.verify")]
@@ -85,7 +91,10 @@ impl CommandType {
             CommandType::LogsJournal { .. } => "logs.read",
             CommandType::DockerStart { .. }
             | CommandType::DockerStop { .. }
-            | CommandType::DockerRestart { .. } => "docker.mutate",
+            | CommandType::DockerRestart { .. }
+            | CommandType::DockerComposeStart { .. }
+            | CommandType::DockerComposeStop { .. }
+            | CommandType::DockerComposeRestart { .. } => "docker.mutate",
             CommandType::BackupCreate { .. } => "backup.create",
             CommandType::BackupVerify { .. } => "backup.verify",
         }
@@ -117,6 +126,12 @@ impl CommandType {
             | CommandType::DockerStop { .. }
             | CommandType::DockerRestart { .. } => Capability {
                 name: "docker".into(),
+                version: "v1".into(),
+            },
+            CommandType::DockerComposeStart { .. }
+            | CommandType::DockerComposeStop { .. }
+            | CommandType::DockerComposeRestart { .. } => Capability {
+                name: "docker.compose".into(),
                 version: "v1".into(),
             },
             CommandType::BackupCreate { .. } | CommandType::BackupVerify { .. } => Capability {
@@ -303,6 +318,12 @@ pub enum HelperRequest {
     DockerStop { container: String },
     #[serde(rename = "docker.restart")]
     DockerRestart { container: String },
+    #[serde(rename = "docker.compose.start")]
+    DockerComposeStart { project: String },
+    #[serde(rename = "docker.compose.stop")]
+    DockerComposeStop { project: String },
+    #[serde(rename = "docker.compose.restart")]
+    DockerComposeRestart { project: String },
     #[serde(rename = "security.inspect")]
     SecurityInspect,
     #[serde(rename = "backup.list")]
@@ -350,6 +371,14 @@ mod tests {
         assert!(!create.requires_maintenance());
     }
     #[test]
+    fn compose_commands_require_compose_capability() {
+        let command = CommandType::DockerComposeRestart {
+            project: "app".into(),
+        };
+        assert_eq!(command.required_capability().name, "docker.compose");
+        assert_eq!(command.conflict_group(), "docker.mutate");
+    }
+    #[test]
     fn security_state_defaults_safe_for_backward_compatibility() {
         let state = SecurityState::default();
         assert!(!state.available);
@@ -357,6 +386,6 @@ mod tests {
     }
     #[test]
     fn protocol_version_validation_rejects_older_versions() {
-        assert!(validate_protocol_version("1.4").is_err());
+        assert!(validate_protocol_version("1.5").is_err());
     }
 }
