@@ -2,6 +2,7 @@ import Link from 'next/link'
 import ServiceCatalogSection from './service-catalog-section'
 import EnvironmentsSection from './environments-section'
 import DeploymentsReleasesSection from './deployments-releases-section'
+import SitesDomainsSection from './sites-domains-section'
 import { getProjectRepositories, getProjectWorkspace } from '../../../lib/api'
 import {
   createMilestoneAction,
@@ -90,6 +91,8 @@ export default async function ProjectPage({ params }: { params: { projectId: str
       <ServiceCatalogSection projectId={project.id} />
 
       <DeploymentsReleasesSection projectId={project.id} />
+
+      <SitesDomainsSection projectId={project.id} />
 
       <h2>Tasks</h2>
       <form action={async (formData) => { 'use server'; await createTaskAction(project.id, formData) }}>

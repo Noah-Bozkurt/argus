@@ -214,7 +214,8 @@ impl SiteDomainStore {
         )
         .await?;
         tx.commit().await?;
-        self.get_site(identity.organization_id, project_id, id).await
+        self.get_site(identity.organization_id, project_id, id)
+            .await
     }
 
     pub async fn update_site(
@@ -357,7 +358,8 @@ impl SiteDomainStore {
         )
         .await?;
         tx.commit().await?;
-        self.get_domain(identity.organization_id, project_id, id).await
+        self.get_domain(identity.organization_id, project_id, id)
+            .await
     }
 
     pub async fn update_domain(
@@ -627,7 +629,10 @@ pub fn router() -> Router<AppState> {
             "/projects/:project_id/sites-domains",
             get(get_sites_domains),
         )
-        .route("/projects/:project_id/sites", axum::routing::post(create_site))
+        .route(
+            "/projects/:project_id/sites",
+            axum::routing::post(create_site),
+        )
         .route(
             "/projects/:project_id/sites/:site_id",
             axum::routing::put(update_site).delete(delete_site),
@@ -820,7 +825,8 @@ fn normalize_expiry(value: Option<String>) -> Result<Option<DateTime<Utc>>, Site
     if let Ok(value) = DateTime::parse_from_rfc3339(&value) {
         return Ok(Some(value.with_timezone(&Utc)));
     }
-    let date = NaiveDate::parse_from_str(&value, "%Y-%m-%d").map_err(|_| SiteDomainError::Invalid)?;
+    let date =
+        NaiveDate::parse_from_str(&value, "%Y-%m-%d").map_err(|_| SiteDomainError::Invalid)?;
     let datetime = date
         .and_hms_opt(23, 59, 59)
         .ok_or(SiteDomainError::Invalid)?;
@@ -855,7 +861,8 @@ fn optional_value(value: Option<String>, max: usize) -> Result<Option<String>, S
 }
 
 fn map_write_error(error: sqlx::Error) -> Result<Domain, SiteDomainError> {
-    if matches!(&error, sqlx::Error::Database(database) if database.code().as_deref() == Some("23505")) {
+    if matches!(&error, sqlx::Error::Database(database) if database.code().as_deref() == Some("23505"))
+    {
         Err(SiteDomainError::Conflict)
     } else {
         Err(SiteDomainError::Sql(error))
