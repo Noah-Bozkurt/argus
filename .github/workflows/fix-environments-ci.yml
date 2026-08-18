@@ -1,0 +1,39 @@
+name: Repair environments CI
+on:
+  push:
+    branches: [agent/environments-v1]
+permissions:
+  contents: write
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/environments-v1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Remove duplicated wiring and self-clean
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('services/control-api/src/main.rs')
+          text = path.read_text()
+          text = text.replace('mod environments;\nmod environments;\n', 'mod environments;\n')
+          text = text.replace('use environments::EnvironmentStore;\nuse environments::EnvironmentStore;\n', 'use environments::EnvironmentStore;\n')
+          text = text.replace('    environments: EnvironmentStore,\n    environments: EnvironmentStore,\n', '    environments: EnvironmentStore,\n')
+          text = text.replace(
+              '    let environments = EnvironmentStore::connect(&config.database_url).await?;\n    let environments = EnvironmentStore::connect(&config.database_url).await?;\n',
+              '    let environments = EnvironmentStore::connect(&config.database_url).await?;\n',
+          )
+          path.write_text(text)
+          PY
+          cargo fmt --all
+          git rm .github/workflows/fix-environments-ci.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add services/control-api/src/main.rs
+          git commit -m "fix: deduplicate environments wiring"
+          git push
