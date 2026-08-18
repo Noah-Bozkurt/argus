@@ -19,7 +19,9 @@ pub struct HelperApi {
 
 impl HelperApi {
     pub fn from_allowlist(allowlisted_services: impl IntoIterator<Item = String>) -> Self {
-        Self { allowlisted_services: allowlisted_services.into_iter().collect() }
+        Self {
+            allowlisted_services: allowlisted_services.into_iter().collect(),
+        }
     }
 
     pub fn from_env() -> Self {
@@ -37,8 +39,14 @@ impl HelperApi {
         let valid = service.ends_with(".service")
             && !service.is_empty()
             && service.len() <= 255
-            && service.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@'));
-        if valid { Ok(()) } else { Err(HelperError::InvalidServiceName) }
+            && service
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@'));
+        if valid {
+            Ok(())
+        } else {
+            Err(HelperError::InvalidServiceName)
+        }
     }
 
     pub async fn restart_service(&self, service: &str) -> Result<(), HelperError> {
@@ -55,7 +63,9 @@ impl HelperApi {
         if output.status.success() {
             Ok(())
         } else {
-            Err(HelperError::SystemCommandFailed(String::from_utf8_lossy(&output.stderr).trim().to_string()))
+            Err(HelperError::SystemCommandFailed(
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ))
         }
     }
 }
@@ -66,14 +76,25 @@ mod tests {
 
     #[test]
     fn blocks_shell_and_path_input() {
-        for invalid in ["../../etc/passwd", "nginx.service;id", "nginx service", "nginx.service$(id)"] {
-            assert!(matches!(HelperApi::validate_service_name(invalid), Err(HelperError::InvalidServiceName)));
+        for invalid in [
+            "../../etc/passwd",
+            "nginx.service;id",
+            "nginx service",
+            "nginx.service$(id)",
+        ] {
+            assert!(matches!(
+                HelperApi::validate_service_name(invalid),
+                Err(HelperError::InvalidServiceName)
+            ));
         }
     }
 
     #[tokio::test]
     async fn blocks_non_allowlisted_service_before_execution() {
         let helper = HelperApi::from_allowlist(["nginx.service".to_string()]);
-        assert!(matches!(helper.restart_service("docker.service").await, Err(HelperError::ServiceNotAllowlisted)));
+        assert!(matches!(
+            helper.restart_service("docker.service").await,
+            Err(HelperError::ServiceNotAllowlisted)
+        ));
     }
 }

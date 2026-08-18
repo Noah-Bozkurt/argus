@@ -170,7 +170,9 @@ pub fn validate_protocol_version(protocol_version: &str) -> Result<(), ProtocolE
     if protocol_version == PROTOCOL_VERSION {
         Ok(())
     } else {
-        Err(ProtocolError::UnsupportedVersion(protocol_version.to_string()))
+        Err(ProtocolError::UnsupportedVersion(
+            protocol_version.to_string(),
+        ))
     }
 }
 

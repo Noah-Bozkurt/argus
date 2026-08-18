@@ -17,9 +17,9 @@ pub fn collect_snapshot(server_id: Uuid, agent_version: String) -> SystemSnapsho
     };
 
     let disks = Disks::new_with_refreshed_list();
-    let (total_disk, available_disk) = disks
-        .iter()
-        .fold((0_u64, 0_u64), |acc, disk| (acc.0 + disk.total_space(), acc.1 + disk.available_space()));
+    let (total_disk, available_disk) = disks.iter().fold((0_u64, 0_u64), |acc, disk| {
+        (acc.0 + disk.total_space(), acc.1 + disk.available_space())
+    });
     let disk_percent = if total_disk > 0 {
         ((total_disk - available_disk) as f32 / total_disk as f32) * 100.0
     } else {

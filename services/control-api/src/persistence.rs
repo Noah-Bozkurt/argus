@@ -222,7 +222,13 @@ impl Storage {
             "agent",
         )
         .await?;
-        self.emit_event(organization_id, "server.connected", server_id, serde_json::json!({"reason":"enrollment"})).await?;
+        self.emit_event(
+            organization_id,
+            "server.connected",
+            server_id,
+            serde_json::json!({"reason":"enrollment"}),
+        )
+        .await?;
         Ok(credential)
     }
 
@@ -255,12 +261,11 @@ impl Storage {
             return Err(StorageError::PermissionDenied);
         }
 
-        let previous: Option<DateTime<Utc>> = sqlx::query_scalar(
-            "SELECT last_seen_at FROM agents WHERE server_id=$1",
-        )
-        .bind(identity.server_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let previous: Option<DateTime<Utc>> =
+            sqlx::query_scalar("SELECT last_seen_at FROM agents WHERE server_id=$1")
+                .bind(identity.server_id)
+                .fetch_optional(&self.pool)
+                .await?;
         let reconnect = previous.is_some_and(|seen| seen < Utc::now() - Duration::seconds(90));
 
         if reconnect {
@@ -478,13 +483,12 @@ impl Storage {
 
         let agent = self.authenticate_agent(credential).await?;
         let mut tx = self.pool.begin().await?;
-        let server_id: Uuid = sqlx::query_scalar(
-            "SELECT server_id FROM commands WHERE id=$1 FOR UPDATE",
-        )
-        .bind(result.command_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or(StorageError::NotFound)?;
+        let server_id: Uuid =
+            sqlx::query_scalar("SELECT server_id FROM commands WHERE id=$1 FOR UPDATE")
+                .bind(result.command_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or(StorageError::NotFound)?;
         if server_id != agent.server_id {
             tx.rollback().await?;
             return Err(StorageError::PermissionDenied);
@@ -640,8 +644,7 @@ fn server_from_row(row: sqlx::postgres::PgRow) -> Result<ServerView, StorageErro
         project_id: row.get("project_id"),
         environment_id: row.get("environment_id"),
         hostname: row.get("hostname"),
-        online: last_heartbeat
-            .is_some_and(|seen| seen > Utc::now() - Duration::seconds(60)),
+        online: last_heartbeat.is_some_and(|seen| seen > Utc::now() - Duration::seconds(60)),
         last_heartbeat,
         snapshot,
         services,
@@ -702,6 +705,9 @@ mod tests {
 
     #[test]
     fn terminal_status_parser_covers_unknown() {
-        assert!(matches!(parse_status("UNKNOWN"), Ok(CommandStatus::UNKNOWN)));
+        assert!(matches!(
+            parse_status("UNKNOWN"),
+            Ok(CommandStatus::UNKNOWN)
+        ));
     }
 }
