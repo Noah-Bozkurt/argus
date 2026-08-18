@@ -1,11 +1,12 @@
-use crate::{ApiError, AppState, api_error, web_identity};
+use crate::{ApiError, AppState, api_error, map_storage, web_identity};
 use axum::{
     Json, Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    routing::get,
+    routing::{get, post},
 };
 use chrono::{DateTime, Utc};
+use protocol::{CommandRequest, CommandType, RiskLevel};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
@@ -360,6 +361,10 @@ pub fn router() -> Router<AppState> {
             "/projects/:project_id/stacks/:stack_id",
             get(get_stack).put(update_stack).delete(delete_stack),
         )
+        .route(
+            "/projects/:project_id/stacks/:stack_id/actions/:action",
+            post(run_stack_action),
+        )
 }
 
 async fn list_stacks(
@@ -435,6 +440,69 @@ async fn delete_stack(
         .await
         .map_err(map_stack)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn run_stack_action(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_id, stack_id, action)): Path<(Uuid, Uuid, String)>,
+) -> Result<Json<protocol::Command>, ApiError> {
+    let identity = web_identity(&state, &headers).await?;
+    let stack = state
+        .compose_stacks
+        .get(identity.organization_id, project_id, stack_id)
+        .await
+        .map_err(map_stack)?;
+    if stack.lifecycle_status == "ARCHIVED" {
+        return Err(api_error(
+            StatusCode::CONFLICT,
+            "STACK_ARCHIVED",
+            "archived stacks cannot be operated",
+        ));
+    }
+    let (command_type, risk_level) = match action.as_str() {
+        "start" => (
+            CommandType::DockerComposeStart {
+                project: stack.compose_project_name.clone(),
+            },
+            RiskLevel::MEDIUM,
+        ),
+        "stop" => (
+            CommandType::DockerComposeStop {
+                project: stack.compose_project_name.clone(),
+            },
+            RiskLevel::HIGH,
+        ),
+        "restart" => (
+            CommandType::DockerComposeRestart {
+                project: stack.compose_project_name.clone(),
+            },
+            RiskLevel::MEDIUM,
+        ),
+        _ => {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_REQUEST",
+                "stack action must be start, stop or restart",
+            ));
+        }
+    };
+    Ok(Json(
+        state
+            .storage
+            .queue_command(
+                identity,
+                CommandRequest {
+                    server_id: stack.server_id,
+                    command_type,
+                    ttl_seconds: 300,
+                    idempotency_key: format!("stack:{stack_id}:{action}:{}", Uuid::new_v4()),
+                    risk_level,
+                },
+            )
+            .await
+            .map_err(map_storage)?,
+    ))
 }
 
 async fn touch_project(
