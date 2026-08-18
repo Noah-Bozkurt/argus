@@ -17,11 +17,7 @@ pub async fn enable(rollback_id: &str) -> Result<(), HelperError> {
     let ports = parse_sshd_ports(&sshd)?;
     for port in ports {
         let rule = format!("{port}/tcp");
-        run(
-            "ufw",
-            &["allow", &rule, "comment", "Argus SSH safety rule"],
-        )
-        .await?;
+        run("ufw", &["allow", &rule, "comment", "Argus SSH safety rule"]).await?;
     }
 
     schedule_rollback(rollback_id).await?;
@@ -153,8 +149,8 @@ mod tests {
 
     #[test]
     fn parses_effective_ssh_ports_without_duplicates() {
-        let ports = parse_sshd_ports("passwordauthentication no\nport 2222\nport 22\nport 2222\n")
-            .unwrap();
+        let ports =
+            parse_sshd_ports("passwordauthentication no\nport 2222\nport 22\nport 2222\n").unwrap();
         assert_eq!(ports, vec![22, 2222]);
     }
 
