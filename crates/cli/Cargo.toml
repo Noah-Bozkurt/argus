@@ -8,8 +8,10 @@ name = "argusctl"
 path = "src/main.rs"
 
 [dependencies]
+agent = { path = "../agent" }
 anyhow = { workspace = true }
 clap = { workspace = true }
+reqwest = { workspace = true }
 serde_json = { workspace = true }
 system = { path = "../system" }
 tokio = { workspace = true }

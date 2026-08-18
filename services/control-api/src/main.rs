@@ -51,6 +51,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/commands", post(queue_command))
         .route("/enrollment/tokens", post(create_enrollment_token))
         .route("/enrollment/complete", post(complete_enrollment))
+        .route("/agent/identity", get(agent_identity))
         .route("/agent/heartbeat", post(heartbeat))
         .route("/agent/commands/next", post(next_command))
         .route("/agent/commands/result", post(command_result))
@@ -101,6 +102,12 @@ async fn complete_enrollment(State(state): State<AppState>, Json(req): Json<Enro
     validate_protocol_version(&req.handshake.protocol_version).map_err(|_| api_error(StatusCode::BAD_REQUEST, "CAPABILITY_UNAVAILABLE", "unsupported protocol version"))?;
     let credential = state.storage.complete_enrollment(&req.token, &req.handshake).await.map_err(map_storage)?;
     Ok(Json(EnrollmentResponse { credential }))
+}
+
+async fn agent_identity(State(state): State<AppState>, headers: HeaderMap) -> Result<StatusCode, ApiError> {
+    let credential = bearer_token(&headers)?;
+    state.storage.authenticate_agent(credential).await.map_err(map_storage)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn heartbeat(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<HeartbeatRequest>) -> Result<StatusCode, ApiError> {

@@ -27,4 +27,16 @@ ALTER TABLE commands ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ NULL;
 ALTER TABLE commands ADD COLUMN IF NOT EXISTS error_code TEXT NULL;
 ALTER TABLE commands ADD COLUMN IF NOT EXISTS error_message TEXT NULL;
 ALTER TABLE commands ADD COLUMN IF NOT EXISTS actor_user_id UUID NULL REFERENCES users(id);
+
+CREATE TABLE IF NOT EXISTS domain_events (
+  id UUID PRIMARY KEY,
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  resource_id UUID NOT NULL,
+  data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS commands_server_status_idx ON commands(server_id, status, created_at);
+CREATE INDEX IF NOT EXISTS agents_last_seen_idx ON agents(last_seen_at);
+CREATE INDEX IF NOT EXISTS domain_events_org_time_idx ON domain_events(organization_id, occurred_at DESC);
