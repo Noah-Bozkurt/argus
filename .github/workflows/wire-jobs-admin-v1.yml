@@ -1,0 +1,45 @@
+name: Wire jobs administration V1
+on:
+  push:
+    branches: [agent/jobs-admin-v1]
+permissions:
+  contents: write
+jobs:
+  wire:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/jobs-admin-v1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Wire jobs administration
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main = Path('services/control-api/src/main.rs')
+          text = main.read_text()
+          if 'mod jobs_admin;' not in text:
+              text = text.replace('mod job_execution;\n', 'mod job_execution;\nmod jobs_admin;\n', 1)
+          if 'use jobs_admin::JobsAdminStore;' not in text:
+              text = text.replace('use incidents::IncidentStore;\n', 'use incidents::IncidentStore;\nuse jobs_admin::JobsAdminStore;\n', 1)
+          if '    jobs_admin: JobsAdminStore,\n' not in text:
+              text = text.replace('    storage: Storage,\n', '    storage: Storage,\n    jobs_admin: JobsAdminStore,\n', 1)
+          if 'let jobs_admin = JobsAdminStore::connect' not in text:
+              text = text.replace('    let storage = Storage::connect(&config.database_url).await?;\n', '    let storage = Storage::connect(&config.database_url).await?;\n    let jobs_admin = JobsAdminStore::connect(&config.database_url).await?;\n', 1)
+          if '        jobs_admin,\n' not in text:
+              text = text.replace('        storage,\n        maintenance,\n', '        storage,\n        jobs_admin,\n        maintenance,\n', 1)
+          if '.merge(jobs_admin::router())' not in text:
+              text = text.replace('        .merge(job_execution::router())\n        .with_state(state);', '        .merge(job_execution::router())\n        .merge(jobs_admin::router())\n        .with_state(state);', 1)
+          main.write_text(text)
+          PY
+          cargo fmt --all
+          git rm .github/workflows/wire-jobs-admin-v1.yml .argus-jobs-admin-trigger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add services/control-api/src/main.rs services/control-api/src/jobs_admin.rs
+          git commit -m "feat: wire jobs administration V1"
+          git push
