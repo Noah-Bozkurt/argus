@@ -13,6 +13,8 @@ export type ComposeStack = {
   updated_at: string
 }
 
+export type ComposeStackAction = 'start' | 'stop' | 'restart'
+
 export type CreateComposeStackInput = {
   server_id: string
   name: string
@@ -80,4 +82,14 @@ export const updateProjectComposeStack = (
 
 export async function deleteProjectComposeStack(projectId: string, stackId: string): Promise<void> {
   await request(`/projects/${projectId}/stacks/${stackId}`, { method: 'DELETE' })
+}
+
+export async function runProjectComposeStackAction(
+  projectId: string,
+  stackId: string,
+  action: ComposeStackAction,
+): Promise<void> {
+  await request<unknown>(`/projects/${projectId}/stacks/${stackId}/actions/${action}`, {
+    method: 'POST',
+  })
 }
