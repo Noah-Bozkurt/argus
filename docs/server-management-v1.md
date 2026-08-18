@@ -6,13 +6,13 @@ This milestone builds on the persistent infrastructure vertical slice and intent
 
 ### Read-only server update inventory
 
-Each agent heartbeat now includes an `UpdateState` in the system snapshot:
+Each agent heartbeat includes an `UpdateState` in the system snapshot:
 
 - whether APT inventory is supported on the host;
 - number of packages currently visible as upgradeable from the host's existing APT metadata;
 - whether `/var/run/reboot-required` exists.
 
-Argus uses `apt-get -s -o Debug::NoLocking=1 upgrade` for inventory. It does **not** run `apt update`, install packages, or mutate the server during heartbeat collection.
+Argus uses `apt-get -s -o Debug::NoLocking=1 upgrade` for inventory. It does **not** run `apt update`, install packages, or mutate the server during heartbeat collection. The agent caches this inventory and refreshes it every five minutes rather than executing APT simulation on every five-second heartbeat.
 
 This means the count reflects the server's current package metadata and may be stale until the package lists are refreshed by the administrator or a future explicit Argus update-check job.
 
