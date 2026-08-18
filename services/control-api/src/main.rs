@@ -71,7 +71,6 @@ struct InnerState {
 
 #[derive(Debug, Clone)]
 struct EnrollmentToken {
-    token: String,
     server_id: Uuid,
     organization_id: Uuid,
     expires_at: chrono::DateTime<Utc>,
@@ -80,8 +79,8 @@ struct EnrollmentToken {
 #[derive(Debug, Clone)]
 struct AgentState {
     server_id: Uuid,
-    organization_id: Uuid,
-    agent_id: Uuid,
+    _organization_id: Uuid,
+    _agent_id: Uuid,
     auth_token: String,
     connected: bool,
     last_heartbeat: chrono::DateTime<Utc>,
@@ -272,7 +271,6 @@ async fn create_enrollment_token(
     inner.enrollment_tokens.insert(
         token.clone(),
         EnrollmentToken {
-            token: token.clone(),
             server_id: req.server_id,
             organization_id: req.organization_id,
             expires_at,
@@ -320,8 +318,8 @@ async fn complete_enrollment(
         req.handshake.server_id,
         AgentState {
             server_id: req.handshake.server_id,
-            organization_id: token.organization_id,
-            agent_id: req.handshake.agent_id,
+            _organization_id: token.organization_id,
+            _agent_id: req.handshake.agent_id,
             auth_token: auth_token.clone(),
             connected: true,
             last_heartbeat: Utc::now(),
@@ -393,13 +391,14 @@ async fn queue_command(
         })?;
     inner.commands.insert(command.id, command.clone());
 
+    let organization_id = inner
+        .servers
+        .get(&command.server_id)
+        .map(|s| s.organization_id)
+        .unwrap_or_default();
     inner.audit_events.push(AuditEvent {
         id: Uuid::new_v4(),
-        organization_id: inner
-            .servers
-            .get(&command.server_id)
-            .map(|s| s.organization_id)
-            .unwrap_or_default(),
+        organization_id,
         actor: "web-user".to_string(),
         resource: command.server_id.to_string(),
         action: "server.command.create".to_string(),
@@ -421,7 +420,12 @@ async fn next_command(
 ) -> Result<Json<Option<Command>>, (StatusCode, Json<ErrorResponse>)> {
     let token = bearer_token(&headers)?;
     let mut inner = state.inner.lock().await;
-    let Some(agent) = inner.agents.values().find(|a| a.auth_token == token) else {
+    let Some(server_id) = inner
+        .agents
+        .values()
+        .find(|a| a.auth_token == token)
+        .map(|agent| agent.server_id)
+    else {
         return Err(error(
             StatusCode::UNAUTHORIZED,
             "AGENT_DISCONNECTED",
@@ -429,7 +433,7 @@ async fn next_command(
         ));
     };
 
-    let command = inner.queue.next_for_server(agent.server_id, Utc::now());
+    let command = inner.queue.next_for_server(server_id, Utc::now());
     if let Some(command) = &command {
         let _ = inner.queue.mark_running(command.id);
         inner.events.push(DomainEvent::ServerCommandStarted {
@@ -481,13 +485,14 @@ async fn command_result(
     };
     inner.events.push(event);
 
+    let organization_id = inner
+        .servers
+        .get(&command.server_id)
+        .map(|s| s.organization_id)
+        .unwrap_or_default();
     inner.audit_events.push(AuditEvent {
         id: Uuid::new_v4(),
-        organization_id: inner
-            .servers
-            .get(&command.server_id)
-            .map(|s| s.organization_id)
-            .unwrap_or_default(),
+        organization_id,
         actor: "agent".to_string(),
         resource: command.server_id.to_string(),
         action: "server.command.result".to_string(),
@@ -725,7 +730,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-org-id", "demo".parse().expect("header"));
 
-        queue_command(State(state.clone()), headers.clone(), Json(req.clone()))
+        let _ = queue_command(State(state.clone()), headers.clone(), Json(req.clone()))
             .await
             .expect("first request");
         let err = queue_command(State(state), headers, Json(req))
