@@ -30,6 +30,41 @@ export type MaintenanceWindow = { id: string; server_id: string; starts_at: stri
 export type DesiredState = { mode: 'MONITOR' | 'ENFORCE'; firewall_enabled: boolean | null; ssh_password_auth: boolean | null; ssh_root_login: string | null; automatic_security_updates: boolean | null }
 export type DesiredStateView = { policy: DesiredState; drift: Array<{ field: string; desired: string; actual: string; severity: string }>; enforcement_available: boolean }
 
+export type ProjectSummary = {
+  id: string
+  name: string
+  description: string
+  preset: 'empty' | 'software' | 'website' | 'infrastructure' | 'client'
+  status: string
+  tags: string[]
+  client_id: string | null
+  open_tasks: number
+  created_at: string
+  updated_at: string
+}
+export type ProjectTask = {
+  id: string
+  project_id: string
+  milestone_id: string | null
+  title: string
+  description: string
+  status: 'TODO' | 'IN_PROGRESS' | 'BLOCKED' | 'DONE' | 'CANCELLED'
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
+  assignee_user_id: string | null
+  due_at: string | null
+  labels: string[]
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+export type ProjectNote = { id: string; project_id: string; title: string; content: string; created_by: string; created_at: string; updated_at: string }
+export type Milestone = { id: string; project_id: string; name: string; description: string; status: 'OPEN' | 'COMPLETED' | 'CANCELLED'; due_at: string | null; created_by: string; created_at: string; updated_at: string }
+export type ProjectActivity = { event_type: string; data: Record<string, unknown>; occurred_at: string }
+export type ProjectWorkspace = { project: ProjectSummary; tasks: ProjectTask[]; notes: ProjectNote[]; milestones: Milestone[]; activity: ProjectActivity[] }
+export type CreateProjectInput = { name: string; description?: string; preset?: ProjectSummary['preset']; tags?: string[] }
+export type CreateTaskInput = { title: string; description?: string; priority?: ProjectTask['priority']; due_at?: string | null; milestone_id?: string | null; assignee_user_id?: string | null; labels?: string[] }
+export type CreateMilestoneInput = { name: string; description?: string; due_at?: string | null }
+
 export type ServiceAction = 'start' | 'stop' | 'restart'
 export type ContainerAction = 'start' | 'stop' | 'restart'
 export type ServerOperation = 'packages.refresh' | 'packages.upgrade.security' | 'packages.upgrade.all' | 'system.reboot'
@@ -46,6 +81,30 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${controlApi}${path}`, { ...init, cache: 'no-store', headers: { ...authHeaders(), ...(init.headers ?? {}) } })
   if (!res.ok) throw new Error(`Control API ${res.status}: ${await res.text()}`)
   return res.status === 204 ? (undefined as T) : res.json()
+}
+
+export const getProjects = (): Promise<ProjectSummary[]> => request('/projects')
+export const getProjectWorkspace = (projectId: string): Promise<ProjectWorkspace> => request(`/projects/${projectId}`)
+export async function createProject(input: CreateProjectInput): Promise<ProjectSummary> {
+  return request('/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) })
+}
+export async function createProjectTask(projectId: string, input: CreateTaskInput): Promise<ProjectTask> {
+  return request(`/projects/${projectId}/tasks`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) })
+}
+export async function updateProjectTaskStatus(projectId: string, taskId: string, status: ProjectTask['status']): Promise<ProjectTask> {
+  return request(`/projects/${projectId}/tasks/${taskId}/status`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status }) })
+}
+export async function createProjectNote(projectId: string, title: string, content: string): Promise<ProjectNote> {
+  return request(`/projects/${projectId}/notes`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, content }) })
+}
+export async function updateProjectNote(projectId: string, noteId: string, title: string, content: string): Promise<ProjectNote> {
+  return request(`/projects/${projectId}/notes/${noteId}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, content }) })
+}
+export async function createProjectMilestone(projectId: string, input: CreateMilestoneInput): Promise<Milestone> {
+  return request(`/projects/${projectId}/milestones`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) })
+}
+export async function updateProjectMilestoneStatus(projectId: string, milestoneId: string, status: Milestone['status']): Promise<Milestone> {
+  return request(`/projects/${projectId}/milestones/${milestoneId}/status`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status }) })
 }
 
 export const getServers = (): Promise<ServerView[]> => request('/servers')
