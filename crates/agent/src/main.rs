@@ -1,9 +1,9 @@
 use agent::{AgentConfig, AgentRuntime, HelperClient};
 use anyhow::{Context, Result};
 use protocol::{
-    AgentHandshake, BackupState, Capability, Command, DiagnosticsState, DockerContainer,
-    DockerState, EnrollmentRequest, EnrollmentResponse, HeartbeatRequest, PROTOCOL_VERSION,
-    SecurityState, ServiceJournal,
+    AgentHandshake, BackupState, Capability, Command, CommandStatus, DiagnosticsState,
+    DockerContainer, DockerState, EnrollmentRequest, EnrollmentResponse, HeartbeatRequest,
+    PROTOCOL_VERSION, SecurityState, ServiceJournal,
 };
 use reqwest::{Client, StatusCode};
 use std::{
@@ -31,6 +31,7 @@ fn capabilities() -> Vec<Capability> {
         "docker",
         "docker.compose",
         "security.inspect",
+        "security.firewall",
         "backup",
     ]
     .into_iter()
@@ -299,6 +300,17 @@ async fn main() -> Result<()> {
                 if let Err(error) = submit_result(&client, &config, &result).await {
                     warn!(%command_id, %error, "command executed but result submission failed; control plane will reconcile as unknown");
                     return Err(error);
+                }
+                if matches!(
+                    command.command_type,
+                    protocol::CommandType::SecurityFirewallEnable
+                ) && result.status == CommandStatus::SUCCEEDED
+                {
+                    match runtime.helper.firewall_commit(command_id).await {
+                        Ok(()) => info!(%command_id, "firewall rollback disarmed after control-plane acknowledgement"),
+                        Err(error) => warn!(%command_id, code=%error.code, "firewall rollback remains armed because commit failed"),
+                    }
+                    security = collect_security(&runtime).await;
                 }
                 if matches!(
                     command.command_type,
