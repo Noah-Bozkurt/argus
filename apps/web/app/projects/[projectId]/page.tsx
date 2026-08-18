@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import ServiceCatalogSection from './service-catalog-section'
 import EnvironmentsSection from './environments-section'
+import ComposeStacksSection from './compose-stacks-section'
 import DeploymentsReleasesSection from './deployments-releases-section'
 import ReadinessSection from './readiness-section'
 import SitesDomainsSection from './sites-domains-section'
@@ -94,6 +95,8 @@ export default async function ProjectPage({ params }: { params: { projectId: str
       )}
 
       <EnvironmentsSection projectId={project.id} />
+
+      <ComposeStacksSection projectId={project.id} />
 
       <ServiceCatalogSection projectId={project.id} />
 
