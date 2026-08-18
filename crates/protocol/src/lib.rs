@@ -149,10 +149,17 @@ pub struct UpdateState {
     pub pending_updates: u32,
     pub reboot_required: bool,
 }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ServiceJournal {
+    pub service: String,
+    pub output: String,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct DiagnosticsState {
     pub failed_units: Vec<String>,
     pub listening_tcp_ports: Vec<u16>,
+    #[serde(default)]
+    pub journals: Vec<ServiceJournal>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SystemSnapshot {
