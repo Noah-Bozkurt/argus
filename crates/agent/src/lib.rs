@@ -25,6 +25,7 @@ impl AgentConfig {
     pub async fn load(path: &Path) -> anyhow::Result<Self> {
         Ok(serde_json::from_slice(&tokio::fs::read(path).await?)?)
     }
+
     pub async fn save(&self, path: &Path) -> anyhow::Result<()> {
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
@@ -43,20 +44,40 @@ impl AgentConfig {
 pub struct HelperClient {
     socket: PathBuf,
 }
+
 impl HelperClient {
     pub fn new(socket: PathBuf) -> Self {
         Self { socket }
     }
+
     pub async fn restart_service(&self, service: &str) -> Result<(), OperationError> {
+        self.request(HelperRequest::RestartService {
+            service: service.to_string(),
+        })
+        .await
+    }
+
+    pub async fn start_service(&self, service: &str) -> Result<(), OperationError> {
+        self.request(HelperRequest::StartService {
+            service: service.to_string(),
+        })
+        .await
+    }
+
+    pub async fn stop_service(&self, service: &str) -> Result<(), OperationError> {
+        self.request(HelperRequest::StopService {
+            service: service.to_string(),
+        })
+        .await
+    }
+
+    async fn request(&self, request: HelperRequest) -> Result<(), OperationError> {
         let mut stream = UnixStream::connect(&self.socket)
             .await
             .map_err(|e| OperationError {
                 code: "HELPER_UNAVAILABLE".into(),
                 message: e.to_string(),
             })?;
-        let request = HelperRequest::RestartService {
-            service: service.to_string(),
-        };
         stream
             .write_all(
                 serde_json::to_string(&request)
@@ -66,6 +87,7 @@ impl HelperClient {
             .await
             .map_err(io_error)?;
         stream.write_all(b"\n").await.map_err(io_error)?;
+
         let mut line = String::new();
         BufReader::new(stream)
             .read_line(&mut line)
@@ -89,6 +111,7 @@ fn io_error(e: std::io::Error) -> OperationError {
         message: e.to_string(),
     }
 }
+
 fn internal(e: impl std::fmt::Display) -> OperationError {
     OperationError {
         code: "INTERNAL_ERROR".into(),
@@ -101,6 +124,7 @@ pub struct AgentRuntime {
     pub helper: HelperClient,
     pub capabilities: Vec<Capability>,
 }
+
 impl AgentRuntime {
     pub fn new(helper: HelperClient, capabilities: Vec<Capability>) -> Self {
         Self {
@@ -108,6 +132,7 @@ impl AgentRuntime {
             capabilities,
         }
     }
+
     pub async fn execute_command(&self, command: &Command) -> CommandResult {
         if command.expires_at < Utc::now() {
             return failed(
@@ -116,6 +141,7 @@ impl AgentRuntime {
                 "command expired before execution",
             );
         }
+
         let required = command.command_type.required_capability();
         if !self.capabilities.contains(&required) {
             return failed(
@@ -124,12 +150,16 @@ impl AgentRuntime {
                 &format!("missing capability {}.{}", required.name, required.version),
             );
         }
+
         let result = match &command.command_type {
             protocol::CommandType::ServiceRestart { service } => {
                 self.helper.restart_service(service).await
             }
+            protocol::CommandType::ServiceStart { service } => self.helper.start_service(service).await,
+            protocol::CommandType::ServiceStop { service } => self.helper.stop_service(service).await,
             protocol::CommandType::ServiceStatus { .. } => Ok(()),
         };
+
         match result {
             Ok(()) => CommandResult {
                 command_id: command.id,
