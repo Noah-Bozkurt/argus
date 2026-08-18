@@ -17,15 +17,18 @@ use uuid::Uuid;
 mod desired_state;
 mod maintenance;
 mod persistence;
+mod project_workspace;
 use desired_state::{DesiredState, DesiredStateError, DesiredStateStore};
 use maintenance::MaintenanceStore;
 use persistence::{Storage, StorageError, WebIdentity};
+use project_workspace::ProjectWorkspaceStore;
 
 #[derive(Clone)]
 struct AppState {
     storage: Storage,
     maintenance: MaintenanceStore,
     desired_state: DesiredStateStore,
+    workspace: ProjectWorkspaceStore,
     web_api_token: Arc<String>,
 }
 #[derive(Debug)]
@@ -98,10 +101,12 @@ async fn main() -> anyhow::Result<()> {
     let storage = Storage::connect(&config.database_url).await?;
     let maintenance = MaintenanceStore::connect(&config.database_url).await?;
     let desired_state = DesiredStateStore::connect(&config.database_url).await?;
+    let workspace = ProjectWorkspaceStore::connect(&config.database_url).await?;
     let state = AppState {
         storage,
         maintenance,
         desired_state,
+        workspace,
         web_api_token: Arc::new(config.web_api_token),
     };
     let app = Router::new()
@@ -126,6 +131,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/agent/heartbeat", post(heartbeat))
         .route("/agent/commands/next", post(next_command))
         .route("/agent/commands/result", post(command_result))
+        .merge(project_workspace::router())
         .with_state(state);
     info!(bind_addr=%config.bind_addr, "starting persistent Argus control API");
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
