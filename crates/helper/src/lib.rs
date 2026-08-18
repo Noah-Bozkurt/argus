@@ -275,9 +275,12 @@ impl HelperApi {
         )
         .await?;
         let sha = sha256_file(&archive).await?;
-        tokio::fs::write(self.backup_dir.join(format!("{name}.sha256")), format!("{sha}\n"))
-            .await
-            .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))?;
+        tokio::fs::write(
+            self.backup_dir.join(format!("{name}.sha256")),
+            format!("{sha}\n"),
+        )
+        .await
+        .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))?;
         let _ = tokio::fs::remove_file(self.backup_dir.join(format!("{name}.verified"))).await;
         Ok(())
     }
@@ -336,16 +339,16 @@ impl HelperApi {
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            let expected = tokio::fs::read_to_string(self.backup_dir.join(format!("{name}.sha256")))
-                .await
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            let verified_marker = tokio::fs::read_to_string(
-                self.backup_dir.join(format!("{name}.verified")),
-            )
-            .await
-            .unwrap_or_default();
+            let expected =
+                tokio::fs::read_to_string(self.backup_dir.join(format!("{name}.sha256")))
+                    .await
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+            let verified_marker =
+                tokio::fs::read_to_string(self.backup_dir.join(format!("{name}.verified")))
+                    .await
+                    .unwrap_or_default();
             let verified = !expected.is_empty() && verified_marker.trim() == expected;
             artifacts.push(BackupArtifact {
                 name,
