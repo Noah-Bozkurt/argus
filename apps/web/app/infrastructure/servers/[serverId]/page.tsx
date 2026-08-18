@@ -4,8 +4,10 @@ import {
   actOnServer,
   actOnService,
   beginMaintenance,
+  createSystemConfigBackup,
   finishMaintenance,
   saveDesiredState,
+  verifySystemConfigBackup,
 } from './actions'
 
 export default async function ServerPage({ params }: { params: { serverId: string } }) {
@@ -92,6 +94,34 @@ export default async function ServerPage({ params }: { params: { serverId: strin
             </li>
           ))}
         </ul>
+      )}
+
+      <h2>Backups &amp; recovery</h2>
+      {!snapshot?.backups.available ? (
+        <p>Backup target is unavailable on this server.</p>
+      ) : (
+        <>
+          <p>Target: {snapshot.backups.target}</p>
+          <p>V1 backup profile: system security configuration. Argus credentials are excluded.</p>
+          <form action={async () => { 'use server'; await createSystemConfigBackup(server.server_id) }}>
+            <button type="submit">Create system config backup</button>
+          </form>
+          {snapshot.backups.artifacts.length === 0 ? (
+            <p>No backups found.</p>
+          ) : (
+            <ul>
+              {snapshot.backups.artifacts.map((backup) => (
+                <li key={backup.name}>
+                  <strong>{backup.verified ? 'VERIFIED' : 'UNVERIFIED'}</strong> {backup.name} — {backup.profile} — {backup.size_bytes} bytes — SHA-256 {backup.sha256 || 'missing'}
+                  <form action={async () => { 'use server'; await verifySystemConfigBackup(server.server_id, backup.name) }}>
+                    <button type="submit">Verify integrity</button>
+                  </form>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p>Restore is intentionally unavailable until preflight, rollback, and post-restore verification exist.</p>
+        </>
       )}
 
       <h2>Security</h2>
@@ -248,7 +278,7 @@ export default async function ServerPage({ params }: { params: { serverId: strin
         {commands.map((item) => (
           <li key={item.command.id}>
             {item.command.command_type.kind}{' '}
-            {item.command.command_type.service ?? item.command.command_type.container ?? ''} — {item.command.status}
+            {item.command.command_type.service ?? item.command.command_type.container ?? item.command.command_type.backup ?? item.command.command_type.profile ?? ''} — {item.command.status}
             {item.error_code ? ` (${item.error_code}: ${item.error_message ?? ''})` : ''}
           </li>
         ))}
