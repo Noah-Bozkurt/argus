@@ -292,9 +292,11 @@ impl AgentRuntime {
             protocol::CommandType::DockerRestart { container } => {
                 self.helper.docker_restart(container).await.map(|_| None)
             }
-            protocol::CommandType::DockerComposeStart { project } => {
-                self.helper.docker_compose_start(project).await.map(|_| None)
-            }
+            protocol::CommandType::DockerComposeStart { project } => self
+                .helper
+                .docker_compose_start(project)
+                .await
+                .map(|_| None),
             protocol::CommandType::DockerComposeStop { project } => {
                 self.helper.docker_compose_stop(project).await.map(|_| None)
             }
