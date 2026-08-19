@@ -1,0 +1,148 @@
+name: argus
+
+x-argus-service: &argus-service
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  labels:
+    com.argus.control-plane: "true"
+    com.argus.protected: "true"
+
+services:
+  postgres:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: argus
+      POSTGRES_PASSWORD: ${ARGUS_POSTGRES_PASSWORD:?ARGUS_POSTGRES_PASSWORD is required}
+      POSTGRES_DB: argus
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U argus -d argus"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    labels:
+      com.argus.control-plane: "true"
+      com.argus.protected: "true"
+
+  control-api:
+    <<: *argus-service
+    image: ${ARGUS_REGISTRY:-ghcr.io/noah-bozkurt}/argus-control-api:${ARGUS_VERSION:?ARGUS_VERSION is required}
+    environment:
+      DATABASE_URL: postgresql://argus:${ARGUS_POSTGRES_PASSWORD}@postgres:5432/argus
+      ARGUS_CONTROL_API_BIND: 0.0.0.0:8080
+      ARGUS_WEB_API_TOKEN: ${ARGUS_WEB_API_TOKEN:?ARGUS_WEB_API_TOKEN is required}
+      ARGUS_WORKER_TOKEN: ${ARGUS_WORKER_TOKEN:?ARGUS_WORKER_TOKEN is required}
+      ARGUS_CONTENT_URL: http://content:3000
+      ARGUS_CONTENT_SYNC_TOKEN: ${ARGUS_CONTENT_SYNC_TOKEN:?ARGUS_CONTENT_SYNC_TOKEN is required}
+      ARGUS_GITHUB_TOKEN: ${ARGUS_GITHUB_TOKEN:-}
+      RUST_LOG: ${ARGUS_RUST_LOG:-info}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  worker:
+    <<: *argus-service
+    image: ${ARGUS_REGISTRY:-ghcr.io/noah-bozkurt}/argus-worker:${ARGUS_VERSION:?ARGUS_VERSION is required}
+    environment:
+      DATABASE_URL: postgresql://argus:${ARGUS_POSTGRES_PASSWORD}@postgres:5432/argus
+      ARGUS_CONTROL_API_URL: http://control-api:8080
+      ARGUS_WORKER_TOKEN: ${ARGUS_WORKER_TOKEN:?ARGUS_WORKER_TOKEN is required}
+      RUST_LOG: ${ARGUS_RUST_LOG:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      control-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://control-api:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  web:
+    <<: *argus-service
+    image: ${ARGUS_REGISTRY:-ghcr.io/noah-bozkurt}/argus-web:${ARGUS_VERSION:?ARGUS_VERSION is required}
+    environment:
+      ARGUS_CONTROL_API_URL: http://control-api:8080
+      ARGUS_WEB_API_TOKEN: ${ARGUS_WEB_API_TOKEN:?ARGUS_WEB_API_TOKEN is required}
+      ARGUS_ORG_ID: ${ARGUS_ORG_ID:?ARGUS_ORG_ID is required}
+      ARGUS_USER_ID: ${ARGUS_USER_ID:?ARGUS_USER_ID is required}
+    depends_on:
+      control-api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  content:
+    <<: *argus-service
+    image: ${ARGUS_REGISTRY:-ghcr.io/noah-bozkurt}/argus-content:${ARGUS_VERSION:?ARGUS_VERSION is required}
+    environment:
+      DATABASE_URL: postgresql://argus:${ARGUS_POSTGRES_PASSWORD}@postgres:5432/argus
+      ARGUS_CONTENT_DB_SCHEMA: argus_content
+      PAYLOAD_SECRET: ${PAYLOAD_SECRET:?PAYLOAD_SECRET is required}
+      PAYLOAD_PUBLIC_URL: https://${ARGUS_CONTENT_DOMAIN:?ARGUS_CONTENT_DOMAIN is required}
+      ARGUS_CONTENT_SYNC_TOKEN: ${ARGUS_CONTENT_SYNC_TOKEN:?ARGUS_CONTENT_SYNC_TOKEN is required}
+      PAYLOAD_DB_PUSH: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+      content:
+        condition: service_healthy
+    labels:
+      com.argus.control-plane: "true"
+      com.argus.protected: "true"
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
