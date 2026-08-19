@@ -8,6 +8,7 @@ ENV_FILE="$INSTALL_DIR/.env"
 COMPOSE_FILE="$INSTALL_DIR/compose.yaml"
 CADDY_FILE="$INSTALL_DIR/Caddyfile"
 BACKUP_ROOT="$STATE_DIR/update-backups"
+LOCK_FILE="$STATE_DIR/update.lock"
 
 DOCKER_CONFIG_DIR=""
 TARGET_BUNDLE_CONTAINER=""
@@ -57,6 +58,11 @@ validate_revision() {
 
 compose() {
   docker compose --project-directory "$INSTALL_DIR" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+}
+
+acquire_update_lock() {
+  exec 9>"$LOCK_FILE"
+  flock -n 9 || die "another Argus update is already running"
 }
 
 registry_login() {
@@ -220,7 +226,7 @@ create_database_backup() {
     --no-owner \
     --no-privileges >"$TRANSACTION_DIR/argus.dump"
   chmod 0600 "$TRANSACTION_DIR/argus.dump"
-  [[ -s "$TRANSACTION_DIR/argus.dump" ]] || die "PostgreSQL update backup is empty"
+  [[ -s "$TRANSACTION_DIR/argus.dump" ]] || return 1
   DATABASE_BACKUP_READY=1
 }
 
@@ -294,7 +300,7 @@ wait_control_plane_health() {
 start_target() {
   log "starting target control plane $TARGET_REVISION"
   compose config >/dev/null
-  compose up -d
+  compose up -d --remove-orphans
 
   if ! wait_control_plane_health; then
     compose ps || true
@@ -359,7 +365,7 @@ restore_installed_files() {
 
 rollback_transaction() {
   ROLLBACK_IN_PROGRESS=1
-  trap - ERR
+  trap - ERR INT TERM
   set +e
   warn "update failed; automatically rolling back transaction $TRANSACTION_DIR"
 
@@ -378,7 +384,7 @@ rollback_transaction() {
     warn "database was not mutated; skipping database restore"
   fi
 
-  compose up -d
+  compose up -d --remove-orphans
   local compose_status=$?
   local health_status=1
   if [[ "$compose_status" -eq 0 ]]; then
@@ -420,7 +426,19 @@ on_error() {
   fi
   exit "$rc"
 }
+
+on_signal() {
+  local signal="$1"
+  warn "received $signal during update"
+  if [[ "$ROLLBACK_READY" == "1" && "$ROLLBACK_IN_PROGRESS" != "1" ]]; then
+    rollback_transaction || true
+  fi
+  exit 130
+}
+
 trap on_error ERR
+trap 'on_signal SIGINT' INT
+trap 'on_signal SIGTERM' TERM
 
 main() {
   require_root
@@ -434,6 +452,8 @@ main() {
   require_file /etc/systemd/system/argus-agent.service
   require_file /etc/systemd/system/argus-helper.service
   command -v docker >/dev/null || die "docker is required"
+  command -v flock >/dev/null || die "flock is required"
+  acquire_update_lock
 
   set -a
   # shellcheck disable=SC1090
@@ -449,11 +469,13 @@ main() {
   registry_login
   resolve_current_revision
   normalize_installed_version
-  pull_and_verify_target
 
+  log "verifying current installation before update"
+  /usr/local/bin/argusctl smoke
+
+  pull_and_verify_target
   if [[ "$TARGET_REVISION" == "$CURRENT_REVISION" ]]; then
     log "already running requested revision $CURRENT_REVISION"
-    /usr/local/bin/argusctl smoke
     return
   fi
 
