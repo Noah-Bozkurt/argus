@@ -67,6 +67,10 @@ jobs:
           grep -Fq 'ROLLBACK_READY=1' scripts/update-first-test.sh
           grep -Fq 'ExecStartPre=/usr/local/bin/argusctl recover-update' deploy/systemd/argus-helper.service
           grep -Fq 'pg_restore --list' scripts/recover-interrupted-update.sh
+          update_lock="$(sed -n 's/^LOCK_FILE="\(.*\)"$/\1/p' scripts/update-first-test.sh | head -n1)"
+          recovery_lock="$(sed -n 's/^LOCK_FILE="\(.*\)"$/\1/p' scripts/recover-interrupted-update.sh | head -n1)"
+          [[ -n "$update_lock" ]]
+          [[ "$update_lock" == "$recovery_lock" ]]
 
       - name: Validate Compose configuration
         run: |

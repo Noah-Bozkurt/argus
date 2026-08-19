@@ -5,7 +5,7 @@ umask 077
 INSTALL_DIR="${ARGUS_INSTALL_DIR:-/opt/argus}"
 STATE_DIR="${ARGUS_STATE_DIR:-/var/lib/argus}"
 BACKUP_ROOT="$STATE_DIR/update-backups"
-LOCK_FILE="/run/lock/argus-update.lock"
+LOCK_FILE="$STATE_DIR/update.lock"
 ENV_FILE="$INSTALL_DIR/.env"
 COMPOSE_FILE="$INSTALL_DIR/compose.yaml"
 CADDY_FILE="$INSTALL_DIR/Caddyfile"
@@ -25,7 +25,7 @@ valid_revision() {
 }
 
 acquire_recovery_lock() {
-  install -d -m 0755 /run/lock
+  [[ -d "$STATE_DIR" ]] || die "Argus state directory is missing: $STATE_DIR"
   exec 9>"$LOCK_FILE"
   if ! flock -n 9; then
     # A live updater owns the same lock. This is expected when the Helper is
