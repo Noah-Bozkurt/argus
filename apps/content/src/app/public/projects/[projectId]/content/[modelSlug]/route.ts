@@ -88,7 +88,7 @@ export async function GET(
       and: [
         { project: { equals: project.id } },
         { model: { equals: model.id } },
-        { lifecycleStatus: { equals: 'active' } },
+        { status: { equals: 'active' } },
         { _status: { equals: 'published' } },
       ],
     },
