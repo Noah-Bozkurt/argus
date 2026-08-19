@@ -1,4 +1,4 @@
-import type { CollectionBeforeValidateHook, CollectionConfig } from 'payload'
+import type { CollectionBeforeValidateHook, CollectionConfig, Where } from 'payload'
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -71,22 +71,22 @@ export const WorkspaceUsers: CollectionConfig = {
       const user = req.user as WorkspaceUser | null
       if (!user?.id || !user.organizationId) return false
       if (user.role === 'admin') {
-        return { organizationId: { equals: user.organizationId } }
+        return { organizationId: { equals: user.organizationId } } as Where
       }
-      return { id: { equals: user.id } }
+      return { id: { equals: user.id } } as Where
     },
     update: ({ req }) => {
       const user = req.user as WorkspaceUser | null
       if (!user?.id || !user.organizationId) return false
       if (user.role === 'admin') {
-        return { organizationId: { equals: user.organizationId } }
+        return { organizationId: { equals: user.organizationId } } as Where
       }
-      return { id: { equals: user.id } }
+      return { id: { equals: user.id } } as Where
     },
     delete: ({ req }) => {
       const user = req.user as WorkspaceUser | null
       if (user?.role !== 'admin' || !user.organizationId) return false
-      return { organizationId: { equals: user.organizationId } }
+      return { organizationId: { equals: user.organizationId } } as Where
     },
   },
   hooks: {
