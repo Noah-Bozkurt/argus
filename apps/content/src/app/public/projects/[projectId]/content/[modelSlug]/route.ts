@@ -71,7 +71,6 @@ export async function GET(
   })
   const model = models.docs[0] as {
     id: string | number
-    slug?: string
     schemaVersion?: number
   } | undefined
   if (!model) {
@@ -89,13 +88,13 @@ export async function GET(
       and: [
         { project: { equals: project.id } },
         { model: { equals: model.id } },
-        { status: { equals: 'active' } },
+        { lifecycleStatus: { equals: 'active' } },
         { _status: { equals: 'published' } },
       ],
     },
   })
 
-  const response = NextResponse.json(
+  return NextResponse.json(
     {
       model: {
         slug: modelSlug,
@@ -131,5 +130,4 @@ export async function GET(
       },
     },
   )
-  return response
 }
