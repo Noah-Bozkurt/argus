@@ -118,7 +118,10 @@ pub async fn rollback(restore_id: &str) -> Result<(), HelperError> {
     reload_ssh().await?;
 
     let timer = format!("{}.timer", rollback_unit(restore_id));
-    let _ = Command::new("systemctl").args(["stop", &timer]).status().await;
+    let _ = Command::new("systemctl")
+        .args(["stop", &timer])
+        .status()
+        .await;
     let _ = tokio::fs::remove_dir_all(transaction).await;
     Ok(())
 }
@@ -145,12 +148,7 @@ async fn apply_candidate(
             let rule = format!("{port}/tcp");
             run_command(
                 "ufw",
-                &[
-                    "allow",
-                    &rule,
-                    "comment",
-                    "Argus restored SSH safety rule",
-                ],
+                &["allow", &rule, "comment", "Argus restored SSH safety rule"],
             )
             .await?;
         }
@@ -207,9 +205,7 @@ async fn remove_managed_paths() -> Result<(), HelperError> {
                 .await
                 .map_err(system_error)?;
         } else {
-            tokio::fs::remove_file(&path)
-                .await
-                .map_err(system_error)?;
+            tokio::fs::remove_file(&path).await.map_err(system_error)?;
         }
     }
     Ok(())
