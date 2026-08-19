@@ -63,6 +63,9 @@ jobs:
           set -euo pipefail
           content_tables="$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM information_schema.tables WHERE table_schema='argus_content';")"
           public_tables="$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")"
+          echo "argus_content table count: $content_tables"
+          echo "public table count: $public_tables"
+          psql "$DATABASE_URL" -P pager=off -c "SELECT table_schema,table_name FROM information_schema.tables WHERE table_schema IN ('argus_content','public') ORDER BY table_schema,table_name;"
           test "$content_tables" -gt 0
           test "$public_tables" -eq 0
           psql "$DATABASE_URL" -Atc "SELECT schema_name FROM information_schema.schemata WHERE schema_name='argus_content';" | grep -Fx argus_content
