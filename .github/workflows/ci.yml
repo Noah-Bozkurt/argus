@@ -53,10 +53,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate installer scripts
+      - name: Validate installer and smoke scripts
         run: |
           bash -n install.sh
           bash -n scripts/reset-first-test.sh
+          bash -n scripts/first-server-smoke.sh
 
       - name: Validate Compose configuration
         run: |
