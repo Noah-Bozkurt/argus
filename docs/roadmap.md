@@ -23,76 +23,81 @@ The repository already contains substantial working slices for:
 - Payload App Data with project/organization scoping;
 - Argus Project -> Payload project synchronization;
 - committed Payload production migrations;
-- CMS content models, drafts/version history, publication and explicit public content reads.
+- CMS content models, drafts/version history, publication and explicit public content reads;
+- a first-test hybrid deployment path using Docker Compose for the control plane and native Agent/Helper services;
+- private custom images for Argus Web, Control API, Worker, Payload and host-tool artifacts;
+- an Ubuntu/Debian amd64 first-test installer with bootstrap, local Agent enrollment, health verification and disposable reset;
+- main-only image publication that runs only after the normal CI workflow succeeds.
 
 These capabilities are described by the canonical documents in this directory. They should not be interpreted as a completed production product.
 
-## Next required milestone: first-test installer
+## Next required milestone: first real server test
 
-**The installer is now a hard prerequisite for the first real server test.**
+The installer milestone now has an implementation path. The next proof is to run it on a clean real VPS/VM using only the documented installer flow and treat every manual workaround as a bug.
 
-The first test should not depend on manually reconstructing a development setup from memory. The initial installer should optimize for one reproducible test environment rather than prematurely supporting every distribution/provider.
+Before calling that test meaningful, the merged `main` commit must pass normal CI and its five custom Argus images must publish successfully. PR CI validates the clean database migration/start path and production application builds, but it does not replace a real Linux/network/systemd install.
 
 ### Initial supported target
 
-Start with a documented Ubuntu/Debian-class Linux server and a single-node test topology. Expand platforms only after the first install/update/remove cycle is reliable.
+The first supported target is deliberately narrow:
 
-### Installer responsibilities
+- Ubuntu/Debian-class Linux;
+- amd64;
+- clean/disposable server;
+- direct public DNS to the server;
+- inbound HTTP/HTTPS for Caddy;
+- Docker Compose control plane;
+- native systemd Agent + Helper.
 
-The first-test installer should:
+Cloudflare Tunnel, arm64 and provider-specific provisioning should not be added before this first path is proven.
 
-1. perform OS/architecture/prerequisite checks and fail with actionable messages;
-2. create the Argus system user/group and protected directories;
-3. install or verify required runtime dependencies;
-4. install/build the Control API, worker, web app, Payload content app, Agent, Helper and CLI from a pinned Argus revision/release;
-5. provision/configure PostgreSQL for the test deployment without exposing it publicly by default;
-6. generate/store high-entropy service credentials with restrictive permissions;
-7. configure Control API and Payload environment files;
-8. apply Control API migrations and committed Payload migrations;
-9. install service definitions with explicit dependency/start ordering;
-10. configure the Helper Unix socket and Agent permissions;
-11. create or guide the minimal first organization/user bootstrap;
-12. enroll the local/selected managed node without requiring manual editing of Agent credential files;
-13. start services and run health checks for database, Control API, worker, web, Payload, Agent and Helper;
-14. print the URL/next steps and enough diagnostics to troubleshoot a failed install;
-15. be safe to rerun where practical and never silently overwrite unknown production data.
+### First server test checklist
 
-### Installer safety before first test
+1. point the main and content DNS names at a clean test server;
+2. run `install.sh` using a private-registry read credential and no manual service setup;
+3. confirm installer health checks pass and both HTTPS hostnames are reachable;
+4. reboot the server and confirm Compose services, Agent and Helper recover automatically;
+5. confirm local managed-node enrollment and heartbeat;
+6. create a personal Project with no Client;
+7. exercise server/service inventory and a safe typed action;
+8. confirm the Argus control-plane containers cannot be stopped/restarted through normal managed Docker/Compose actions;
+9. connect/create the minimum project/service/environment/site structure;
+10. verify jobs/monitoring execute after restart;
+11. confirm Argus Project synchronization reaches Payload;
+12. create an application-data model/record;
+13. create a content model, save a draft, publish it and read it through the public content endpoint;
+14. create/verify a system-config backup;
+15. test restore preflight; transactional live restore should only be tested on this disposable host with maintenance active;
+16. rerun the installer and confirm it preserves IDs/secrets/data rather than rebuilding the deployment;
+17. exercise the explicit first-test reset path and perform one second clean install;
+18. record every manual workaround as an installer/product bug rather than adding undocumented setup knowledge.
 
-Before calling the installer usable, verify at least:
+### What is intentionally not required yet
 
-- clean install on a fresh test VM/server;
-- interrupted/failed install produces useful recovery instructions;
-- secrets are not world-readable or printed into logs unnecessarily;
-- PostgreSQL/Helper are not accidentally exposed to the public network;
-- migrations can run from an empty database;
-- all services survive reboot and respect dependency ordering;
-- Agent enrollment and heartbeat work after reboot;
-- a minimal uninstall/reset path exists for the disposable test environment.
+The first test does not require:
 
-Full self-update/rollback is not required for the first test installer, but the layout must not make later upgrades impossible.
+- a general production installer for every distro;
+- Cloudflare Tunnel automation;
+- multi-node control-plane HA;
+- automatic Argus self-update/rollback;
+- arm64 images;
+- a finished end-user login/identity system;
+- provider provisioning.
 
-## First server test
-
-Only after the installer milestone is complete:
-
-1. install Argus on a clean test server using only the documented installer path;
-2. log into/open the operator UI;
-3. confirm local managed-node enrollment and heartbeat;
-4. create a personal Project (no Client required);
-5. exercise service/server inventory and a safe typed action;
-6. connect/create the minimum project/service/environment/site structure;
-7. verify jobs/monitoring execute after restart;
-8. confirm Argus Project synchronization reaches Payload;
-9. create an application-data model/record;
-10. create a content model, save a draft, publish it and read it through the public content endpoint;
-11. create/verify a system-config backup;
-12. test restore preflight; transactional live restore should only be tested on a disposable host with maintenance active;
-13. record every manual workaround as an installer/product bug rather than institutionalizing it as setup documentation.
+The current Caddy basic-auth layer is explicitly a temporary outer guard for the pre-production operator UI and Payload admin until first-class identity is built.
 
 ## After the first server test
 
-Priorities should be driven by failures and usability gaps found in that test. The broader intended order is:
+Priorities should first be driven by failures and usability gaps found in that test. Once the installation/control-plane foundation is proven, the broader intended order remains:
+
+### Deployment maturity
+
+- turn the successful first-test flow into versioned release installation rather than relying on the `main` convenience tag;
+- publish release manifests/checksums and pin images by immutable digest where practical;
+- add safe update orchestration, preflight, database-aware rollback boundaries and explicit rollback procedures;
+- add arm64 after the amd64 install/update/reset cycle is stable;
+- improve install diagnostics and recovery from interrupted upgrades;
+- add optional Cloudflare Tunnel/direct-proxy modes without making them core requirements.
 
 ### Content/product layer
 
@@ -138,12 +143,11 @@ Priorities should be driven by failures and usability gaps found in that test. T
 
 ## Sequencing rules
 
-When development resumes after this documentation pass:
-
-- do not move the first server test ahead of the installer;
+- do not call the deployment test-ready until normal CI and the main image publication succeed;
 - keep Client optional in core models;
 - prefer a complete safe vertical slice over a broad but fake feature surface;
 - privileged mutations need typed APIs, authorization, audit and failure semantics;
 - recovery-sensitive mutations need preflight and rollback before automation;
 - CI must be green before merging;
+- Docker image publication must consume the exact green `main` commit rather than rebuilding an untested revision;
 - update canonical documentation rather than creating another historical milestone file.
