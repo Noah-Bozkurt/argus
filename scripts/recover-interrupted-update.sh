@@ -11,6 +11,9 @@ COMPOSE_FILE="$INSTALL_DIR/compose.yaml"
 CADDY_FILE="$INSTALL_DIR/Caddyfile"
 PRESTART_MODE="${ARGUS_UPDATE_RECOVERY_PRESTART:-0}"
 PRE_RECOVERY_VERSION=""
+TRANSACTION_FORMAT=1
+FROM_REVISION=""
+TO_REVISION=""
 
 log() { printf '[argus-recovery] %s\n' "$*"; }
 warn() { printf '[argus-recovery] warning: %s\n' "$*" >&2; }
@@ -35,16 +38,30 @@ acquire_recovery_lock() {
   fi
 }
 
+durable_write_text() {
+  local path="$1" value="$2" tmp="${path}.tmp.$$"
+  printf '%s\n' "$value" >"$tmp"
+  chmod 0600 "$tmp"
+  sync -f "$tmp"
+  mv "$tmp" "$path"
+  sync -f "$(dirname "$path")"
+}
+
+write_transaction_result() {
+  local transaction="$1" result="$2"
+  durable_write_text "$transaction/result" "$result"
+}
+
 find_incomplete_transaction() {
   [[ -d "$BACKUP_ROOT" ]] || return 1
 
   local entry dir result
   while IFS= read -r entry; do
     dir="${entry#* }"
-    [[ -f "$dir/metadata.env" && -d "$dir/files" ]] || continue
+    [[ -f "$dir/metadata.env" ]] || continue
     result="$(cat "$dir/result" 2>/dev/null || true)"
     case "$result" in
-      SUCCEEDED|ROLLED_BACK) continue ;;
+      SUCCEEDED|ROLLED_BACK|ABORTED_PRE_MUTATION|ROLLBACK_FAILED) continue ;;
     esac
     printf '%s\n' "$dir"
     return 0
@@ -55,12 +72,19 @@ find_incomplete_transaction() {
 
 load_transaction_metadata() {
   local transaction="$1"
+  TRANSACTION_FORMAT=1
+  FROM_REVISION=""
+  TO_REVISION=""
   # shellcheck disable=SC1090
   . "$transaction/metadata.env"
   : "${FROM_REVISION:?transaction is missing FROM_REVISION}"
   : "${TO_REVISION:?transaction is missing TO_REVISION}"
   valid_revision "$FROM_REVISION" || die "invalid FROM_REVISION in $transaction"
   valid_revision "$TO_REVISION" || die "invalid TO_REVISION in $transaction"
+  case "$TRANSACTION_FORMAT" in
+    1|2) ;;
+    *) die "unsupported update transaction format '$TRANSACTION_FORMAT' in $transaction" ;;
+  esac
 }
 
 capture_pre_recovery_version() {
@@ -71,6 +95,72 @@ capture_pre_recovery_version() {
     *) die "installed ARGUS_VERSION '$PRE_RECOVERY_VERSION' matches neither transaction revision" ;;
   esac
   log "interrupted runtime persisted revision: $PRE_RECOVERY_VERSION"
+}
+
+file_snapshot_paths() {
+  cat <<'EOF'
+files/install/.env
+files/install/compose.yaml
+files/install/Caddyfile
+files/install/Caddyfile.template
+files/bin/argus-agent
+files/bin/argus-helper
+files/bin/argusctl
+files/systemd/argus-agent.service
+files/systemd/argus-helper.service
+EOF
+}
+
+legacy_file_snapshot_complete() {
+  local transaction="$1" path
+  while IFS= read -r path; do
+    [[ -f "$transaction/$path" ]] || return 1
+  done < <(file_snapshot_paths)
+}
+
+verify_file_snapshot() {
+  local transaction="$1" manifest="$transaction/file-snapshot.sha256"
+  [[ -s "$manifest" ]] || return 1
+
+  local expected actual
+  expected="$(file_snapshot_paths | LC_ALL=C sort)"
+  actual="$(awk '{ print $2 }' "$manifest" | LC_ALL=C sort)"
+  [[ "$actual" == "$expected" ]] || return 1
+
+  (
+    cd "$transaction"
+    sha256sum -c file-snapshot.sha256 >/dev/null 2>&1
+  )
+}
+
+prepare_transaction_recovery() {
+  local transaction="$1"
+
+  if [[ "$TRANSACTION_FORMAT" == "2" ]]; then
+    if [[ ! -f "$transaction/file-snapshot.sha256" ]]; then
+      capture_pre_recovery_version
+      [[ "$PRE_RECOVERY_VERSION" == "$FROM_REVISION" ]] \
+        || die "format-2 transaction lacks a sealed file snapshot after the target revision was persisted"
+      write_transaction_result "$transaction" ABORTED_PRE_MUTATION
+      log "transaction ended before its rollback snapshot was sealed; no live mutation had been armed"
+      return 1
+    fi
+
+    verify_file_snapshot "$transaction" \
+      || die "sealed pre-update file snapshot failed checksum verification: $transaction"
+    return 0
+  fi
+
+  if legacy_file_snapshot_complete "$transaction"; then
+    return 0
+  fi
+
+  capture_pre_recovery_version
+  [[ "$PRE_RECOVERY_VERSION" == "$FROM_REVISION" ]] \
+    || die "legacy transaction has an incomplete rollback snapshot after the target revision was persisted"
+  write_transaction_result "$transaction" ABORTED_PRE_MUTATION
+  log "legacy transaction ended before a complete rollback snapshot existed; no target revision was persisted"
+  return 1
 }
 
 load_installed_env_if_available() {
@@ -102,19 +192,13 @@ restore_installed_files() {
   local transaction="$1"
   local backup="$transaction/files"
 
-  for required in \
-    "$backup/install/.env" \
-    "$backup/install/compose.yaml" \
-    "$backup/install/Caddyfile" \
-    "$backup/install/Caddyfile.template" \
-    "$backup/bin/argus-agent" \
-    "$backup/bin/argus-helper" \
-    "$backup/bin/argusctl" \
-    "$backup/systemd/argus-agent.service" \
-    "$backup/systemd/argus-helper.service"
-  do
-    [[ -f "$required" ]] || die "rollback snapshot is incomplete: $required"
-  done
+  if [[ "$TRANSACTION_FORMAT" == "2" ]]; then
+    verify_file_snapshot "$transaction" \
+      || die "pre-update file snapshot changed before restore"
+  else
+    legacy_file_snapshot_complete "$transaction" \
+      || die "legacy rollback snapshot is incomplete"
+  fi
 
   log "restoring pre-update deployment files and native binaries"
   cp -a "$backup/install/.env" "$ENV_FILE"
@@ -149,31 +233,54 @@ wait_postgres() {
   return 1
 }
 
+database_snapshot_checksum_valid() {
+  local transaction="$1" manifest="$transaction/database-snapshot.sha256"
+  [[ -s "$transaction/argus.dump" && -s "$manifest" ]] || return 1
+  [[ "$(awk '{ print $2 }' "$manifest")" == "argus.dump" ]] || return 1
+  (
+    cd "$transaction"
+    sha256sum -c database-snapshot.sha256 >/dev/null 2>&1
+  )
+}
+
 database_snapshot_is_readable() {
   local transaction="$1"
-  local dump="$transaction/argus.dump"
-  [[ -s "$dump" ]] || return 1
-  compose_current exec -T postgres pg_restore --list <"$dump" >/dev/null 2>&1
+  [[ -s "$transaction/argus.dump" ]] || return 1
+
+  if [[ "$TRANSACTION_FORMAT" == "2" ]]; then
+    database_snapshot_checksum_valid "$transaction" || return 1
+  fi
+
+  compose_current exec -T postgres pg_restore --list <"$transaction/argus.dump" >/dev/null 2>&1
+}
+
+target_start_was_armed() {
+  local transaction="$1"
+
+  if [[ "$TRANSACTION_FORMAT" == "1" ]]; then
+    [[ "$PRE_RECOVERY_VERSION" == "$TO_REVISION" ]]
+    return
+  fi
+
+  [[ -f "$transaction/target-start-armed" ]] || return 1
+  local armed_revision
+  armed_revision="$(cat "$transaction/target-start-armed")"
+  [[ "$armed_revision" == "$TO_REVISION" ]] \
+    || die "target-start marker contains unexpected revision '$armed_revision'"
+  return 0
 }
 
 restore_database_if_needed() {
   local transaction="$1"
 
-  wait_postgres || die "PostgreSQL did not become ready during interrupted-update recovery"
-
-  if [[ "$PRE_RECOVERY_VERSION" == "$FROM_REVISION" ]]; then
-    # set_env_version(TO_REVISION) runs only after pg_dump completed and target
-    # files were installed. If the persisted revision is still FROM, target
-    # startup/migrations could not have happened, so the existing DB is safer.
-    log "target revision was never persisted; leaving the existing database intact"
+  if ! target_start_was_armed "$transaction"; then
+    log "target start was never durably armed; leaving the existing database intact"
     return
   fi
 
-  # Persisting TO_REVISION is downstream of a successful pg_dump in the update
-  # transaction. At this boundary a rollback must restore that snapshot before
-  # old binaries are allowed to operate on a potentially migrated database.
+  wait_postgres || die "PostgreSQL did not become ready during interrupted-update recovery"
   database_snapshot_is_readable "$transaction" \
-    || die "target revision was persisted but the required pre-update database snapshot is unreadable"
+    || die "target start was armed but the required pre-update database snapshot is unreadable"
 
   log "restoring pre-update PostgreSQL snapshot"
   compose_current exec -T postgres psql -v ON_ERROR_STOP=1 -U argus -d postgres \
@@ -221,9 +328,15 @@ finalize_native_runtime_if_manual() {
 
 recover_transaction() {
   local transaction="$1"
-  log "recovering interrupted transaction $transaction"
+  log "examining interrupted transaction $transaction"
   load_transaction_metadata "$transaction"
+
+  if ! prepare_transaction_recovery "$transaction"; then
+    return 0
+  fi
+
   capture_pre_recovery_version
+  log "recovering interrupted transaction $transaction"
 
   stop_current_runtime_best_effort
   restore_installed_files "$transaction"
@@ -240,8 +353,7 @@ recover_transaction() {
   verify_rollback_revision
   finalize_native_runtime_if_manual
 
-  printf 'ROLLED_BACK\n' >"$transaction/result"
-  chmod 0600 "$transaction/result"
+  write_transaction_result "$transaction" ROLLED_BACK
   log "interrupted update rolled back to $FROM_REVISION"
   if [[ "$PRESTART_MODE" == "1" ]]; then
     log "run 'sudo argusctl smoke' after boot for full native-service verification"
@@ -252,6 +364,8 @@ main() {
   require_root
   command -v docker >/dev/null || die "docker is required"
   command -v flock >/dev/null || die "flock is required"
+  command -v sha256sum >/dev/null || die "sha256sum is required"
+  command -v sync >/dev/null || die "sync is required"
   acquire_recovery_lock
 
   local transaction
@@ -262,4 +376,6 @@ main() {
   recover_transaction "$transaction"
 }
 
-main "$@"
+if [[ "${1:-}" != "--internal-test-library" ]]; then
+  main "$@"
+fi
