@@ -145,8 +145,8 @@ jobs:
           NODE_ENV: production
           DATABASE_URL: postgresql://argus:build-only@127.0.0.1:9/argus
           ARGUS_CONTENT_DB_SCHEMA: argus_content
-          PAYLOAD_SECRET: 00000000000000000000000000000000
+          PAYLOAD_SECRET: payload-build-secret-000000000000
           PAYLOAD_PUBLIC_URL: http://localhost:3000
-          ARGUS_CONTENT_SYNC_TOKEN: 00000000000000000000000000000000
+          ARGUS_CONTENT_SYNC_TOKEN: content-sync-build-00000000000000
           PAYLOAD_DB_PUSH: "false"
         run: pnpm --filter @argus/content run build
