@@ -104,7 +104,7 @@ async function projectDocumentWhere(
   const organizationId = user?.organizationId
   if (!user || !organizationId) return false
   if (user.role === 'admin') {
-    return { organizationId: { equals: organizationId } }
+    return { organizationId: { equals: organizationId } } as Where
   }
   const projectIDs = await membershipProjectIDs(req, minimumRole)
   if (projectIDs.length === 0) return false
@@ -113,7 +113,7 @@ async function projectDocumentWhere(
       { organizationId: { equals: organizationId } },
       { project: { in: projectIDs } },
     ],
-  }
+  } as Where
 }
 
 export const readProjectDocuments: Access = ({ req }) => projectDocumentWhere(req, 'viewer')
@@ -132,7 +132,7 @@ export const readProjectSpaces: Access = async ({ req }) => {
   const organizationId = user?.organizationId
   if (!user || !organizationId) return false
   if (user.role === 'admin') {
-    return { organizationId: { equals: organizationId } }
+    return { organizationId: { equals: organizationId } } as Where
   }
   const projectIDs = await membershipProjectIDs(req, 'viewer')
   if (projectIDs.length === 0) return false
@@ -141,7 +141,7 @@ export const readProjectSpaces: Access = async ({ req }) => {
       { organizationId: { equals: organizationId } },
       { id: { in: projectIDs } },
     ],
-  }
+  } as Where
 }
 
 export const createProjectSpace: Access = ({ req }) => {
@@ -154,7 +154,7 @@ export const manageProjectSpaces: Access = async ({ req }) => {
   const organizationId = user?.organizationId
   if (!user || !organizationId) return false
   if (user.role === 'admin') {
-    return { organizationId: { equals: organizationId } }
+    return { organizationId: { equals: organizationId } } as Where
   }
   const projectIDs = await membershipProjectIDs(req, 'manager')
   if (projectIDs.length === 0) return false
@@ -163,5 +163,5 @@ export const manageProjectSpaces: Access = async ({ req }) => {
       { organizationId: { equals: organizationId } },
       { id: { in: projectIDs } },
     ],
-  }
+  } as Where
 }
