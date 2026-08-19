@@ -352,20 +352,19 @@ fn derive_state(
     };
 
     let tls_status = derive_tls_status(&domain.hostname, observations, now);
-    let overall_status = if matches!(expiration_status.as_str(), "EXPIRED" | "CRITICAL")
-        || tls_status == "FAILED"
-    {
-        "CRITICAL"
-    } else if expiration_status == "UNKNOWN" && tls_status == "UNKNOWN" {
-        "UNKNOWN"
-    } else if expiration_status == "WARNING"
-        || expiration_status == "UNKNOWN"
-        || matches!(tls_status.as_str(), "STALE" | "UNKNOWN")
-    {
-        "ATTENTION"
-    } else {
-        "OK"
-    };
+    let overall_status =
+        if matches!(expiration_status.as_str(), "EXPIRED" | "CRITICAL") || tls_status == "FAILED" {
+            "CRITICAL"
+        } else if expiration_status == "UNKNOWN" && tls_status == "UNKNOWN" {
+            "UNKNOWN"
+        } else if expiration_status == "WARNING"
+            || expiration_status == "UNKNOWN"
+            || matches!(tls_status.as_str(), "STALE" | "UNKNOWN")
+        {
+            "ATTENTION"
+        } else {
+            "OK"
+        };
     DerivedState {
         expiration_status,
         tls_status,
@@ -480,18 +479,15 @@ mod tests {
     fn expiration_thresholds_are_conservative() {
         let now = Utc::now();
         assert_eq!(
-            derive_state(&candidate(Some(now + Duration::days(5))), &[], now)
-                .expiration_status,
+            derive_state(&candidate(Some(now + Duration::days(5))), &[], now).expiration_status,
             "CRITICAL"
         );
         assert_eq!(
-            derive_state(&candidate(Some(now + Duration::days(20))), &[], now)
-                .expiration_status,
+            derive_state(&candidate(Some(now + Duration::days(20))), &[], now).expiration_status,
             "WARNING"
         );
         assert_eq!(
-            derive_state(&candidate(Some(now + Duration::days(60))), &[], now)
-                .expiration_status,
+            derive_state(&candidate(Some(now + Duration::days(60))), &[], now).expiration_status,
             "OK"
         );
     }
@@ -511,7 +507,10 @@ mod tests {
                 checked_at: now - Duration::hours(1),
             },
         ];
-        assert_eq!(derive_tls_status("example.com", &observations, now), "VALID");
+        assert_eq!(
+            derive_tls_status("example.com", &observations, now),
+            "VALID"
+        );
     }
 
     #[test]
@@ -522,7 +521,10 @@ mod tests {
             tls_status: "FAILED".into(),
             checked_at: now,
         }];
-        assert_eq!(derive_state(&candidate(None), &failed, now).overall_status, "CRITICAL");
+        assert_eq!(
+            derive_state(&candidate(None), &failed, now).overall_status,
+            "CRITICAL"
+        );
 
         let stale = vec![MonitorObservation {
             target_url: "https://example.com/".into(),
