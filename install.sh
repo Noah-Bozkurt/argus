@@ -223,7 +223,7 @@ registry_login_if_configured() {
 }
 
 resolve_existing_mutable_revision() {
-  if [[ "$EXISTING_INSTALL" != "1" || is_revision "$ARGUS_VERSION" ]]; then
+  if [[ "$EXISTING_INSTALL" != "1" ]] || is_revision "$ARGUS_VERSION"; then
     return
   fi
   [[ -f "$COMPOSE_FILE" ]] || die "existing install uses mutable version '$ARGUS_VERSION' but compose.yaml is missing"
@@ -258,7 +258,7 @@ pull_host_bundle() {
   is_revision "$resolved_revision" \
     || die "$image is not a verified Argus artifact with an immutable revision label"
 
-  if [[ "$EXISTING_INSTALL" == "1" && is_revision "$requested" && "$resolved_revision" != "$requested" ]]; then
+  if [[ "$EXISTING_INSTALL" == "1" ]] && is_revision "$requested" && [[ "$resolved_revision" != "$requested" ]]; then
     die "installed revision $requested resolved to unexpected artifact revision $resolved_revision"
   fi
 
