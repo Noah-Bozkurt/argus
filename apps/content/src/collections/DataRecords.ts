@@ -62,6 +62,7 @@ const validateRecord: CollectionBeforeValidateHook = async ({ data, operation, o
     project?: unknown
     schemaVersion?: number
     status?: string
+    kind?: string
     fields?: ModelField[]
   }
   if (relationshipID(model.project) !== scope.projectID) {
@@ -106,6 +107,13 @@ const validateRecord: CollectionBeforeValidateHook = async ({ data, operation, o
   data.organizationId = scope.organizationId
   data.argusProjectId = scope.argusProjectId
   data.schemaVersion = Number(model.schemaVersion ?? 1)
+
+  if (model.kind !== 'content') {
+    data._status = 'published'
+  } else if (data._status === 'published' && originalDoc?._status !== 'published') {
+    data.publishedAt = new Date().toISOString()
+  }
+
   if (operation === 'create' && req.user) {
     data.createdBy = req.user.id
   }
@@ -116,7 +124,8 @@ export const DataRecords: CollectionConfig = {
   slug: 'data-records',
   admin: {
     group: 'App Data',
-    defaultColumns: ['model', 'status', 'schemaVersion', 'updatedAt'],
+    defaultColumns: ['model', '_status', 'publishedAt', 'status', 'schemaVersion', 'updatedAt'],
+    description: 'Application data publishes immediately. Content models support Payload drafts and publication history.',
   },
   access: {
     create: createProjectDocument('editor'),
@@ -126,6 +135,14 @@ export const DataRecords: CollectionConfig = {
   },
   hooks: {
     beforeValidate: [validateRecord],
+  },
+  versions: {
+    drafts: {
+      autosave: {
+        interval: 1500,
+      },
+    },
+    maxPerDoc: 50,
   },
   fields: [
     { name: 'organizationId', type: 'text', required: true, index: true, admin: { readOnly: true } },
@@ -165,6 +182,15 @@ export const DataRecords: CollectionConfig = {
         { label: 'Active', value: 'active' },
         { label: 'Archived', value: 'archived' },
       ],
+    },
+    {
+      name: 'publishedAt',
+      type: 'date',
+      admin: {
+        position: 'sidebar',
+        readOnly: true,
+        description: 'Set when a content record is published for the first time after its latest draft state.',
+      },
     },
     {
       name: 'createdBy',
