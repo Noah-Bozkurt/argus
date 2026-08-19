@@ -26,6 +26,14 @@ For `kind=content`, Payload's normal draft behavior applies:
 
 CMS V1 intentionally uses manual draft saves rather than autosave. Argus validates dynamic required fields in its own hook, so enabling partial autosave before that validator understands draft context would create noisy invalid autosaves.
 
+## Migration compatibility
+
+The CMS schema migration starts from Payload's generated migration and Drizzle snapshot, then applies a small explicit ordering correction for the existing App Data V1 record lifecycle column.
+
+The existing `data_records.status` values (`active` / `archived`) are preserved in place. Its PostgreSQL enum is renamed to `enum_data_records_lifecycle_status`, while Payload receives the freed `enum_data_records_status` name for its new internal `_status` draft state (`draft` / `published`). Existing records are marked published when `_status` is introduced, so adding CMS drafts does not silently hide application data that pre-dates CMS V1.
+
+The committed migration is validated from a clean PostgreSQL 16 database together with the initial App Data migration. CI verifies the isolated `argus_content` schema, both migration records, repeat migration startup and a production Payload build.
+
 ## Explicit public exposure
 
 Content models are private by default. A content model must satisfy all of the following before any record is exposed publicly:
