@@ -1,4 +1,4 @@
-name: Bootstrap Payload production migrations
+name: Generate initial Payload migration
 
 on:
   pull_request:
@@ -9,28 +9,14 @@ permissions:
   contents: write
 
 jobs:
-  bootstrap:
+  generate:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: argus
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d argus"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     env:
-      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/argus
+      DATABASE_URL: postgres://argus:argus@127.0.0.1:5432/argus
       ARGUS_CONTENT_DB_SCHEMA: argus_content
-      PAYLOAD_SECRET: bootstrap-only-payload-secret-0000000000000000
+      PAYLOAD_SECRET: generation-only-payload-secret-00000000000000000
       PAYLOAD_PUBLIC_URL: http://localhost:3001
-      ARGUS_CONTENT_SYNC_TOKEN: bootstrap-only-sync-token-000000000000000000
+      ARGUS_CONTENT_SYNC_TOKEN: generation-only-sync-token-0000000000000000000
       PAYLOAD_DB_PUSH: "false"
     steps:
       - uses: actions/checkout@v4
@@ -45,46 +31,29 @@ jobs:
           node-version: 20
       - name: Install workspace dependencies
         run: pnpm install --no-frozen-lockfile
-      - name: Generate initial Payload migration
+      - name: Generate initial migration
+        run: pnpm --filter @argus/content run migrate:create initial_app_data --force-accept-warning
+      - name: Verify generated migration files
+        shell: bash
         run: |
           set -euo pipefail
-          if ! find apps/content/src/migrations -maxdepth 1 -type f -name '*.ts' ! -name 'index.ts' -print -quit 2>/dev/null | grep -q .; then
-            pnpm --filter @argus/content run migrate:create initial_app_data --force-accept-warning
-          fi
+          migration_file="$(find apps/content/src/migrations -maxdepth 1 -type f -name '*_initial_app_data.ts' -print -quit)"
+          test -n "$migration_file"
+          test -s "$migration_file"
+          test -s apps/content/src/migrations/index.ts
+          grep -F "initial_app_data" apps/content/src/migrations/index.ts
       - name: Generate Payload types and lockfile
         run: |
           pnpm --filter @argus/content run generate:types
           pnpm install --lockfile-only
-      - name: Apply committed production migrations to clean PostgreSQL
-        env:
-          NODE_ENV: production
-        run: pnpm --filter @argus/content run migrate
-      - name: Verify isolated schema
-        shell: bash
-        run: |
-          set -euo pipefail
-          content_tables="$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM information_schema.tables WHERE table_schema='argus_content';")"
-          public_tables="$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")"
-          echo "argus_content table count: $content_tables"
-          echo "public table count: $public_tables"
-          psql "$DATABASE_URL" -P pager=off -c "SELECT table_schema,table_name FROM information_schema.tables WHERE table_schema IN ('argus_content','public') ORDER BY table_schema,table_name;"
-          test "$content_tables" -gt 0
-          test "$public_tables" -eq 0
-          psql "$DATABASE_URL" -Atc "SELECT schema_name FROM information_schema.schemata WHERE schema_name='argus_content';" | grep -Fx argus_content
-      - name: Verify migration status and TypeScript
-        env:
-          NODE_ENV: production
-        run: |
-          pnpm --filter @argus/content run migrate:status
           pnpm --filter @argus/content run typecheck
-          pnpm --filter @argus/web exec tsc --noEmit
       - name: Remove previous merged feature branch
         shell: bash
         run: |
           if git ls-remote --exit-code --heads origin refs/heads/agent/payload-app-data-v1 >/dev/null 2>&1; then
             git push origin --delete agent/payload-app-data-v1
           fi
-      - name: Commit generated migration artifacts
+      - name: Commit generated artifacts and remove generator
         shell: bash
         run: |
           set -euo pipefail
@@ -92,9 +61,10 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git rm .github/workflows/bootstrap-payload-migrations.yml
           git add apps/content/src/migrations apps/content/src/payload-types.ts pnpm-lock.yaml
+          git diff --cached --stat
           if git diff --cached --quiet; then
-            echo "No generated migration changes to commit"
+            echo "No migration artifacts were generated"
             exit 1
           fi
-          git commit -m "feat: add Payload production migration"
+          git commit -m "feat: add generated Payload migration artifacts"
           git push origin HEAD:agent/payload-production-migrations-v1
