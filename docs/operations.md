@@ -117,6 +117,8 @@ sudo -E argusctl update --version main
 
 Before mutation, the updater verifies that all running custom control-plane services have the same revision label and locally pins those current image IDs under that SHA for rollback. It then prepares the target host-tools bundle before entering downtime.
 
+Target images are pre-pulled while the current control plane is still healthy, so a registry or image-space failure happens before downtime. After those pulls and target-bundle extraction, the updater performs a second storage preflight on the filesystem that holds `/var/lib/argus/update-backups/`. It reads the live PostgreSQL database size and requires at least **2× the database size + 1 GiB** of free space before writers are stopped. This intentionally over-reserves relative to the normally compressed custom-format dump so snapshot creation is not allowed to consume the last usable disk space.
+
 The transaction boundary is:
 
 1. preserve the current `.env`, Compose/Caddy assets, native binaries and systemd units;
@@ -129,7 +131,9 @@ The transaction boundary is:
 
 If any mutation-stage step fails, the updater automatically restores the saved files/binaries. If the database snapshot had already completed, it recreates the Argus database from that snapshot before starting the previous version. The rollback is itself verified with health checks and `argusctl smoke`.
 
-Transaction snapshots are retained under `/var/lib/argus/update-backups/` with root-only permissions. V1 deliberately does **not** expose a generic manual rollback-to-old-snapshot command after a successful update: restoring an old database later would discard legitimate changes made since the update. Retention policy and operator-driven point-in-time rollback need a stronger data-loss confirmation model before being added.
+Transaction snapshots are stored under `/var/lib/argus/update-backups/` with root-only permissions. To prevent normal successful updates from filling a small VPS indefinitely, Argus automatically keeps the **three newest terminal snapshots** whose result is `SUCCEEDED` or `ROLLED_BACK`. Pruning recognizes only Argus-generated transaction directory names with complete metadata/file snapshots. Incomplete transactions, `ROLLBACK_FAILED` transactions and unrelated/manual directories are never automatically removed. Pruning runs before a new update and again after a successful update.
+
+V1 deliberately does **not** expose a generic manual rollback-to-old-snapshot command after a successful update: restoring an old database later would discard legitimate changes made since the update. The retained snapshots exist for the bounded automatic recovery path and operator investigation; a future operator-driven point-in-time rollback still needs a stronger data-loss confirmation model.
 
 ### Control-plane self-protection
 
