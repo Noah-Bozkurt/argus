@@ -12,6 +12,8 @@ use uuid::Uuid;
 
 const FIRST_SERVER_SMOKE: &str = include_str!("../../../scripts/first-server-smoke.sh");
 const FIRST_SERVER_UPDATE: &str = include_str!("../../../scripts/update-first-test.sh");
+const INTERRUPTED_UPDATE_RECOVERY: &str =
+    include_str!("../../../scripts/recover-interrupted-update.sh");
 
 #[derive(Debug, Parser)]
 #[command(name = "argusctl", about = "Argus local diagnostics and lifecycle CLI")]
@@ -36,6 +38,8 @@ enum Commands {
         #[arg(long, default_value = "main")]
         version: String,
     },
+    #[command(hide = true)]
+    RecoverUpdate,
     System {
         #[command(subcommand)]
         command: SystemCommands,
@@ -103,7 +107,17 @@ async fn run_first_server_smoke() -> Result<()> {
     run_embedded_script("first-server smoke test", FIRST_SERVER_SMOKE, None).await
 }
 
+async fn run_update_recovery() -> Result<()> {
+    run_embedded_script(
+        "interrupted Argus update recovery",
+        INTERRUPTED_UPDATE_RECOVERY,
+        None,
+    )
+    .await
+}
+
 async fn run_first_server_update(version: &str) -> Result<()> {
+    run_update_recovery().await?;
     run_embedded_script(
         "transactional Argus update",
         FIRST_SERVER_UPDATE,
@@ -173,6 +187,7 @@ async fn main() -> Result<()> {
         }
         Commands::Smoke => run_first_server_smoke().await?,
         Commands::Update { version } => run_first_server_update(&version).await?,
+        Commands::RecoverUpdate => run_update_recovery().await?,
         Commands::System {
             command: SystemCommands::Info,
         } => {
@@ -220,5 +235,12 @@ mod tests {
             Commands::Update { version } => assert_eq!(version, revision),
             _ => panic!("expected update command"),
         }
+    }
+
+    #[test]
+    fn hidden_recovery_command_is_parseable_for_systemd() {
+        let cli = Cli::try_parse_from(["argusctl", "recover-update"])
+            .expect("parse recovery command");
+        assert!(matches!(cli.command, Commands::RecoverUpdate));
     }
 }
