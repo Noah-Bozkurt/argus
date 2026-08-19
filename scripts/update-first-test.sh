@@ -9,6 +9,8 @@ COMPOSE_FILE="$INSTALL_DIR/compose.yaml"
 CADDY_FILE="$INSTALL_DIR/Caddyfile"
 BACKUP_ROOT="$STATE_DIR/update-backups"
 LOCK_FILE="$STATE_DIR/update.lock"
+COMPLETED_TRANSACTION_RETENTION=3
+SNAPSHOT_FIXED_HEADROOM_BYTES=1073741824
 
 DOCKER_CONFIG_DIR=""
 TARGET_BUNDLE_CONTAINER=""
@@ -63,6 +65,62 @@ compose() {
 acquire_update_lock() {
   exec 9>"$LOCK_FILE"
   flock -n 9 || die "another Argus update is already running"
+}
+
+managed_transaction_name() {
+  [[ "$1" =~ ^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}-to-[0-9a-f]{12}$ ]]
+}
+
+prune_completed_transactions() {
+  mkdir -p "$BACKUP_ROOT"
+  chmod 0700 "$BACKUP_ROOT"
+
+  local retained=0 name dir result
+  while IFS= read -r name; do
+    managed_transaction_name "$name" || continue
+    dir="$BACKUP_ROOT/$name"
+    [[ -d "$dir" && -f "$dir/metadata.env" && -d "$dir/files" ]] || continue
+    result="$(cat "$dir/result" 2>/dev/null || true)"
+    case "$result" in
+      SUCCEEDED|ROLLED_BACK) ;;
+      *) continue ;;
+    esac
+
+    retained=$((retained + 1))
+    if (( retained > COMPLETED_TRANSACTION_RETENTION )); then
+      log "pruning old completed update snapshot $name"
+      rm -rf -- "$dir"
+    fi
+  done < <(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | LC_ALL=C sort -r)
+}
+
+required_snapshot_space_bytes() {
+  local database_bytes="$1"
+  [[ "$database_bytes" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$((database_bytes * 2 + SNAPSHOT_FIXED_HEADROOM_BYTES))"
+}
+
+preflight_snapshot_space() {
+  local database_bytes available_bytes required_bytes
+  database_bytes="$(compose exec -T postgres psql \
+    -v ON_ERROR_STOP=1 \
+    -U argus \
+    -d argus \
+    -Atqc 'SELECT pg_database_size(current_database());' | tr -d '[:space:]')"
+  [[ "$database_bytes" =~ ^[0-9]+$ ]] \
+    || die "could not determine PostgreSQL database size before update"
+
+  available_bytes="$(df -PB1 "$BACKUP_ROOT" | awk 'NR == 2 { print $4 }')"
+  [[ "$available_bytes" =~ ^[0-9]+$ ]] \
+    || die "could not determine free space for update snapshots"
+
+  required_bytes="$(required_snapshot_space_bytes "$database_bytes")" \
+    || die "could not calculate required update snapshot space"
+
+  log "storage preflight: database=${database_bytes}B available=${available_bytes}B required=${required_bytes}B"
+  if (( available_bytes < required_bytes )); then
+    die "insufficient free space for a safe update snapshot: ${available_bytes} bytes available, ${required_bytes} required"
+  fi
 }
 
 registry_login() {
@@ -473,6 +531,7 @@ main() {
   log "verifying current installation before update"
   /usr/local/bin/argusctl smoke
 
+  prune_completed_transactions
   pull_and_verify_target
   if [[ "$TARGET_REVISION" == "$CURRENT_REVISION" ]]; then
     log "already running requested revision $CURRENT_REVISION"
@@ -480,9 +539,8 @@ main() {
   fi
 
   prepare_target_bundle
+  preflight_snapshot_space
 
-  mkdir -p "$BACKUP_ROOT"
-  chmod 0700 "$BACKUP_ROOT"
   TRANSACTION_DIR="$BACKUP_ROOT/$(date -u +%Y%m%dT%H%M%SZ)-${CURRENT_REVISION:0:12}-to-${TARGET_REVISION:0:12}"
   mkdir -p "$TRANSACTION_DIR"
   chmod 0700 "$TRANSACTION_DIR"
@@ -504,8 +562,12 @@ EOF
 
   ROLLBACK_READY=0
   printf 'SUCCEEDED\n' >"$TRANSACTION_DIR/result"
+  chmod 0600 "$TRANSACTION_DIR/result"
   log "update succeeded: $CURRENT_REVISION -> $TARGET_REVISION"
   log "rollback snapshot retained at $TRANSACTION_DIR"
+  prune_completed_transactions
 }
 
-main "$@"
+if [[ "${1:-}" != "--internal-test-library" ]]; then
+  main "$@"
+fi
