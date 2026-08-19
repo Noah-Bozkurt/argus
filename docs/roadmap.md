@@ -27,13 +27,16 @@ The repository already contains substantial working slices for:
 - a first-test hybrid deployment path using Docker Compose for the control plane and native Agent/Helper services;
 - private custom images for Argus Web, Control API, Worker, Payload and host-tool artifacts;
 - an Ubuntu/Debian amd64 first-test installer with bootstrap, local Agent enrollment, health verification and disposable reset;
-- main-only image publication that runs only after the normal CI workflow succeeds.
+- an embedded `argusctl smoke` verification path for a real installed server;
+- immutable installed revisions even when `main` is used as the discovery alias;
+- main-only image publication that runs only after normal CI succeeds and verifies expected remote GHCR tags;
+- a single-server transactional `argusctl update` path with database/file preflight backup and automatic failure rollback.
 
 These capabilities are described by the canonical documents in this directory. They should not be interpreted as a completed production product.
 
 ## Next required milestone: first real server test
 
-The installer milestone now has an implementation path. The next proof is to run it on a clean real VPS/VM using only the documented installer flow and treat every manual workaround as a bug.
+The deployment/install/smoke/update foundation now has an implementation path. The next proof is to run it on a clean real VPS/VM using only the documented lifecycle and treat every manual workaround as a bug.
 
 Before calling that test meaningful, the merged `main` commit must pass normal CI and its five custom Argus images must publish successfully. PR CI validates the clean database migration/start path and production application builds, but it does not replace a real Linux/network/systemd install.
 
@@ -55,22 +58,25 @@ Cloudflare Tunnel, arm64 and provider-specific provisioning should not be added 
 
 1. point the main and content DNS names at a clean test server;
 2. run `install.sh` using a private-registry read credential and no manual service setup;
-3. confirm installer health checks pass and both HTTPS hostnames are reachable;
-4. reboot the server and confirm Compose services, Agent and Helper recover automatically;
-5. confirm local managed-node enrollment and heartbeat;
-6. create a personal Project with no Client;
-7. exercise server/service inventory and a safe typed action;
-8. confirm the Argus control-plane containers cannot be stopped/restarted through normal managed Docker/Compose actions;
-9. connect/create the minimum project/service/environment/site structure;
-10. verify jobs/monitoring execute after restart;
-11. confirm Argus Project synchronization reaches Payload;
-12. create an application-data model/record;
-13. create a content model, save a draft, publish it and read it through the public content endpoint;
-14. create/verify a system-config backup;
-15. test restore preflight; transactional live restore should only be tested on this disposable host with maintenance active;
-16. rerun the installer and confirm it preserves IDs/secrets/data rather than rebuilding the deployment;
-17. exercise the explicit first-test reset path and perform one second clean install;
-18. record every manual workaround as an installer/product bug rather than adding undocumented setup knowledge.
+3. confirm the persisted `ARGUS_VERSION` is a full immutable commit SHA rather than `main`;
+4. run `sudo argusctl smoke` and require every internal/public check to pass;
+5. reboot the server and run `sudo argusctl smoke` again;
+6. confirm local managed-node enrollment and heartbeat;
+7. create a personal Project with no Client;
+8. exercise server/service inventory and a safe typed action;
+9. confirm the Argus control-plane containers cannot be stopped/restarted through normal managed Docker/Compose actions;
+10. connect/create the minimum project/service/environment/site structure;
+11. verify jobs/monitoring execute after restart;
+12. confirm Argus Project synchronization reaches Payload;
+13. create an application-data model/record;
+14. create a content model, save a draft, publish it and read it through the public content endpoint;
+15. create/verify a system-config backup;
+16. test restore preflight; transactional live restore should only be tested on this disposable host with maintenance active;
+17. rerun the installer and confirm it preserves IDs/secrets/data/revision rather than acting as an updater;
+18. publish a second green `main` revision, run `sudo -E argusctl update --version main`, and require the update plus post-update smoke verification to succeed;
+19. on a disposable update attempt, deliberately create a safe target-start failure and prove the automatic file/database rollback returns the previous revision to a green smoke test;
+20. exercise the explicit first-test reset path and perform one second clean install;
+21. record every manual workaround as an installer/product bug rather than adding undocumented setup knowledge.
 
 ### What is intentionally not required yet
 
@@ -78,8 +84,8 @@ The first test does not require:
 
 - a general production installer for every distro;
 - Cloudflare Tunnel automation;
-- multi-node control-plane HA;
-- automatic Argus self-update/rollback;
+- multi-node control-plane HA or rolling upgrades;
+- arbitrary manual point-in-time rollback after a successful update;
 - arm64 images;
 - a finished end-user login/identity system;
 - provider provisioning.
@@ -92,12 +98,13 @@ Priorities should first be driven by failures and usability gaps found in that t
 
 ### Deployment maturity
 
-- turn the successful first-test flow into versioned release installation rather than relying on the `main` convenience tag;
+- turn the successful main-SHA lifecycle into named/versioned release installation rather than relying on `main` for discovery;
 - publish release manifests/checksums and pin images by immutable digest where practical;
-- add safe update orchestration, preflight, database-aware rollback boundaries and explicit rollback procedures;
+- add update-backup retention policy and a strongly confirmed operator-driven rollback/recovery workflow;
 - add arm64 after the amd64 install/update/reset cycle is stable;
-- improve install diagnostics and recovery from interrupted upgrades;
-- add optional Cloudflare Tunnel/direct-proxy modes without making them core requirements.
+- improve install/update diagnostics and recovery from interrupted host reboots;
+- add optional Cloudflare Tunnel/direct-proxy modes without making them core requirements;
+- evolve single-server update into production-grade multi-node/rolling control-plane upgrade semantics only when that topology exists.
 
 ### Content/product layer
 
@@ -116,7 +123,7 @@ Priorities should first be driven by failures and usability gaps found in that t
 - metrics/time-series observability;
 - runbooks and an event/automation engine;
 - safe browser terminal only as an escape hatch;
-- reliable application/update rollback.
+- reliable application-level deployment/update rollback independent of the Argus control-plane self-update path.
 
 ### Provisioning and networking
 
@@ -150,4 +157,5 @@ Priorities should first be driven by failures and usability gaps found in that t
 - recovery-sensitive mutations need preflight and rollback before automation;
 - CI must be green before merging;
 - Docker image publication must consume the exact green `main` commit rather than rebuilding an untested revision;
+- installed control-plane versions must be immutable revisions, not a silently moving `main` tag;
 - update canonical documentation rather than creating another historical milestone file.
