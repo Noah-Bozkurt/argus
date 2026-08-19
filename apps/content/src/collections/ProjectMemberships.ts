@@ -9,6 +9,13 @@ import { resolveProjectScope } from '@/lib/projectScope'
 
 const validateMembership: CollectionBeforeValidateHook = async ({ data, operation, originalDoc, req }) => {
   if (!data) return data
+
+  if (operation === 'update' && originalDoc) {
+    data.project = originalDoc.project
+    data.user = originalDoc.user
+    data.organizationId = originalDoc.organizationId
+  }
+
   const project = data.project ?? originalDoc?.project
   const user = data.user ?? originalDoc?.user
   const projectID = relationshipID(project)
@@ -83,6 +90,9 @@ export const ProjectMemberships: CollectionConfig = {
       relationTo: 'project-spaces',
       required: true,
       index: true,
+      admin: {
+        description: 'Immutable after creation.',
+      },
     },
     {
       name: 'user',
@@ -90,6 +100,9 @@ export const ProjectMemberships: CollectionConfig = {
       relationTo: 'workspace-users',
       required: true,
       index: true,
+      admin: {
+        description: 'Immutable after creation.',
+      },
     },
     {
       name: 'role',
