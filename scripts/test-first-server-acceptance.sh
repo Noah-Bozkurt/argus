@@ -96,4 +96,25 @@ if find_successful_update_transaction "$FROM_REVISION" "$TO_REVISION" >/dev/null
   exit 1
 fi
 
+# Product-acceptance helpers must produce typed command requests and root-only evidence.
+# shellcheck disable=SC1091
+source "$(dirname "$0")/first-server-product-acceptance.sh" --internal-test-library
+ARGUS_SERVER_ID=00000000-0000-4000-8000-000000000005
+api() {
+  [[ "$1" == POST && "$2" == /commands ]]
+  printf '%s\n' "$3"
+}
+queued="$(queue_command '{"kind":"service.status","service":"argus-agent.service"}' LOW)"
+jq -e --arg server "$ARGUS_SERVER_ID" '
+  .server_id == $server and .command_type.kind == "service.status" and
+  .command_type.service == "argus-agent.service" and .risk_level == "LOW" and
+  .ttl_seconds == 300 and (.idempotency_key | startswith("acceptance-"))
+' <<<"$queued" >/dev/null
+
+write_checkpoint project environment service site safe-command protected-command
+[[ "$(stat -c '%a' "$CHECKPOINT_FILE")" == 600 ]]
+# shellcheck disable=SC1090
+. "$CHECKPOINT_FILE"
+[[ "$PROJECT_ID" == project && "$PROTECTED_COMMAND_ID" == protected-command ]]
+
 printf 'first-server acceptance helper tests passed\n'
