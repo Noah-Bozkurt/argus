@@ -50,22 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! find apps/content/src/migrations -maxdepth 1 -type f -name '*_cms_v1.ts' -print -quit | grep -q .; then
-            python -m pip install --disable-pip-version-check --quiet pexpect==4.9.0
-            python - <<'PY'
-          import pexpect
-          import sys
-
-          command = 'pnpm --filter @argus/content run migrate:create cms_v1 --force-accept-warning'
-          child = pexpect.spawn('/bin/bash', ['-lc', command], encoding='utf-8', timeout=180)
-          child.logfile = sys.stdout
-          child.expect(r'created or renamed from another column\?')
-          child.send('\x1b[B')
-          child.send('\r')
-          child.expect(pexpect.EOF)
-          child.close()
-          if child.exitstatus not in (0, None):
-              raise SystemExit(child.exitstatus)
-          PY
+            pnpm --filter @argus/content run migrate:create cms_v1 --force-accept-warning
           fi
           pnpm --filter @argus/content run generate:types
           pnpm --filter @argus/content run typecheck
@@ -79,7 +64,12 @@ jobs:
           test -s "$migration_file"
           grep -F 'cms_v1' apps/content/src/migrations/index.ts
           grep -F 'enum_data_records_lifecycle_status' "$migration_file"
-          grep -F 'RENAME COLUMN "status" TO "lifecycle_status"' "$migration_file"
+          grep -F 'enum_data_records_status' "$migration_file"
+          grep -F '_data_records_v' "$migration_file"
+          if grep -F 'RENAME COLUMN "status"' "$migration_file"; then
+            echo 'Existing status column must remain in place' >&2
+            exit 1
+          fi
       - name: Commit generated artifacts for review
         shell: bash
         run: |
@@ -102,9 +92,10 @@ jobs:
           test "$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")" -eq 0
           test "$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM argus_content.payload_migrations;")" -eq 2
           psql "$DATABASE_URL" -Atc "SELECT to_regclass('argus_content._data_records_v');" | grep -F '_data_records_v'
-          psql "$DATABASE_URL" -Atc "SELECT column_name FROM information_schema.columns WHERE table_schema='argus_content' AND table_name='data_records' AND column_name IN ('_status','published_at','lifecycle_status') ORDER BY column_name;" | grep -F '_status'
-          psql "$DATABASE_URL" -Atc "SELECT column_name FROM information_schema.columns WHERE table_schema='argus_content' AND table_name='data_records' AND column_name='lifecycle_status';" | grep -Fx lifecycle_status
+          psql "$DATABASE_URL" -Atc "SELECT column_name FROM information_schema.columns WHERE table_schema='argus_content' AND table_name='data_records' AND column_name IN ('_status','published_at','status') ORDER BY column_name;" | grep -F '_status'
+          psql "$DATABASE_URL" -Atc "SELECT column_name FROM information_schema.columns WHERE table_schema='argus_content' AND table_name='data_records' AND column_name='status';" | grep -Fx status
           psql "$DATABASE_URL" -Atc "SELECT t.typname FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname='argus_content' AND t.typname IN ('enum_data_records_status','enum_data_records_lifecycle_status') ORDER BY t.typname;" | grep -F 'enum_data_records_lifecycle_status'
+          psql "$DATABASE_URL" -Atc "SELECT t.typname FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname='argus_content' AND t.typname='enum_data_records_status';" | grep -Fx enum_data_records_status
           psql "$DATABASE_URL" -Atc "SELECT column_name FROM information_schema.columns WHERE table_schema='argus_content' AND table_name='data_models' AND column_name='public_read';" | grep -Fx public_read
       - name: Verify migration idempotency
         env:
