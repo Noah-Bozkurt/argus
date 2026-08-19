@@ -9,5 +9,12 @@
   "scripts": {
     "test": "echo \"No JS tests configured yet\"",
     "lint": "echo \"No JS lint configured yet\""
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp",
+      "unrs-resolver"
+    ]
   }
 }
