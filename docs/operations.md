@@ -2,6 +2,84 @@
 
 This document describes the operational capabilities that currently exist in Argus. Security-sensitive details and recovery guarantees are expanded in [Security & Recovery](security-and-recovery.md).
 
+## First-test server deployment
+
+The first supported installation target is a clean Ubuntu/Debian-class **amd64** server. It is a test topology, not a claim of production readiness.
+
+The control plane runs through Docker Compose:
+
+- official PostgreSQL 16 image;
+- custom Argus Control API image;
+- custom Argus Worker image;
+- custom standalone Next.js Web image;
+- custom standalone Payload Content image;
+- official Caddy image.
+
+The managed-node Agent and privileged Helper run natively through systemd. `argusctl` is installed as a native diagnostic binary.
+
+### Network layout
+
+For the direct-DNS first test, create DNS records for two hostnames pointing at the server:
+
+- the main Argus hostname, for example `argus.example.com`;
+- the content hostname, for example `content.argus.example.com`.
+
+Inbound TCP 80/443 must reach Caddy. UDP 443 is also exposed for HTTP/3 but is not required for basic HTTPS operation. PostgreSQL, Web and Payload are not published directly. Control API port 8080 is bound only to host loopback so the native local Agent can use it.
+
+The primary hostname routes only `/agent/*` and `/enrollment/complete` directly to the Control API. Other operator traffic goes to Web and is protected by temporary first-test Caddy basic authentication. The content hostname exposes only `/public/*` without that outer authentication; Payload admin/private routes remain protected.
+
+### Installer inputs
+
+The root `install.sh` is the supported first-test path. The minimum operator-provided values are:
+
+```text
+ARGUS_DOMAIN=argus.example.com
+ARGUS_CONTENT_DOMAIN=content.argus.example.com   # defaults to content.<main-domain>
+ARGUS_REGISTRY_USERNAME=<private registry user>
+ARGUS_REGISTRY_TOKEN=<credential able to read the private Argus images>
+```
+
+`ARGUS_VERSION` defaults to `main`. CI also publishes an immutable full-commit-SHA tag; using that tag is preferred when reproducing a specific test.
+
+Run the installer from an authenticated checkout/download of this private repository:
+
+```bash
+sudo -E ./install.sh
+```
+
+The installer:
+
+1. validates Ubuntu/Debian + amd64 and detects conflicting existing container setups;
+2. installs/verifies Docker Engine and Compose;
+3. pulls the matching `argus-host-tools` artifact image and installs Agent/Helper/CLI plus version-matched deployment templates;
+4. creates persistent high-entropy internal credentials and bootstrap IDs;
+5. starts PostgreSQL/Control API/Worker/Web/Payload/Caddy through Compose;
+6. bootstraps an initial organization, operator identity and an `Argus Control Plane` infrastructure Project without any Client requirement;
+7. starts Helper and enrolls the local Agent through the real one-time enrollment API;
+8. removes the enrollment token from persistent Agent configuration after enrollment;
+9. verifies Compose health, systemd services, Control API loopback health and both HTTPS hostnames.
+
+Generated configuration lives primarily under `/opt/argus`, `/etc/argus` and `/var/lib/argus`. The Compose `.env` is root-readable only and contains the first-test credentials required to reproduce/restart the deployment.
+
+Rerunning the installer preserves existing generated IDs/secrets and does not silently destroy the database. The disposable test reset path is intentionally explicit:
+
+```bash
+ARGUS_CONFIRM_RESET=DELETE-ARGUS-FIRST-TEST-DATA \
+  sudo -E ./scripts/reset-first-test.sh
+```
+
+That removes Argus data/volumes, Agent identity and test backups. It leaves Docker installed.
+
+### Image publication gate
+
+Custom images are not published by pull-request CI. The image workflow runs only after the repository's normal `CI` workflow completes successfully on `main`, checks out the exact tested commit and publishes the five Argus images to GHCR using both `main` and full-commit-SHA tags.
+
+PR CI separately proves the source is server-test-ready by checking locked Rust tests, TypeScript, installer/Compose syntax, a Control API boot against an empty PostgreSQL 16 database, and production Web/Payload builds.
+
+### Control-plane self-protection
+
+Every Argus-owned Compose service is labelled `com.argus.protected=true`. The privileged Helper checks this label before container or Compose start/stop/restart operations and returns `PERMISSION_DENIED` for protected control-plane containers. This is enforced below the UI/API boundary.
+
 ## Managed server model
 
 A managed server is enrolled with an Argus Agent. Heartbeats provide system identity and snapshots used for online/offline state, CPU/RAM/disk/load/uptime information and capability-specific inventories.
@@ -33,7 +111,7 @@ A command being accepted is not by itself proof that a reboot completed; reconne
 
 The Agent reports Docker container inventory when Docker is available. Typed container start, stop and restart actions use validated container references and the local Helper.
 
-Argus does not expose arbitrary `docker` CLI arguments through the command API.
+Argus does not expose arbitrary `docker` CLI arguments through the command API. Argus control-plane containers carry a protected label and cannot be mutated through these managed actions.
 
 ## Compose stacks
 
@@ -99,6 +177,7 @@ Argus currently does not claim to provide:
 - generalized configuration management for every Linux setting;
 - automatic provider provisioning;
 - automatic DNS/Cloudflare mutation;
-- completely autonomous remediation for arbitrary incidents.
+- completely autonomous remediation for arbitrary incidents;
+- production-grade self-update/rollback of the Argus control plane.
 
-The first real server test is intentionally blocked on the installer described in [Roadmap](roadmap.md).
+The next deployment proof is the first real clean-server install and test described in [Roadmap](roadmap.md).
