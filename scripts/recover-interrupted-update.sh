@@ -39,7 +39,9 @@ acquire_recovery_lock() {
 }
 
 durable_write_text() {
-  local path="$1" value="$2" tmp="${path}.tmp.$$"
+  local path="$1"
+  local value="$2"
+  local tmp="${path}.tmp.$$"
   printf '%s\n' "$value" >"$tmp"
   chmod 0600 "$tmp"
   sync -f "$tmp"
@@ -119,7 +121,8 @@ legacy_file_snapshot_complete() {
 }
 
 verify_file_snapshot() {
-  local transaction="$1" manifest="$transaction/file-snapshot.sha256"
+  local transaction="$1"
+  local manifest="$transaction/file-snapshot.sha256"
   [[ -s "$manifest" ]] || return 1
 
   local expected actual
@@ -234,7 +237,8 @@ wait_postgres() {
 }
 
 database_snapshot_checksum_valid() {
-  local transaction="$1" manifest="$transaction/database-snapshot.sha256"
+  local transaction="$1"
+  local manifest="$transaction/database-snapshot.sha256"
   [[ -s "$transaction/argus.dump" && -s "$manifest" ]] || return 1
   [[ "$(awk '{ print $2 }' "$manifest")" == "argus.dump" ]] || return 1
   (
