@@ -123,13 +123,13 @@ jobs:
       - name: Build Web standalone artifact
         run: pnpm --filter @argus/web run build
 
-      - name: Build Payload standalone artifact
+      - name: Build Payload standalone artifact without database access
         env:
           NODE_ENV: production
-          DATABASE_URL: postgresql://argus:argus-test-password@127.0.0.1:5432/argus
+          DATABASE_URL: postgresql://argus:build-only@127.0.0.1:9/argus
           ARGUS_CONTENT_DB_SCHEMA: argus_content
-          PAYLOAD_SECRET: 22222222222222222222222222222222
-          PAYLOAD_PUBLIC_URL: https://content.argus.example.test
-          ARGUS_CONTENT_SYNC_TOKEN: 11111111111111111111111111111111
+          PAYLOAD_SECRET: 00000000000000000000000000000000
+          PAYLOAD_PUBLIC_URL: http://localhost:3000
+          ARGUS_CONTENT_SYNC_TOKEN: 00000000000000000000000000000000
           PAYLOAD_DB_PUSH: "false"
         run: pnpm --filter @argus/content run build
