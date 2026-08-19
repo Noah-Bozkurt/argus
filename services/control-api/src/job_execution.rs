@@ -42,6 +42,7 @@ async fn execute_job(
         "site_monitor.check" => execute_site_monitor_check(&state, request).await,
         "site_incident.evaluate" => execute_site_incident_evaluation(&state, request).await,
         "desired_state.reconcile" => execute_desired_state_reconciliation(&state, request).await,
+        "domains.lifecycle_evaluate" => execute_domain_lifecycle_evaluation(&state, request).await,
         _ => Err(api_error(
             StatusCode::BAD_REQUEST,
             "JOB_KIND_UNSUPPORTED",
@@ -283,6 +284,39 @@ async fn execute_desired_state_reconciliation(
         job_id: request.job_id,
         status: "SUCCEEDED",
         summary,
+    }))
+}
+
+async fn execute_domain_lifecycle_evaluation(
+    state: &AppState,
+    request: ExecuteJobRequest,
+) -> Result<Json<ExecuteJobResponse>, ApiError> {
+    if request.project_id.is_some() || !request.payload.is_object() {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_JOB_PAYLOAD",
+            "domains.lifecycle_evaluate must be organization scoped",
+        ));
+    }
+    let result = state
+        .domain_lifecycle
+        .evaluate_organization(request.organization_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(job_id=%request.job_id, organization_id=%request.organization_id, error=%error, "domain lifecycle evaluation failed");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "JOB_EXECUTION_FAILED",
+                "domain lifecycle evaluation failed",
+            )
+        })?;
+    Ok(Json(ExecuteJobResponse {
+        job_id: request.job_id,
+        status: "SUCCEEDED",
+        summary: format!(
+            "evaluated {} domains; {} changed",
+            result.evaluated_domains, result.changed_domains
+        ),
     }))
 }
 
