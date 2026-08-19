@@ -11,8 +11,11 @@ const normalizeProjectScope: CollectionBeforeValidateHook = ({ data, operation, 
   if (!data) return data
   const organizationId = userOrganizationID(req)
   if (operation === 'create') {
-    if (!organizationId) throw new Error('Authenticated organization is required')
-    data.organizationId = organizationId
+    if (organizationId) {
+      data.organizationId = organizationId
+    } else if (typeof data.organizationId !== 'string' || !isUUID(data.organizationId)) {
+      throw new Error('Project creation requires a valid organization UUID')
+    }
   } else if (originalDoc) {
     data.organizationId = originalDoc.organizationId
     data.argusProjectId = originalDoc.argusProjectId
@@ -54,8 +57,10 @@ export const ProjectSpaces: CollectionConfig = {
       index: true,
       admin: {
         readOnly: true,
-        description: 'Copied from the authenticated Payload workspace user.',
+        description: 'Argus organization UUID. Server-side project sync may stamp this with overrideAccess.',
       },
+      validate: (value: unknown) =>
+        typeof value === 'string' && isUUID(value) ? true : 'organizationId must be a UUID',
     },
     {
       name: 'name',
@@ -70,6 +75,10 @@ export const ProjectSpaces: CollectionConfig = {
       admin: {
         description: 'Optional client UUID/reference. Personal projects leave this empty.',
       },
+      validate: (value: unknown) =>
+        value === null || value === undefined || value === '' || (typeof value === 'string' && isUUID(value))
+          ? true
+          : 'clientId must be a UUID',
     },
     {
       name: 'status',
