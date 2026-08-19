@@ -314,6 +314,20 @@ async fn main() -> Result<()> {
                 }
                 if matches!(
                     command.command_type,
+                    protocol::CommandType::BackupRestoreApply { .. }
+                ) && result.status == CommandStatus::SUCCEEDED
+                {
+                    match runtime.helper.backup_restore_commit(command_id).await {
+                        Ok(()) => info!(%command_id, "restore rollback disarmed after control-plane acknowledgement"),
+                        Err(error) => warn!(%command_id, code=%error.code, "restore rollback remains armed because commit failed"),
+                    }
+                    security = collect_security(&runtime).await;
+                    updates = system::update_state();
+                    backups = collect_backups(&runtime).await;
+                    diagnostics = collect_diagnostics(&runtime, &config.managed_services).await;
+                }
+                if matches!(
+                    command.command_type,
                     protocol::CommandType::PackagesRefresh
                         | protocol::CommandType::PackagesUpgradeSecurity
                         | protocol::CommandType::PackagesUpgradeAll
@@ -336,6 +350,7 @@ async fn main() -> Result<()> {
                     command.command_type,
                     protocol::CommandType::BackupCreate { .. }
                         | protocol::CommandType::BackupVerify { .. }
+                        | protocol::CommandType::BackupRestorePreflight { .. }
                 ) {
                     backups = collect_backups(&runtime).await;
                 }
