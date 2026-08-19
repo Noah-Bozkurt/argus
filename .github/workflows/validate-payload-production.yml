@@ -26,7 +26,6 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      NODE_ENV: production
       DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/argus
       ARGUS_CONTENT_DB_SCHEMA: argus_content
       PAYLOAD_SECRET: validation-only-payload-secret-00000000000000000
@@ -46,7 +45,26 @@ jobs:
           node-version: 20
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+      - name: Add dedicated schema bootstrap to generated migration
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/content/src/migrations/20260819_073853_initial_app_data.ts')
+          text = path.read_text()
+          statement = 'CREATE SCHEMA IF NOT EXISTS "argus_content";'
+          if statement not in text:
+              needle = '  await db.execute(sql`\n'
+              if needle not in text:
+                  raise SystemExit('could not find migration SQL block')
+              text = text.replace(needle, needle + f'   {statement}\n', 1)
+              path.write_text(text)
+          PY
+          grep -F 'CREATE SCHEMA IF NOT EXISTS "argus_content";' apps/content/src/migrations/20260819_073853_initial_app_data.ts
       - name: Initialize Payload in production and apply prodMigrations
+        env:
+          NODE_ENV: production
         run: pnpm --filter @argus/content run migrate:status
       - name: Verify schema isolation and migration record
         shell: bash
@@ -61,6 +79,8 @@ jobs:
           psql "$DATABASE_URL" -Atc "SELECT count(*) FROM argus_content.payload_migrations WHERE name='20260819_073853_initial_app_data';" | grep -Fx 1
           psql "$DATABASE_URL" -Atc "SELECT to_regclass('argus_content.workspace_users'),to_regclass('argus_content.project_spaces'),to_regclass('argus_content.data_models'),to_regclass('argus_content.data_records'),to_regclass('argus_content.data_relations');" | grep -F 'workspace_users'
       - name: Verify production migration idempotency
+        env:
+          NODE_ENV: production
         run: pnpm --filter @argus/content run migrate:status
       - name: Verify migration was not duplicated
         shell: bash
@@ -68,13 +88,16 @@ jobs:
           set -euo pipefail
           psql "$DATABASE_URL" -Atc "SELECT count(*) FROM argus_content.payload_migrations WHERE name='20260819_073853_initial_app_data';" | grep -Fx 1
       - name: Build Payload production app
+        env:
+          NODE_ENV: production
         run: pnpm --filter @argus/content run build
-      - name: Remove one-shot validation workflow
+      - name: Commit schema bootstrap and remove one-shot workflow
         shell: bash
         run: |
           set -euo pipefail
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git rm .github/workflows/validate-payload-production.yml
-          git commit -m "chore: remove one-shot Payload runtime validation"
+          git add apps/content/src/migrations/20260819_073853_initial_app_data.ts
+          git commit -m "fix: bootstrap Payload content schema before migrations"
           git push origin HEAD:agent/payload-production-migrations-v1
