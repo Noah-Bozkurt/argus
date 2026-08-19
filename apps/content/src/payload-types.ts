@@ -213,14 +213,18 @@ export interface DataModel {
   project: string | ProjectSpace;
   name: string;
   /**
-   * Stable API identifier inside the project, for example products or release_notes.
+   * Stable immutable API identifier inside the project, for example products or release_notes.
    */
   slug: string;
   description?: string | null;
   /**
-   * Content models can later be surfaced by the visual CMS without changing the data substrate.
+   * Immutable after creation. Content models support drafts/publication and the public content API.
    */
   kind: 'data' | 'content';
+  /**
+   * Expose only published active records through the read-only public CMS API.
+   */
+  publicRead?: boolean | null;
   schemaVersion: number;
   status: 'active' | 'archived';
   fields: {
@@ -248,6 +252,8 @@ export interface DataModel {
   createdAt: string;
 }
 /**
+ * Application data publishes immediately. Content models support Payload drafts and publication history.
+ *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "data-records".
  */
@@ -276,10 +282,18 @@ export interface DataRecord {
     | number
     | boolean
     | null;
+  /**
+   * Argus record lifecycle. Kept separate from Payload’s internal draft _status.
+   */
   status: 'active' | 'archived';
+  /**
+   * Set when a content record is published for the first time after its latest draft state.
+   */
+  publishedAt?: string | null;
   createdBy?: (string | null) | WorkspaceUser;
   updatedAt: string;
   createdAt: string;
+  _status?: ('draft' | 'published') | null;
 }
 /**
  * Relationship endpoints are immutable. Delete and recreate an edge to change it.
@@ -453,6 +467,7 @@ export interface DataModelsSelect<T extends boolean = true> {
   slug?: T;
   description?: T;
   kind?: T;
+  publicRead?: T;
   schemaVersion?: T;
   status?: T;
   fields?:
@@ -482,9 +497,11 @@ export interface DataRecordsSelect<T extends boolean = true> {
   schemaVersion?: T;
   values?: T;
   status?: T;
+  publishedAt?: T;
   createdBy?: T;
   updatedAt?: T;
   createdAt?: T;
+  _status?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

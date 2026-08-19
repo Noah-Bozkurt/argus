@@ -16,6 +16,8 @@ const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation
     data.project = originalDoc.project
     data.organizationId = originalDoc.organizationId
     data.argusProjectId = originalDoc.argusProjectId
+    data.slug = originalDoc.slug
+    data.kind = originalDoc.kind
   }
 
   const project = data.project ?? originalDoc?.project
@@ -79,11 +81,13 @@ const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation
     }
   }
 
+  const kind = String(data.kind ?? originalDoc?.kind ?? 'data')
   data.project = scope.projectID
   data.organizationId = scope.organizationId
   data.argusProjectId = scope.argusProjectId
   data.slug = slug
   data.fields = fields
+  data.publicRead = kind === 'content' && data.publicRead === true
   data.schemaVersion = operation === 'update'
     ? Number(originalDoc?.schemaVersion ?? 1) + 1
     : 1
@@ -95,7 +99,7 @@ export const DataModels: CollectionConfig = {
   admin: {
     useAsTitle: 'name',
     group: 'App Data',
-    defaultColumns: ['name', 'slug', 'kind', 'schemaVersion', 'status'],
+    defaultColumns: ['name', 'slug', 'kind', 'publicRead', 'schemaVersion', 'status'],
   },
   access: {
     create: createProjectDocument('editor'),
@@ -125,7 +129,7 @@ export const DataModels: CollectionConfig = {
       index: true,
       maxLength: 120,
       admin: {
-        description: 'Stable API identifier inside the project, for example products or release_notes.',
+        description: 'Stable immutable API identifier inside the project, for example products or release_notes.',
       },
     },
     { name: 'description', type: 'textarea', maxLength: 4000 },
@@ -139,7 +143,16 @@ export const DataModels: CollectionConfig = {
         { label: 'Content', value: 'content' },
       ],
       admin: {
-        description: 'Content models can later be surfaced by the visual CMS without changing the data substrate.',
+        description: 'Immutable after creation. Content models support drafts/publication and the public content API.',
+      },
+    },
+    {
+      name: 'publicRead',
+      type: 'checkbox',
+      defaultValue: false,
+      admin: {
+        condition: (_, siblingData) => siblingData?.kind === 'content',
+        description: 'Expose only published active records through the read-only public CMS API.',
       },
     },
     { name: 'schemaVersion', type: 'number', required: true, defaultValue: 1, admin: { readOnly: true } },
