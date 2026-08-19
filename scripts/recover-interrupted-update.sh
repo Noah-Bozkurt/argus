@@ -10,6 +10,7 @@ ENV_FILE="$INSTALL_DIR/.env"
 COMPOSE_FILE="$INSTALL_DIR/compose.yaml"
 CADDY_FILE="$INSTALL_DIR/Caddyfile"
 PRESTART_MODE="${ARGUS_UPDATE_RECOVERY_PRESTART:-0}"
+PRE_RECOVERY_VERSION=""
 
 log() { printf '[argus-recovery] %s\n' "$*"; }
 warn() { printf '[argus-recovery] warning: %s\n' "$*" >&2; }
@@ -60,6 +61,16 @@ load_transaction_metadata() {
   : "${TO_REVISION:?transaction is missing TO_REVISION}"
   valid_revision "$FROM_REVISION" || die "invalid FROM_REVISION in $transaction"
   valid_revision "$TO_REVISION" || die "invalid TO_REVISION in $transaction"
+}
+
+capture_pre_recovery_version() {
+  [[ -f "$ENV_FILE" ]] || die "installed environment is missing during interrupted update recovery"
+  PRE_RECOVERY_VERSION="$(awk -F= '$1 == "ARGUS_VERSION" { print $2; exit }' "$ENV_FILE")"
+  case "$PRE_RECOVERY_VERSION" in
+    "$FROM_REVISION"|"$TO_REVISION") ;;
+    *) die "installed ARGUS_VERSION '$PRE_RECOVERY_VERSION' matches neither transaction revision" ;;
+  esac
+  log "interrupted runtime persisted revision: $PRE_RECOVERY_VERSION"
 }
 
 load_installed_env_if_available() {
@@ -138,7 +149,7 @@ wait_postgres() {
   return 1
 }
 
-database_snapshot_is_complete() {
+database_snapshot_is_readable() {
   local transaction="$1"
   local dump="$transaction/argus.dump"
   [[ -s "$dump" ]] || return 1
@@ -150,15 +161,21 @@ restore_database_if_needed() {
 
   wait_postgres || die "PostgreSQL did not become ready during interrupted-update recovery"
 
-  if ! database_snapshot_is_complete "$transaction"; then
-    # update-first-test.sh only installs/starts the target after pg_dump exits
-    # successfully. An absent or incomplete archive therefore means the target
-    # could not yet have migrated the database, so restoring it would add risk.
-    log "no complete pre-update database snapshot; leaving the existing database intact"
+  if [[ "$PRE_RECOVERY_VERSION" == "$FROM_REVISION" ]]; then
+    # set_env_version(TO_REVISION) runs only after pg_dump completed and target
+    # files were installed. If the persisted revision is still FROM, target
+    # startup/migrations could not have happened, so the existing DB is safer.
+    log "target revision was never persisted; leaving the existing database intact"
     return
   fi
 
-  log "restoring complete pre-update PostgreSQL snapshot"
+  # Persisting TO_REVISION is downstream of a successful pg_dump in the update
+  # transaction. At this boundary a rollback must restore that snapshot before
+  # old binaries are allowed to operate on a potentially migrated database.
+  database_snapshot_is_readable "$transaction" \
+    || die "target revision was persisted but the required pre-update database snapshot is unreadable"
+
+  log "restoring pre-update PostgreSQL snapshot"
   compose_current exec -T postgres psql -v ON_ERROR_STOP=1 -U argus -d postgres \
     -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='argus' AND pid <> pg_backend_pid();" >/dev/null
   compose_current exec -T postgres dropdb -U argus --if-exists argus
@@ -206,6 +223,7 @@ recover_transaction() {
   local transaction="$1"
   log "recovering interrupted transaction $transaction"
   load_transaction_metadata "$transaction"
+  capture_pre_recovery_version
 
   stop_current_runtime_best_effort
   restore_installed_files "$transaction"
