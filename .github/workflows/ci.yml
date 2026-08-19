@@ -201,10 +201,11 @@ jobs:
           printf 'ROLLBACK_FAILED\n' >"$failed/result"
 
           RETRY_FAILED=0
-          set +e
-          find_recovery_transaction >/tmp/argus-failed-recovery.out 2>/tmp/argus-failed-recovery.err
-          blocked_status=$?
-          set -e
+          if find_recovery_transaction >/tmp/argus-failed-recovery.out 2>/tmp/argus-failed-recovery.err; then
+            blocked_status=0
+          else
+            blocked_status=$?
+          fi
           [[ "$blocked_status" -eq 2 ]]
           grep -Fq 'unresolved failed update rollback blocks automatic startup' /tmp/argus-failed-recovery.err
 
