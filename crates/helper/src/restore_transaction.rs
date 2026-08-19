@@ -1,6 +1,9 @@
 use helper::HelperError;
-use std::{path::{Path, PathBuf}, process::Stdio};
-use tokio::process::Command;
+use std::{
+    path::{Path, PathBuf},
+    process::Stdio,
+};
+use tokio::{io::AsyncWriteExt, process::Command};
 
 const ROLLBACK_SECONDS: &str = "120s";
 const MANAGED_PATHS: [&str; 4] = [
@@ -37,7 +40,11 @@ pub async fn apply(restore_id: &str, backup: &str) -> Result<String, HelperError
     let firewall_was_active = ufw_is_active().await?;
     tokio::fs::write(
         transaction.join("firewall-state"),
-        if firewall_was_active { "active\n" } else { "inactive\n" },
+        if firewall_was_active {
+            "active\n"
+        } else {
+            "inactive\n"
+        },
     )
     .await
     .map_err(system_error)?;
@@ -87,17 +94,11 @@ pub async fn rollback(restore_id: &str) -> Result<(), HelperError> {
         return Err(HelperError::InvalidRequest);
     }
 
-    // If this is a synchronous rollback, stop the timer first. When invoked by
-    // the timer itself this may be inactive already, which is harmless.
-    let timer = format!("{}.timer", rollback_unit(restore_id));
-    let _ = Command::new("systemctl").args(["stop", &timer]).status().await;
-
+    // Do not disarm the timer before rollback has succeeded. If a synchronous
+    // rollback fails halfway, the independent timer must retain its chance to
+    // retry the recovery path.
     remove_managed_paths().await?;
-    let rollback_text = rollback_archive.to_string_lossy().into_owned();
-    run_command("tar", &["-xzf", &rollback_text, "-C", "/"]).await?;
-
-    run_command("sshd", &["-t"]).await?;
-    reload_ssh().await?;
+    extract_rollback_archive(&rollback_archive).await?;
 
     let previous_firewall = tokio::fs::read_to_string(transaction.join("firewall-state"))
         .await
@@ -109,11 +110,23 @@ pub async fn rollback(restore_id: &str) -> Result<(), HelperError> {
         run_command("ufw", &["--force", "disable"]).await?;
     }
 
+    // UFW enable/disable may update ufw.conf. Re-extract the rollback archive
+    // so persistent configuration is exactly what existed before the restore,
+    // while keeping the recovered runtime firewall state.
+    extract_rollback_archive(&rollback_archive).await?;
+    run_command("sshd", &["-t"]).await?;
+    reload_ssh().await?;
+
+    let timer = format!("{}.timer", rollback_unit(restore_id));
+    let _ = Command::new("systemctl").args(["stop", &timer]).status().await;
     let _ = tokio::fs::remove_dir_all(transaction).await;
     Ok(())
 }
 
-async fn apply_candidate(archive: &Path, firewall_was_active: bool) -> Result<Vec<u16>, HelperError> {
+async fn apply_candidate(
+    archive: &Path,
+    firewall_was_active: bool,
+) -> Result<Vec<u16>, HelperError> {
     remove_managed_paths().await?;
     let archive_text = archive.to_string_lossy().into_owned();
     run_command("tar", &["-xzf", &archive_text, "-C", "/"]).await?;
@@ -132,12 +145,18 @@ async fn apply_candidate(archive: &Path, firewall_was_active: bool) -> Result<Ve
             let rule = format!("{port}/tcp");
             run_command(
                 "ufw",
-                &["allow", &rule, "comment", "Argus restored SSH safety rule"],
+                &[
+                    "allow",
+                    &rule,
+                    "comment",
+                    "Argus restored SSH safety rule",
+                ],
             )
             .await?;
         }
         // Preserve the pre-restore runtime firewall state even if the backup's
-        // ufw.conf says otherwise. This makes activation a separate decision.
+        // ufw.conf says otherwise. The SSH safety rules intentionally remain in
+        // the restored policy so a future reload/reboot cannot close the new port.
         run_command("ufw", &["--force", "enable"]).await?;
         run_command("ufw", &["reload"]).await?;
     } else {
@@ -152,7 +171,12 @@ async fn apply_candidate(archive: &Path, firewall_was_active: bool) -> Result<Ve
 async fn create_rollback_archive(transaction: &Path) -> Result<(), HelperError> {
     let rollback = transaction.join("rollback.tar.gz");
     let rollback_text = rollback.to_string_lossy().into_owned();
-    let mut args = vec!["-C".to_string(), "/".to_string(), "-czf".to_string(), rollback_text];
+    let mut args = vec![
+        "-C".to_string(),
+        "/".to_string(),
+        "-czf".to_string(),
+        rollback_text,
+    ];
     for relative in MANAGED_PATHS {
         let live = Path::new("/").join(relative);
         if tokio::fs::symlink_metadata(&live).await.is_ok() {
@@ -167,6 +191,11 @@ async fn create_rollback_archive(transaction: &Path) -> Result<(), HelperError> 
     run_owned("tar", &args).await
 }
 
+async fn extract_rollback_archive(archive: &Path) -> Result<(), HelperError> {
+    let rollback_text = archive.to_string_lossy().into_owned();
+    run_command("tar", &["-xzf", &rollback_text, "-C", "/"]).await
+}
+
 async fn remove_managed_paths() -> Result<(), HelperError> {
     for relative in MANAGED_PATHS {
         let path = Path::new("/").join(relative);
@@ -174,9 +203,13 @@ async fn remove_managed_paths() -> Result<(), HelperError> {
             continue;
         };
         if metadata.is_dir() {
-            tokio::fs::remove_dir_all(&path).await.map_err(system_error)?;
+            tokio::fs::remove_dir_all(&path)
+                .await
+                .map_err(system_error)?;
         } else {
-            tokio::fs::remove_file(&path).await.map_err(system_error)?;
+            tokio::fs::remove_file(&path)
+                .await
+                .map_err(system_error)?;
         }
     }
     Ok(())
@@ -280,7 +313,12 @@ fn backup_dir() -> PathBuf {
 fn transaction_root() -> PathBuf {
     std::env::var_os("ARGUS_RESTORE_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/var/lib/argus/restores"))
+        .unwrap_or_else(|| {
+            backup_dir()
+                .parent()
+                .unwrap_or_else(|| Path::new("/var/lib/argus"))
+                .join("restores")
+        })
 }
 
 fn transaction_dir(restore_id: &str) -> PathBuf {
@@ -301,7 +339,9 @@ fn validate_restore_id(value: &str) -> Result<(), HelperError> {
 }
 
 async fn ensure_private_dir(path: &Path) -> Result<(), HelperError> {
-    tokio::fs::create_dir_all(path).await.map_err(system_error)?;
+    tokio::fs::create_dir_all(path)
+        .await
+        .map_err(system_error)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -345,7 +385,6 @@ async fn run_with_stdin(program: &str, args: &[&str], input: &Path) -> Result<()
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| map_spawn(program, error))?;
-    use tokio::io::AsyncWriteExt;
     child
         .stdin
         .as_mut()
