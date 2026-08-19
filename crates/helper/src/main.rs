@@ -1,4 +1,5 @@
 mod firewall;
+mod protected_docker;
 mod restore_preflight;
 mod restore_transaction;
 
@@ -130,18 +131,28 @@ async fn handle_client(stream: UnixStream, api: Arc<HelperApi>) -> anyhow::Resul
     let mut lines = BufReader::new(reader).lines();
     while let Some(line) = lines.next_line().await? {
         let response = match serde_json::from_str::<HelperRequest>(&line) {
-            Ok(request) => match execute_request(&api, request).await {
-                Ok(output) => HelperResponse {
-                    ok: true,
-                    error: None,
-                    output,
-                },
-                Err(error) => HelperResponse {
-                    ok: false,
-                    error: Some(map_error(error)),
-                    output: None,
-                },
-            },
+            Ok(request) => {
+                if let Some(error) = protected_docker::denied_request(&request).await {
+                    HelperResponse {
+                        ok: false,
+                        error: Some(error),
+                        output: None,
+                    }
+                } else {
+                    match execute_request(&api, request).await {
+                        Ok(output) => HelperResponse {
+                            ok: true,
+                            error: None,
+                            output,
+                        },
+                        Err(error) => HelperResponse {
+                            ok: false,
+                            error: Some(map_error(error)),
+                            output: None,
+                        },
+                    }
+                }
+            }
             Err(_) => HelperResponse {
                 ok: false,
                 error: Some(OperationError {

@@ -1,6 +1,6 @@
 [Unit]
 Description=Argus server agent
-After=network-online.target argus-helper.service
+After=network-online.target argus-helper.service docker.service
 Wants=network-online.target
 Requires=argus-helper.service
 
@@ -16,7 +16,7 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes
 ProtectSystem=strict
-ReadWritePaths=/etc/argus /run/argus
+ReadWritePaths=/var/lib/argus /run/argus
 
 [Install]
 WantedBy=multi-user.target

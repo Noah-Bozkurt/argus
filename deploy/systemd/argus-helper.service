@@ -1,6 +1,7 @@
 [Unit]
 Description=Argus privileged helper
-After=local-fs.target
+After=local-fs.target docker.service
+Wants=docker.service
 
 [Service]
 Type=simple
@@ -14,8 +15,11 @@ Restart=on-failure
 RestartSec=2
 PrivateTmp=yes
 ProtectHome=yes
-ProtectSystem=strict
-ReadWritePaths=/run/argus
+# The Helper intentionally performs allowlisted host mutations (APT, systemd,
+# Docker, firewall and transactional restore). ProtectSystem=strict would make
+# those operations fail by mounting the host filesystem read-only. The security
+# boundary is the local Unix socket plus the typed/validated Helper API.
+ProtectSystem=no
 
 [Install]
 WantedBy=multi-user.target

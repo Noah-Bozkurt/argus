@@ -35,6 +35,38 @@ Payload Content Service (apps/content) ----> same PostgreSQL database
                                              isolated schema: argus_content
 ```
 
+### First-test deployment topology
+
+The first supported server-test topology is intentionally hybrid:
+
+```text
+Internet
+   |
+   v
+Caddy container :80/:443
+   |---------------------> Web container
+   |---------------------> Payload container
+   `-- allowlisted Agent routes --> Control API container
+                                      |
+                     +----------------+----------------+
+                     |                                 |
+                 Worker container                 PostgreSQL
+
+Linux host
+   |
+   +-- argus-agent.service (unprivileged)
+   |       |
+   |       `-- /run/argus/helper.sock
+   |
+   `-- argus-helper.service (root, typed operations only)
+```
+
+Caddy, Web, Control API, Worker, Payload and PostgreSQL are orchestrated by Docker Compose. Agent and Helper remain native systemd services because their purpose is to observe and safely mutate the actual host. Putting the Helper behind a privileged container with broad host mounts would add a container boundary without reducing its necessary host privilege.
+
+Only Caddy publishes public ports. The Control API additionally binds to host loopback for the local native Agent. PostgreSQL, Web and Payload are not published directly on host interfaces.
+
+Argus-owned control-plane containers are labelled `com.argus.protected=true`. The privileged Helper refuses normal managed Docker/Compose start, stop or restart actions for containers carrying that label, preventing Argus from turning off its own control plane through its normal container-management surface.
+
 ### Web
 
 `apps/web` is the operator-facing Next.js application. Backend credentials stay server-side. The browser does not receive the Control API service credential and does not directly contact privileged agents/helpers.
@@ -108,9 +140,10 @@ Argus stores dependency relationships between resources. This allows operational
 
 ## Current architectural boundaries
 
-Not yet implemented as complete production capabilities:
+The first-test installer/deployment path is intentionally not yet a production-grade deployment system. Still not implemented as complete production capabilities:
 
-- a production-grade installer/bootstrap path;
+- automatic upgrades and transactional rollback of the Argus control plane itself;
+- release-channel management beyond the initial `main`/commit image tags;
 - advanced identity such as OIDC/passkeys/mTLS;
 - a general secrets manager;
 - cloud/provider provisioning;

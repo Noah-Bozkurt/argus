@@ -1,3 +1,9 @@
+-- Historical repair for clean installs: Environment V1 introduced `type`, but the
+-- original migration assumed the column already existed. Argus had no supported
+-- production installer before this repair, so keeping the fix in this migration
+-- makes the full migration chain reproducible from an empty database.
+ALTER TABLE environments ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'development';
+
 ALTER TABLE environments ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
 ALTER TABLE environments ADD COLUMN IF NOT EXISTS is_protected BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE environments ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 100;
