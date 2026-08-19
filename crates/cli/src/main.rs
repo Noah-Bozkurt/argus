@@ -4,10 +4,13 @@ use clap::{Parser, Subcommand};
 use serde_json::json;
 use std::{
     path::{Path, PathBuf},
+    process::Stdio,
     time::Duration,
 };
-use tokio::{net::UnixStream, process::Command};
+use tokio::{io::AsyncWriteExt, net::UnixStream, process::Command};
 use uuid::Uuid;
+
+const FIRST_SERVER_SMOKE: &str = include_str!("../../../scripts/first-server-smoke.sh");
 
 #[derive(Debug, Parser)]
 #[command(name = "argusctl", about = "Argus local diagnostics CLI")]
@@ -27,6 +30,7 @@ enum Commands {
     Status,
     Health,
     Connection,
+    Smoke,
     System {
         #[command(subcommand)]
         command: SystemCommands,
@@ -56,6 +60,35 @@ async fn load(path: &Path) -> Result<AgentConfig> {
     AgentConfig::load(path)
         .await
         .with_context(|| format!("read {}", path.display()))
+}
+
+async fn run_first_server_smoke() -> Result<()> {
+    let mut child = Command::new("bash")
+        .arg("-s")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .context("start first-server smoke test")?;
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .context("open first-server smoke test stdin")?;
+    stdin
+        .write_all(FIRST_SERVER_SMOKE.as_bytes())
+        .await
+        .context("write first-server smoke test")?;
+    drop(stdin);
+
+    let status = child
+        .wait()
+        .await
+        .context("wait for first-server smoke test")?;
+    if !status.success() {
+        anyhow::bail!("first-server smoke test failed");
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -117,6 +150,7 @@ async fn main() -> Result<()> {
             }
             println!("control connection: authenticated");
         }
+        Commands::Smoke => run_first_server_smoke().await?,
         Commands::System {
             command: SystemCommands::Info,
         } => {
