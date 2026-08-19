@@ -12,6 +12,12 @@ const KEY_PATTERN = /^[a-z][a-z0-9_]*$/
 
 const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation, originalDoc, req }) => {
   if (!data) return data
+  if (operation === 'update' && originalDoc) {
+    data.project = originalDoc.project
+    data.organizationId = originalDoc.organizationId
+    data.argusProjectId = originalDoc.argusProjectId
+  }
+
   const project = data.project ?? originalDoc?.project
   const scope = await resolveProjectScope(req, project)
   const slug = String(data.slug ?? originalDoc?.slug ?? '').trim().toLowerCase()
@@ -101,33 +107,17 @@ export const DataModels: CollectionConfig = {
     beforeValidate: [validateDataModel],
   },
   fields: [
-    {
-      name: 'organizationId',
-      type: 'text',
-      required: true,
-      index: true,
-      admin: { readOnly: true },
-    },
-    {
-      name: 'argusProjectId',
-      type: 'text',
-      required: true,
-      index: true,
-      admin: { readOnly: true },
-    },
+    { name: 'organizationId', type: 'text', required: true, index: true, admin: { readOnly: true } },
+    { name: 'argusProjectId', type: 'text', required: true, index: true, admin: { readOnly: true } },
     {
       name: 'project',
       type: 'relationship',
       relationTo: 'project-spaces',
       required: true,
       index: true,
+      admin: { description: 'Immutable after creation.' },
     },
-    {
-      name: 'name',
-      type: 'text',
-      required: true,
-      maxLength: 160,
-    },
+    { name: 'name', type: 'text', required: true, maxLength: 160 },
     {
       name: 'slug',
       type: 'text',
@@ -138,11 +128,7 @@ export const DataModels: CollectionConfig = {
         description: 'Stable API identifier inside the project, for example products or release_notes.',
       },
     },
-    {
-      name: 'description',
-      type: 'textarea',
-      maxLength: 4000,
-    },
+    { name: 'description', type: 'textarea', maxLength: 4000 },
     {
       name: 'kind',
       type: 'select',
@@ -156,13 +142,7 @@ export const DataModels: CollectionConfig = {
         description: 'Content models can later be surfaced by the visual CMS without changing the data substrate.',
       },
     },
-    {
-      name: 'schemaVersion',
-      type: 'number',
-      required: true,
-      defaultValue: 1,
-      admin: { readOnly: true },
-    },
+    { name: 'schemaVersion', type: 'number', required: true, defaultValue: 1, admin: { readOnly: true } },
     {
       name: 'status',
       type: 'select',
@@ -179,18 +159,8 @@ export const DataModels: CollectionConfig = {
       required: true,
       minRows: 1,
       fields: [
-        {
-          name: 'key',
-          type: 'text',
-          required: true,
-          maxLength: 120,
-        },
-        {
-          name: 'label',
-          type: 'text',
-          required: true,
-          maxLength: 160,
-        },
+        { name: 'key', type: 'text', required: true, maxLength: 120 },
+        { name: 'label', type: 'text', required: true, maxLength: 160 },
         {
           name: 'type',
           type: 'select',
@@ -206,33 +176,23 @@ export const DataModels: CollectionConfig = {
             { label: 'Relationship', value: 'relationship' },
           ],
         },
-        {
-          name: 'required',
-          type: 'checkbox',
-          defaultValue: false,
-        },
+        { name: 'required', type: 'checkbox', defaultValue: false },
         {
           name: 'hasMany',
           type: 'checkbox',
           defaultValue: false,
-          admin: {
-            condition: (_, siblingData) => siblingData?.type === 'relationship',
-          },
+          admin: { condition: (_, siblingData) => siblingData?.type === 'relationship' },
         },
         {
           name: 'targetModel',
           type: 'relationship',
           relationTo: 'data-models',
-          admin: {
-            condition: (_, siblingData) => siblingData?.type === 'relationship',
-          },
+          admin: { condition: (_, siblingData) => siblingData?.type === 'relationship' },
         },
         {
           name: 'settings',
           type: 'json',
-          admin: {
-            description: 'Reserved typed settings such as min/max, enum values or UI hints.',
-          },
+          admin: { description: 'Reserved typed settings such as min/max, enum values or UI hints.' },
         },
       ],
     },
