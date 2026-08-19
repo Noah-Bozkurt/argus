@@ -15,7 +15,7 @@ import {
   type ServiceAction,
 } from '../../../../lib/api'
 import { enableDesiredFirewall } from '../../../../lib/firewall-api'
-import { preflightBackupRestore } from '../../../../lib/restore-api'
+import { applyBackupRestore, preflightBackupRestore } from '../../../../lib/restore-api'
 
 export async function actOnService(serverId: string, service: string, action: ServiceAction) {
   await serviceAction(serverId, service, action)
@@ -39,6 +39,18 @@ export async function verifySystemConfigBackup(serverId: string, backup: string)
 
 export async function preflightSystemConfigRestore(serverId: string, backup: string) {
   await preflightBackupRestore(serverId, backup)
+}
+
+export async function applySystemConfigRestore(
+  serverId: string,
+  backup: string,
+  formData: FormData,
+) {
+  const confirmation = String(formData.get('confirmation') ?? '').trim()
+  if (confirmation !== backup) {
+    throw new Error('Type the exact backup filename to confirm the restore')
+  }
+  await applyBackupRestore(serverId, backup)
 }
 
 export async function beginMaintenance(serverId: string, durationMinutes: number, reason: string) {
