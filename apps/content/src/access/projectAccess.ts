@@ -28,10 +28,6 @@ function workspaceUser(req: PayloadRequest): WorkspaceUser | null {
   return (req.user as WorkspaceUser | null | undefined) ?? null
 }
 
-export function isOrganizationAdmin(req: PayloadRequest): boolean {
-  return workspaceUser(req)?.role === 'admin'
-}
-
 export function userOrganizationID(req: PayloadRequest): string | null {
   return workspaceUser(req)?.organizationId ?? null
 }
@@ -148,13 +144,9 @@ export const readProjectSpaces: Access = async ({ req }) => {
   }
 }
 
-export const createProjectSpace: Access = ({ req, data }) => {
+export const createProjectSpace: Access = ({ req }) => {
   const user = workspaceUser(req)
-  return Boolean(
-    user?.role === 'admin' &&
-      user.organizationId &&
-      data?.organizationId === user.organizationId,
-  )
+  return Boolean(user?.role === 'admin' && user.organizationId)
 }
 
 export const manageProjectSpaces: Access = async ({ req }) => {
