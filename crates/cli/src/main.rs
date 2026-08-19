@@ -199,3 +199,28 @@ async fn main() -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_defaults_to_main_discovery_tag() {
+        let cli = Cli::try_parse_from(["argusctl", "update"]).expect("parse update command");
+        match cli.command {
+            Commands::Update { version } => assert_eq!(version, "main"),
+            _ => panic!("expected update command"),
+        }
+    }
+
+    #[test]
+    fn update_accepts_explicit_immutable_revision() {
+        let revision = "0123456789abcdef0123456789abcdef01234567";
+        let cli = Cli::try_parse_from(["argusctl", "update", "--version", revision])
+            .expect("parse pinned update command");
+        match cli.command {
+            Commands::Update { version } => assert_eq!(version, revision),
+            _ => panic!("expected update command"),
+        }
+    }
+}
