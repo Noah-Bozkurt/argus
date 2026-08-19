@@ -6,9 +6,9 @@ __ARGUS_DOMAIN__ {
 		reverse_proxy control-api:8080
 	}
 
-	@public_status path /status/*
+	@public_status path /public/status/*
 	handle @public_status {
-		reverse_proxy web:3000
+		reverse_proxy control-api:8080
 	}
 
 	handle {
