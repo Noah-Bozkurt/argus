@@ -124,7 +124,7 @@ export const DataRecords: CollectionConfig = {
   slug: 'data-records',
   admin: {
     group: 'App Data',
-    defaultColumns: ['model', '_status', 'publishedAt', 'status', 'schemaVersion', 'updatedAt'],
+    defaultColumns: ['model', '_status', 'publishedAt', 'lifecycleStatus', 'schemaVersion', 'updatedAt'],
     description: 'Application data publishes immediately. Content models support Payload drafts and publication history.',
   },
   access: {
@@ -170,7 +170,7 @@ export const DataRecords: CollectionConfig = {
       },
     },
     {
-      name: 'status',
+      name: 'lifecycleStatus',
       type: 'select',
       required: true,
       defaultValue: 'active',
@@ -178,6 +178,9 @@ export const DataRecords: CollectionConfig = {
         { label: 'Active', value: 'active' },
         { label: 'Archived', value: 'archived' },
       ],
+      admin: {
+        description: 'Argus record lifecycle. Kept separate from Payload’s internal draft _status.',
+      },
     },
     {
       name: 'publishedAt',
