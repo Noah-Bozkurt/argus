@@ -11,7 +11,6 @@ import { DataRelations } from './collections/DataRelations'
 import { ProjectMemberships } from './collections/ProjectMemberships'
 import { ProjectSpaces } from './collections/ProjectSpaces'
 import { WorkspaceUsers } from './collections/WorkspaceUsers'
-import { migrations } from './migrations'
 
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
@@ -50,7 +49,6 @@ export default buildConfig({
     pool: {
       connectionString: databaseURL,
     },
-    prodMigrations: migrations,
     push: process.env.PAYLOAD_DB_PUSH === 'true',
     schemaName,
   }),
