@@ -1,9 +1,9 @@
 name: Bootstrap Payload production migrations
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/payload-production-migrations-v1
+      - main
 
 permissions:
   contents: write
@@ -49,7 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! find apps/content/src/migrations -maxdepth 1 -type f -name '*.ts' -print -quit 2>/dev/null | grep -q .; then
-            pnpm --filter @argus/content run migrate:create initial_app_data
+            pnpm --filter @argus/content run migrate:create initial_app_data --force-accept-warning
           fi
       - name: Generate Payload types and lockfile
         run: |
