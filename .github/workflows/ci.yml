@@ -65,9 +65,14 @@ jobs:
           grep -Fq 'pg_dump' scripts/update-first-test.sh
           grep -Fq 'pg_restore' scripts/update-first-test.sh
           grep -Fq 'ROLLBACK_READY=1' scripts/update-first-test.sh
+          grep -Fq 'TRANSACTION_FORMAT_VERSION=2' scripts/update-first-test.sh
+          grep -Fq 'file-snapshot.sha256' scripts/update-first-test.sh
+          grep -Fq 'database-snapshot.sha256' scripts/update-first-test.sh
+          grep -Fq 'target-start-armed' scripts/update-first-test.sh
           grep -Fq 'pg_database_size(current_database())' scripts/update-first-test.sh
           grep -Fq 'df -PB1' scripts/update-first-test.sh
           grep -Fq 'ExecStartPre=/usr/local/bin/argusctl recover-update' deploy/systemd/argus-helper.service
+          grep -Fq 'ABORTED_PRE_MUTATION' scripts/recover-interrupted-update.sh
           grep -Fq 'pg_restore --list' scripts/recover-interrupted-update.sh
           update_lock="$(sed -n 's/^LOCK_FILE="\(.*\)"$/\1/p' scripts/update-first-test.sh | head -n1)"
           recovery_lock="$(sed -n 's/^LOCK_FILE="\(.*\)"$/\1/p' scripts/recover-interrupted-update.sh | head -n1)"
@@ -114,6 +119,75 @@ jobs:
           [[ -d "$BACKUP_ROOT/20260819T115959Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb" ]]
           [[ -d "$BACKUP_ROOT/20260819T115958Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb" ]]
           [[ -d "$BACKUP_ROOT/manual-snapshot" ]]
+
+      - name: Test update transaction phase safety
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          export ARGUS_STATE_DIR="$tmp/update-state"
+          # shellcheck disable=SC1091
+          source scripts/update-first-test.sh --internal-test-library
+
+          TRANSACTION_DIR="$BACKUP_ROOT/20260819T130000Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb"
+          TARGET_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          mkdir -p "$TRANSACTION_DIR"
+          while IFS= read -r path; do
+            mkdir -p "$(dirname "$TRANSACTION_DIR/$path")"
+            printf 'snapshot:%s\n' "$path" >"$TRANSACTION_DIR/$path"
+          done < <(file_snapshot_paths)
+
+          seal_file_snapshot
+          verify_file_snapshot "$TRANSACTION_DIR"
+          printf 'corruption\n' >>"$TRANSACTION_DIR/files/bin/argusctl"
+          if verify_file_snapshot "$TRANSACTION_DIR"; then
+            echo 'corrupted file snapshot unexpectedly verified' >&2
+            exit 1
+          fi
+          printf 'snapshot:files/bin/argusctl\n' >"$TRANSACTION_DIR/files/bin/argusctl"
+          seal_file_snapshot
+
+          printf 'fake-dump\n' >"$TRANSACTION_DIR/argus.dump"
+          (
+            cd "$TRANSACTION_DIR"
+            sha256sum argus.dump >database-snapshot.sha256
+          )
+          verify_database_snapshot_file "$TRANSACTION_DIR"
+          DATABASE_BACKUP_READY=1
+          arm_target_start
+          [[ "$(cat "$TRANSACTION_DIR/target-start-armed")" == "$TARGET_REVISION" ]]
+
+          export ARGUS_STATE_DIR="$tmp/recovery-state"
+          export ARGUS_INSTALL_DIR="$tmp/recovery-install"
+          mkdir -p "$ARGUS_STATE_DIR/update-backups" "$ARGUS_INSTALL_DIR"
+          FROM=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          TO=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          early="$ARGUS_STATE_DIR/update-backups/20260819T130100Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb"
+          mkdir -p "$early"
+          cat >"$early/metadata.env" <<EOF
+          TRANSACTION_FORMAT=2
+          FROM_REVISION=$FROM
+          TO_REVISION=$TO
+          EOF
+          printf 'ARGUS_VERSION=%s\n' "$FROM" >"$ARGUS_INSTALL_DIR/.env"
+
+          # shellcheck disable=SC1091
+          source scripts/recover-interrupted-update.sh --internal-test-library
+          load_transaction_metadata "$early"
+          if prepare_transaction_recovery "$early"; then
+            echo 'pre-mutation transaction unexpectedly required rollback' >&2
+            exit 1
+          fi
+          [[ "$(cat "$early/result")" == 'ABORTED_PRE_MUTATION' ]]
+
+          marker_test="$ARGUS_STATE_DIR/update-backups/marker-test"
+          mkdir -p "$marker_test"
+          TRANSACTION_FORMAT=2
+          TO_REVISION="$TO"
+          printf '%s\n' "$FROM" >"$marker_test/target-start-armed"
+          if (target_start_was_armed "$marker_test"); then
+            echo 'wrong target-start revision unexpectedly accepted' >&2
+            exit 1
+          fi
 
       - name: Validate Compose configuration
         run: |
