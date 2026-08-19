@@ -14,12 +14,12 @@ type RelationField = {
   targetModel?: unknown
 }
 
-const validateRelation: CollectionBeforeValidateHook = async ({ data, operation, originalDoc, req }) => {
+const validateRelation: CollectionBeforeValidateHook = async ({ data, req }) => {
   if (!data) return data
-  const project = data.project ?? originalDoc?.project
-  const sourceRecordID = relationshipID(data.sourceRecord ?? originalDoc?.sourceRecord)
-  const targetRecordID = relationshipID(data.targetRecord ?? originalDoc?.targetRecord)
-  const fieldKey = String(data.fieldKey ?? originalDoc?.fieldKey ?? '').trim().toLowerCase()
+  const project = data.project
+  const sourceRecordID = relationshipID(data.sourceRecord)
+  const targetRecordID = relationshipID(data.targetRecord)
+  const fieldKey = String(data.fieldKey ?? '').trim().toLowerCase()
   if (sourceRecordID === null || targetRecordID === null || !fieldKey) {
     throw new Error('Source record, target record and field key are required')
   }
@@ -78,9 +78,6 @@ const validateRelation: CollectionBeforeValidateHook = async ({ data, operation,
         { sourceRecord: { equals: sourceRecordID } },
         { fieldKey: { equals: fieldKey } },
         { targetRecord: { equals: targetRecordID } },
-        ...(operation === 'update' && originalDoc?.id
-          ? [{ id: { not_equals: originalDoc.id } }]
-          : []),
       ],
     },
   })
@@ -99,9 +96,6 @@ const validateRelation: CollectionBeforeValidateHook = async ({ data, operation,
         and: [
           { sourceRecord: { equals: sourceRecordID } },
           { fieldKey: { equals: fieldKey } },
-          ...(operation === 'update' && originalDoc?.id
-            ? [{ id: { not_equals: originalDoc.id } }]
-            : []),
         ],
       },
     })
@@ -126,74 +120,25 @@ export const DataRelations: CollectionConfig = {
   admin: {
     group: 'App Data',
     defaultColumns: ['sourceModel', 'fieldKey', 'targetModel', 'updatedAt'],
+    description: 'Relationship endpoints are immutable. Delete and recreate an edge to change it.',
   },
   access: {
     create: createProjectDocument('editor'),
     read: readProjectDocuments,
-    update: editProjectDocuments,
+    update: () => false,
     delete: editProjectDocuments,
   },
   hooks: {
     beforeValidate: [validateRelation],
   },
   fields: [
-    {
-      name: 'organizationId',
-      type: 'text',
-      required: true,
-      index: true,
-      admin: { readOnly: true },
-    },
-    {
-      name: 'argusProjectId',
-      type: 'text',
-      required: true,
-      index: true,
-      admin: { readOnly: true },
-    },
-    {
-      name: 'project',
-      type: 'relationship',
-      relationTo: 'project-spaces',
-      required: true,
-      index: true,
-    },
-    {
-      name: 'sourceModel',
-      type: 'relationship',
-      relationTo: 'data-models',
-      required: true,
-      index: true,
-      admin: { readOnly: true },
-    },
-    {
-      name: 'sourceRecord',
-      type: 'relationship',
-      relationTo: 'data-records',
-      required: true,
-      index: true,
-    },
-    {
-      name: 'fieldKey',
-      type: 'text',
-      required: true,
-      index: true,
-      maxLength: 120,
-    },
-    {
-      name: 'targetModel',
-      type: 'relationship',
-      relationTo: 'data-models',
-      required: true,
-      index: true,
-      admin: { readOnly: true },
-    },
-    {
-      name: 'targetRecord',
-      type: 'relationship',
-      relationTo: 'data-records',
-      required: true,
-      index: true,
-    },
+    { name: 'organizationId', type: 'text', required: true, index: true, admin: { readOnly: true } },
+    { name: 'argusProjectId', type: 'text', required: true, index: true, admin: { readOnly: true } },
+    { name: 'project', type: 'relationship', relationTo: 'project-spaces', required: true, index: true },
+    { name: 'sourceModel', type: 'relationship', relationTo: 'data-models', required: true, index: true, admin: { readOnly: true } },
+    { name: 'sourceRecord', type: 'relationship', relationTo: 'data-records', required: true, index: true },
+    { name: 'fieldKey', type: 'text', required: true, index: true, maxLength: 120 },
+    { name: 'targetModel', type: 'relationship', relationTo: 'data-models', required: true, index: true, admin: { readOnly: true } },
+    { name: 'targetRecord', type: 'relationship', relationTo: 'data-records', required: true, index: true },
   ],
 }
