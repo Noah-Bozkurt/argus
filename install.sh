@@ -9,7 +9,7 @@ ENV_FILE="$INSTALL_DIR/.env"
 COMPOSE_FILE="$INSTALL_DIR/compose.yaml"
 CADDY_FILE="$INSTALL_DIR/Caddyfile"
 HOST_TOOLS_CONTAINER=""
-REGISTRY_LOGGED_IN=0
+DOCKER_CONFIG_DIR=""
 GENERATED_BASIC_AUTH_PASSWORD=""
 
 log() { printf '[argus] %s\n' "$*"; }
@@ -20,8 +20,8 @@ cleanup() {
   if [[ -n "$HOST_TOOLS_CONTAINER" ]]; then
     docker rm -f "$HOST_TOOLS_CONTAINER" >/dev/null 2>&1 || true
   fi
-  if [[ "$REGISTRY_LOGGED_IN" == "1" ]]; then
-    docker logout "${ARGUS_REGISTRY%%/*}" >/dev/null 2>&1 || true
+  if [[ -n "$DOCKER_CONFIG_DIR" ]]; then
+    rm -rf "$DOCKER_CONFIG_DIR"
   fi
 }
 trap cleanup EXIT
@@ -32,6 +32,7 @@ require_root() {
 
 new_secret() { openssl rand -hex 32; }
 new_uuid() { cat /proc/sys/kernel/random/uuid; }
+new_password() { openssl rand -base64 24 | tr -d '\n'; }
 
 validate_domain() {
   local value="$1"
@@ -134,6 +135,8 @@ load_or_create_configuration() {
   local requested_version="${ARGUS_VERSION:-}"
   local requested_domain="${ARGUS_DOMAIN:-}"
   local requested_content_domain="${ARGUS_CONTENT_DOMAIN:-}"
+  local requested_basic_user="${ARGUS_BASIC_AUTH_USER:-}"
+  local requested_basic_password="${ARGUS_BASIC_AUTH_PASSWORD:-}"
 
   if [[ -f "$ENV_FILE" ]]; then
     log "existing Argus environment found; preserving generated IDs and secrets"
@@ -155,8 +158,15 @@ load_or_create_configuration() {
   validate_domain "$ARGUS_CONTENT_DOMAIN"
   [[ "$ARGUS_DOMAIN" != "$ARGUS_CONTENT_DOMAIN" ]] || die "Web and content domains must differ"
 
-  ARGUS_BASIC_AUTH_USER="${ARGUS_BASIC_AUTH_USER:-argus}"
+  ARGUS_BASIC_AUTH_USER="${requested_basic_user:-${ARGUS_BASIC_AUTH_USER:-argus}}"
   validate_basic_user "$ARGUS_BASIC_AUTH_USER"
+  if [[ -n "$requested_basic_password" ]]; then
+    ARGUS_BASIC_AUTH_PASSWORD="$requested_basic_password"
+  elif [[ -z "${ARGUS_BASIC_AUTH_PASSWORD:-}" ]]; then
+    ARGUS_BASIC_AUTH_PASSWORD="$(new_password)"
+    GENERATED_BASIC_AUTH_PASSWORD="$ARGUS_BASIC_AUTH_PASSWORD"
+  fi
+
   ARGUS_OPERATOR_EMAIL="${ARGUS_OPERATOR_EMAIL:-operator@argus.local}"
   ARGUS_ORG_NAME="${ARGUS_ORG_NAME:-Argus}"
 
@@ -174,6 +184,7 @@ load_or_create_configuration() {
   ARGUS_GITHUB_TOKEN="${ARGUS_GITHUB_TOKEN:-}"
 
   export ARGUS_REGISTRY ARGUS_VERSION ARGUS_DOMAIN ARGUS_CONTENT_DOMAIN
+  export ARGUS_BASIC_AUTH_USER ARGUS_BASIC_AUTH_PASSWORD
   export ARGUS_POSTGRES_PASSWORD ARGUS_WEB_API_TOKEN ARGUS_WORKER_TOKEN
   export ARGUS_CONTENT_SYNC_TOKEN PAYLOAD_SECRET ARGUS_ORG_ID ARGUS_USER_ID
   export ARGUS_BOOTSTRAP_PROJECT_ID ARGUS_BOOTSTRAP_ENVIRONMENT_ID ARGUS_SERVER_ID
@@ -181,21 +192,25 @@ load_or_create_configuration() {
 }
 
 registry_login_if_configured() {
-  local registry_host="${ARGUS_REGISTRY%%/*}"
-  if [[ -n "${ARGUS_REGISTRY_TOKEN:-}" ]]; then
-    [[ -n "${ARGUS_REGISTRY_USERNAME:-}" ]] \
-      || die "ARGUS_REGISTRY_USERNAME is required when ARGUS_REGISTRY_TOKEN is set"
-    printf '%s' "$ARGUS_REGISTRY_TOKEN" \
-      | docker login "$registry_host" -u "$ARGUS_REGISTRY_USERNAME" --password-stdin >/dev/null
-    REGISTRY_LOGGED_IN=1
+  if [[ -z "${ARGUS_REGISTRY_TOKEN:-}" ]]; then
+    return
   fi
+  [[ -n "${ARGUS_REGISTRY_USERNAME:-}" ]] \
+    || die "ARGUS_REGISTRY_USERNAME is required when ARGUS_REGISTRY_TOKEN is set"
+
+  DOCKER_CONFIG_DIR="$(mktemp -d)"
+  chmod 0700 "$DOCKER_CONFIG_DIR"
+  export DOCKER_CONFIG="$DOCKER_CONFIG_DIR"
+  local registry_host="${ARGUS_REGISTRY%%/*}"
+  printf '%s' "$ARGUS_REGISTRY_TOKEN" \
+    | docker login "$registry_host" -u "$ARGUS_REGISTRY_USERNAME" --password-stdin >/dev/null
 }
 
 pull_host_bundle() {
   registry_login_if_configured
   local image="${ARGUS_REGISTRY}/argus-host-tools:${ARGUS_VERSION}"
   if ! docker pull "$image"; then
-    if [[ "$REGISTRY_LOGGED_IN" != "1" ]]; then
+    if [[ -z "${ARGUS_REGISTRY_TOKEN:-}" ]]; then
       die "could not pull private Argus images. Set ARGUS_REGISTRY_USERNAME and a read-only ARGUS_REGISTRY_TOKEN, then rerun"
     fi
     die "could not pull $image"
@@ -231,7 +246,9 @@ ensure_argus_user() {
   if ! id argus >/dev/null 2>&1; then
     useradd --system --gid argus --home-dir "$STATE_DIR" --shell /usr/sbin/nologin argus
   fi
-  mkdir -p "$STATE_DIR" "$STATE_DIR/backups"
+  mkdir -p "$CONFIG_DIR" "$STATE_DIR" "$STATE_DIR/backups"
+  chown root:argus "$CONFIG_DIR"
+  chmod 0750 "$CONFIG_DIR"
   chown argus:argus "$STATE_DIR"
   chmod 0750 "$STATE_DIR"
 }
@@ -242,6 +259,8 @@ ARGUS_REGISTRY=${ARGUS_REGISTRY}
 ARGUS_VERSION=${ARGUS_VERSION}
 ARGUS_DOMAIN=${ARGUS_DOMAIN}
 ARGUS_CONTENT_DOMAIN=${ARGUS_CONTENT_DOMAIN}
+ARGUS_BASIC_AUTH_USER=${ARGUS_BASIC_AUTH_USER}
+ARGUS_BASIC_AUTH_PASSWORD=${ARGUS_BASIC_AUTH_PASSWORD}
 ARGUS_POSTGRES_PASSWORD=${ARGUS_POSTGRES_PASSWORD}
 ARGUS_WEB_API_TOKEN=${ARGUS_WEB_API_TOKEN}
 ARGUS_WORKER_TOKEN=${ARGUS_WORKER_TOKEN}
@@ -264,14 +283,8 @@ generate_caddy_config() {
     return
   fi
 
-  local password="${ARGUS_BASIC_AUTH_PASSWORD:-}"
-  if [[ -z "$password" ]]; then
-    password="$(openssl rand -base64 24 | tr -d '\n')"
-    GENERATED_BASIC_AUTH_PASSWORD="$password"
-  fi
-
   local hash
-  hash="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext "$password")"
+  hash="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext "$ARGUS_BASIC_AUTH_PASSWORD")"
   cp "$INSTALL_DIR/Caddyfile.template" "$CADDY_FILE"
   sed -i \
     -e "s|__ARGUS_DOMAIN__|${ARGUS_DOMAIN}|g" \
@@ -367,7 +380,8 @@ ARGUS_HELPER_SOCKET=/run/argus/helper.sock
 ARGUS_ALLOWED_SERVICES=${ARGUS_ALLOWED_SERVICES:-}
 ARGUS_BACKUP_DIR=${STATE_DIR}/backups
 EOF
-  chmod 0600 "$CONFIG_DIR/helper.env"
+  chown root:argus "$CONFIG_DIR/helper.env"
+  chmod 0640 "$CONFIG_DIR/helper.env"
 }
 
 write_agent_env() {
@@ -430,38 +444,63 @@ enroll_local_agent() {
   die "local Argus Agent did not enroll successfully"
 }
 
+verify_compose_service() {
+  local service="$1"
+  local require_health="${2:-1}"
+  local cid running health
+  cid="$(compose ps -q "$service")"
+  [[ -n "$cid" ]] || die "Compose service '$service' has no container"
+  running="$(docker inspect -f '{{.State.Running}}' "$cid")"
+  [[ "$running" == "true" ]] || die "Compose service '$service' is not running"
+  if [[ "$require_health" == "1" ]]; then
+    health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$cid")"
+    [[ "$health" == "healthy" ]] || die "Compose service '$service' is not healthy (status: $health)"
+  fi
+}
+
+wait_for_https() {
+  local url="$1"
+  for _ in $(seq 1 45); do
+    local code
+    code="$(curl -sS --connect-timeout 5 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || true)"
+    if [[ "$code" == "401" || "$code" == "200" || "$code" == "302" || "$code" == "307" || "$code" == "308" ]]; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
 verify_installation() {
   log "running first-test health checks"
   compose ps
 
-  local unhealthy
-  unhealthy="$(compose ps --format json | jq -r 'select((.State != "running") or ((.Health // "") == "unhealthy")) | .Service' 2>/dev/null || true)"
-  [[ -z "$unhealthy" ]] || die "unhealthy Compose services: $unhealthy"
+  verify_compose_service postgres
+  verify_compose_service control-api
+  verify_compose_service worker
+  verify_compose_service web
+  verify_compose_service content
+  verify_compose_service caddy 0
 
   systemctl is-active --quiet argus-helper.service || die "argus-helper.service is not active"
   systemctl is-active --quiet argus-agent.service || die "argus-agent.service is not active"
   curl -fsS http://127.0.0.1:8080/health >/dev/null || die "Control API loopback health failed"
 
-  local tls_ok=0
-  for _ in $(seq 1 45); do
-    local code
-    code="$(curl -sS --connect-timeout 5 -o /dev/null -w '%{http_code}' "https://${ARGUS_DOMAIN}/" 2>/dev/null || true)"
-    if [[ "$code" == "401" || "$code" == "200" || "$code" == "302" || "$code" == "307" ]]; then
-      tls_ok=1
-      break
-    fi
-    sleep 2
-  done
-  if [[ "$tls_ok" != "1" ]]; then
+  if ! wait_for_https "https://${ARGUS_DOMAIN}/"; then
     compose logs --tail=120 caddy || true
-    die "HTTPS did not become reachable. Verify A/AAAA DNS for ${ARGUS_DOMAIN} and ${ARGUS_CONTENT_DOMAIN}, and external firewall access to ports 80/443"
+    die "Argus HTTPS did not become reachable. Verify A/AAAA DNS for ${ARGUS_DOMAIN} and external firewall access to ports 80/443"
+  fi
+  if ! wait_for_https "https://${ARGUS_CONTENT_DOMAIN}/"; then
+    compose logs --tail=120 caddy || true
+    die "Payload HTTPS did not become reachable. Verify A/AAAA DNS for ${ARGUS_CONTENT_DOMAIN} and external firewall access to ports 80/443"
   fi
 
-  if [[ -n "${ARGUS_BASIC_AUTH_PASSWORD:-${GENERATED_BASIC_AUTH_PASSWORD}}" ]]; then
-    local password="${ARGUS_BASIC_AUTH_PASSWORD:-$GENERATED_BASIC_AUTH_PASSWORD}"
-    curl -fsS -u "${ARGUS_BASIC_AUTH_USER}:${password}" "https://${ARGUS_DOMAIN}/healthz" >/dev/null \
-      || die "authenticated Web health check failed"
-  fi
+  curl -fsS -u "${ARGUS_BASIC_AUTH_USER}:${ARGUS_BASIC_AUTH_PASSWORD}" \
+    "https://${ARGUS_DOMAIN}/healthz" >/dev/null \
+    || die "authenticated Web health check failed"
+  curl -fsS -u "${ARGUS_BASIC_AUTH_USER}:${ARGUS_BASIC_AUTH_PASSWORD}" \
+    "https://${ARGUS_CONTENT_DOMAIN}/healthz" >/dev/null \
+    || die "authenticated Payload health check failed"
 }
 
 print_summary() {
@@ -469,9 +508,9 @@ print_summary() {
   printf 'Web:      https://%s\n' "$ARGUS_DOMAIN"
   printf 'Content:  https://%s\n' "$ARGUS_CONTENT_DOMAIN"
   printf 'User:     %s\n' "$ARGUS_BASIC_AUTH_USER"
+  printf 'Password: %s\n' "$ARGUS_BASIC_AUTH_PASSWORD"
   if [[ -n "$GENERATED_BASIC_AUTH_PASSWORD" ]]; then
-    printf 'Password: %s\n' "$GENERATED_BASIC_AUTH_PASSWORD"
-    printf '\nSave this generated password now; Argus stores only its hash in Caddy.\n'
+    printf '\nA new first-test password was generated and stored only in the root-readable %s file.\n' "$ENV_FILE"
   fi
   printf '\nVersion:  %s\n' "$ARGUS_VERSION"
   printf 'Config:   %s\n' "$INSTALL_DIR"
