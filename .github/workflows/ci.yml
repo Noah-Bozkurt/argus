@@ -35,6 +35,7 @@ jobs:
       - rust
       - web
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16
@@ -96,7 +97,7 @@ jobs:
           cargo run -p control-api >/tmp/argus-control-api.log 2>&1 &
           pid=$!
           trap 'kill "$pid" >/dev/null 2>&1 || true' EXIT
-          for _ in $(seq 1 90); do
+          for _ in $(seq 1 300); do
             if curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then
               exit 0
             fi
@@ -106,6 +107,7 @@ jobs:
             fi
             sleep 1
           done
+          echo "Control API did not become healthy within 5 minutes" >&2
           cat /tmp/argus-control-api.log
           exit 1
 
