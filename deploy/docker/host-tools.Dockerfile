@@ -17,5 +17,4 @@ COPY deploy/compose/compose.yaml /deploy/compose.yaml
 COPY deploy/compose/Caddyfile.template /deploy/Caddyfile.template
 COPY deploy/systemd/argus-agent.service /deploy/systemd/argus-agent.service
 COPY deploy/systemd/argus-helper.service /deploy/systemd/argus-helper.service
-COPY scripts/first-server-smoke.sh /deploy/scripts/first-server-smoke.sh
 CMD ["/out/argusctl", "version"]
