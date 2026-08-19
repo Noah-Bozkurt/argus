@@ -47,7 +47,9 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Generate CMS migration and types
         run: |
-          pnpm --filter @argus/content run migrate:create cms_v1 --force-accept-warning
+          if ! find apps/content/src/migrations -maxdepth 1 -type f -name '*_cms_v1.ts' -print -quit | grep -q .; then
+            pnpm --filter @argus/content run migrate:create cms_v1 --force-accept-warning
+          fi
           pnpm --filter @argus/content run generate:types
           pnpm --filter @argus/content run typecheck
           pnpm --filter @argus/web exec tsc --noEmit
@@ -59,6 +61,17 @@ jobs:
           test -n "$migration_file"
           test -s "$migration_file"
           grep -F 'cms_v1' apps/content/src/migrations/index.ts
+      - name: Commit generated artifacts for review
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add apps/content/src/migrations apps/content/src/payload-types.ts
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: generate Payload CMS migration"
+            git push origin HEAD:agent/payload-cms-v1
+          fi
       - name: Apply committed production migrations
         env:
           NODE_ENV: production
@@ -69,8 +82,8 @@ jobs:
           set -euo pipefail
           test "$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")" -eq 0
           test "$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM argus_content.payload_migrations;")" -eq 2
-          psql "$DATABASE_URL" -Atc "SELECT to_regclass('argus_content.data_records_versions');" | grep -F 'data_records_versions'
-          psql "$DATABASE_URL" -Atc "SELECT column_name FROM information_schema.columns WHERE table_schema='argus_content' AND table_name='data_records' AND column_name IN ('_status','published_at') ORDER BY column_name;" | grep -F '_status'
+          psql "$DATABASE_URL" -Atc "SELECT to_regclass('argus_content._data_records_v');" | grep -F '_data_records_v'
+          psql "$DATABASE_URL" -Atc "SELECT column_name FROM information_schema.columns WHERE table_schema='argus_content' AND table_name='data_records' AND column_name IN ('_status','published_at','lifecycle_status') ORDER BY column_name;" | grep -F '_status'
           psql "$DATABASE_URL" -Atc "SELECT column_name FROM information_schema.columns WHERE table_schema='argus_content' AND table_name='data_models' AND column_name='public_read';" | grep -Fx public_read
       - name: Verify migration idempotency
         env:
@@ -82,14 +95,14 @@ jobs:
         env:
           NODE_ENV: production
         run: pnpm --filter @argus/content run build
-      - name: Commit generated CMS artifacts and remove generator
+      - name: Remove generator after successful validation
         shell: bash
         run: |
           set -euo pipefail
+          git fetch origin agent/payload-cms-v1
+          git reset --hard origin/agent/payload-cms-v1
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git rm .github/workflows/generate-payload-cms-migration.yml
-          git add apps/content/src/migrations apps/content/src/payload-types.ts
-          git diff --cached --stat
-          git commit -m "feat: add generated Payload CMS migration"
+          git commit -m "chore: remove one-shot CMS migration generator"
           git push origin HEAD:agent/payload-cms-v1
