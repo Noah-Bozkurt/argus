@@ -70,7 +70,9 @@ acquire_update_lock() {
 }
 
 durable_write_text() {
-  local path="$1" value="$2" tmp="${path}.tmp.$$"
+  local path="$1"
+  local value="$2"
+  local tmp="${path}.tmp.$$"
   printf '%s\n' "$value" >"$tmp"
   chmod 0600 "$tmp"
   sync -f "$tmp"
@@ -282,7 +284,8 @@ EOF
 }
 
 verify_file_snapshot() {
-  local transaction="$1" manifest="$transaction/file-snapshot.sha256"
+  local transaction="$1"
+  local manifest="$transaction/file-snapshot.sha256"
   [[ -s "$manifest" ]] || return 1
 
   local expected actual
@@ -343,7 +346,8 @@ quiesce_argus() {
 }
 
 verify_database_snapshot_file() {
-  local transaction="$1" manifest="$transaction/database-snapshot.sha256"
+  local transaction="$1"
+  local manifest="$transaction/database-snapshot.sha256"
   [[ -s "$transaction/argus.dump" && -s "$manifest" ]] || return 1
   [[ "$(awk '{ print $2 }' "$manifest")" == "argus.dump" ]] || return 1
   (
