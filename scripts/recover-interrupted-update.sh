@@ -10,6 +10,7 @@ ENV_FILE="$INSTALL_DIR/.env"
 COMPOSE_FILE="$INSTALL_DIR/compose.yaml"
 CADDY_FILE="$INSTALL_DIR/Caddyfile"
 PRESTART_MODE="${ARGUS_UPDATE_RECOVERY_PRESTART:-0}"
+RETRY_FAILED="${ARGUS_UPDATE_RECOVERY_RETRY_FAILED:-0}"
 PRE_RECOVERY_VERSION=""
 TRANSACTION_FORMAT=1
 FROM_REVISION=""
@@ -54,7 +55,7 @@ write_transaction_result() {
   durable_write_text "$transaction/result" "$result"
 }
 
-find_incomplete_transaction() {
+find_recovery_transaction() {
   [[ -d "$BACKUP_ROOT" ]] || return 1
 
   local entry dir result
@@ -63,10 +64,23 @@ find_incomplete_transaction() {
     [[ -f "$dir/metadata.env" ]] || continue
     result="$(cat "$dir/result" 2>/dev/null || true)"
     case "$result" in
-      SUCCEEDED|ROLLED_BACK|ABORTED_PRE_MUTATION|ROLLBACK_FAILED) continue ;;
+      SUCCEEDED|ROLLED_BACK|ABORTED_PRE_MUTATION)
+        continue
+        ;;
+      ROLLBACK_FAILED)
+        if [[ "$RETRY_FAILED" == "1" ]]; then
+          printf '%s\n' "$dir"
+          return 0
+        fi
+        printf '[argus-recovery] error: unresolved failed update rollback blocks automatic startup: %s\n' "$dir" >&2
+        printf '[argus-recovery] error: inspect the transaction, then run sudo argusctl recover-update --retry-failed to explicitly retry it\n' >&2
+        return 2
+        ;;
+      *)
+        printf '%s\n' "$dir"
+        return 0
+        ;;
     esac
-    printf '%s\n' "$dir"
-    return 0
   done < <(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr)
 
   return 1
@@ -370,14 +384,25 @@ main() {
   command -v flock >/dev/null || die "flock is required"
   command -v sha256sum >/dev/null || die "sha256sum is required"
   command -v sync >/dev/null || die "sync is required"
+  case "$RETRY_FAILED" in
+    0|1) ;;
+    *) die "ARGUS_UPDATE_RECOVERY_RETRY_FAILED must be 0 or 1" ;;
+  esac
   acquire_recovery_lock
 
-  local transaction
-  if ! transaction="$(find_incomplete_transaction)"; then
-    exit 0
+  local transaction status
+  if transaction="$(find_recovery_transaction)"; then
+    recover_transaction "$transaction"
+    return
+  else
+    status=$?
   fi
 
-  recover_transaction "$transaction"
+  case "$status" in
+    1) return 0 ;;
+    2) return 2 ;;
+    *) return "$status" ;;
+  esac
 }
 
 if [[ "${1:-}" != "--internal-test-library" ]]; then
