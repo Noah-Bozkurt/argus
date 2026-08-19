@@ -11,9 +11,10 @@ use tokio::{io::AsyncWriteExt, net::UnixStream, process::Command};
 use uuid::Uuid;
 
 const FIRST_SERVER_SMOKE: &str = include_str!("../../../scripts/first-server-smoke.sh");
+const FIRST_SERVER_UPDATE: &str = include_str!("../../../scripts/update-first-test.sh");
 
 #[derive(Debug, Parser)]
-#[command(name = "argusctl", about = "Argus local diagnostics CLI")]
+#[command(name = "argusctl", about = "Argus local diagnostics and lifecycle CLI")]
 struct Cli {
     #[arg(
         long,
@@ -31,6 +32,10 @@ enum Commands {
     Health,
     Connection,
     Smoke,
+    Update {
+        #[arg(long, default_value = "main")]
+        version: String,
+    },
     System {
         #[command(subcommand)]
         command: SystemCommands,
@@ -62,33 +67,51 @@ async fn load(path: &Path) -> Result<AgentConfig> {
         .with_context(|| format!("read {}", path.display()))
 }
 
-async fn run_first_server_smoke() -> Result<()> {
-    let mut child = Command::new("bash")
+async fn run_embedded_script(name: &str, script: &str, env: Option<(&str, &str)>) -> Result<()> {
+    let mut command = Command::new("bash");
+    command
         .arg("-s")
         .stdin(Stdio::piped())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .context("start first-server smoke test")?;
+        .stderr(Stdio::inherit());
+    if let Some((key, value)) = env {
+        command.env(key, value);
+    }
 
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("start {name}"))?;
     let mut stdin = child
         .stdin
         .take()
-        .context("open first-server smoke test stdin")?;
+        .with_context(|| format!("open {name} stdin"))?;
     stdin
-        .write_all(FIRST_SERVER_SMOKE.as_bytes())
+        .write_all(script.as_bytes())
         .await
-        .context("write first-server smoke test")?;
+        .with_context(|| format!("write {name}"))?;
     drop(stdin);
 
     let status = child
         .wait()
         .await
-        .context("wait for first-server smoke test")?;
+        .with_context(|| format!("wait for {name}"))?;
     if !status.success() {
-        anyhow::bail!("first-server smoke test failed");
+        anyhow::bail!("{name} failed");
     }
     Ok(())
+}
+
+async fn run_first_server_smoke() -> Result<()> {
+    run_embedded_script("first-server smoke test", FIRST_SERVER_SMOKE, None).await
+}
+
+async fn run_first_server_update(version: &str) -> Result<()> {
+    run_embedded_script(
+        "transactional Argus update",
+        FIRST_SERVER_UPDATE,
+        Some(("ARGUS_TARGET_VERSION", version)),
+    )
+    .await
 }
 
 #[tokio::main]
@@ -151,6 +174,7 @@ async fn main() -> Result<()> {
             println!("control connection: authenticated");
         }
         Commands::Smoke => run_first_server_smoke().await?,
+        Commands::Update { version } => run_first_server_update(&version).await?,
         Commands::System {
             command: SystemCommands::Info,
         } => {
