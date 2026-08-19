@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: &str = "1.8";
+pub const PROTOCOL_VERSION: &str = "1.9";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentHandshake {
@@ -80,6 +80,8 @@ pub enum CommandType {
     BackupVerify { backup: String },
     #[serde(rename = "backup.restore.preflight")]
     BackupRestorePreflight { backup: String },
+    #[serde(rename = "backup.restore.apply")]
+    BackupRestoreApply { backup: String },
 }
 impl CommandType {
     pub fn conflict_group(&self) -> &'static str {
@@ -102,7 +104,9 @@ impl CommandType {
             CommandType::SecurityFirewallEnable => "security.mutate",
             CommandType::BackupCreate { .. } => "backup.create",
             CommandType::BackupVerify { .. } => "backup.verify",
-            CommandType::BackupRestorePreflight { .. } => "backup.restore.preflight",
+            CommandType::BackupRestorePreflight { .. } | CommandType::BackupRestoreApply { .. } => {
+                "backup.restore"
+            }
         }
     }
     pub fn required_capability(&self) -> Capability {
@@ -146,7 +150,8 @@ impl CommandType {
             },
             CommandType::BackupCreate { .. }
             | CommandType::BackupVerify { .. }
-            | CommandType::BackupRestorePreflight { .. } => Capability {
+            | CommandType::BackupRestorePreflight { .. }
+            | CommandType::BackupRestoreApply { .. } => Capability {
                 name: "backup".into(),
                 version: "v1".into(),
             },
@@ -159,6 +164,7 @@ impl CommandType {
                 | CommandType::PackagesUpgradeAll
                 | CommandType::SystemReboot
                 | CommandType::SecurityFirewallEnable
+                | CommandType::BackupRestoreApply { .. }
         )
     }
 }
@@ -351,6 +357,10 @@ pub enum HelperRequest {
     BackupVerify { backup: String },
     #[serde(rename = "backup.restore.preflight")]
     BackupRestorePreflight { restore_id: String, backup: String },
+    #[serde(rename = "backup.restore.apply")]
+    BackupRestoreApply { restore_id: String, backup: String },
+    #[serde(rename = "backup.restore.commit")]
+    BackupRestoreCommit { restore_id: String },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelperResponse {
@@ -388,10 +398,17 @@ mod tests {
         let preflight = CommandType::BackupRestorePreflight {
             backup: "abc.tar.gz".into(),
         };
+        let apply = CommandType::BackupRestoreApply {
+            backup: "abc.tar.gz".into(),
+        };
         assert_eq!(create.required_capability().name, "backup");
         assert_eq!(verify.required_capability().name, "backup");
         assert_eq!(preflight.required_capability().name, "backup");
+        assert_eq!(apply.required_capability().name, "backup");
         assert!(!preflight.requires_maintenance());
+        assert!(apply.requires_maintenance());
+        assert_eq!(preflight.conflict_group(), "backup.restore");
+        assert_eq!(apply.conflict_group(), "backup.restore");
     }
     #[test]
     fn compose_commands_require_compose_capability() {
@@ -416,6 +433,6 @@ mod tests {
     }
     #[test]
     fn protocol_version_validation_rejects_older_versions() {
-        assert!(validate_protocol_version("1.7").is_err());
+        assert!(validate_protocol_version("1.8").is_err());
     }
 }
