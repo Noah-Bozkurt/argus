@@ -46,9 +46,13 @@ jobs:
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
       - name: Generate CMS migration and types
+        shell: bash
         run: |
+          set -euo pipefail
           if ! find apps/content/src/migrations -maxdepth 1 -type f -name '*_cms_v1.ts' -print -quit | grep -q .; then
-            pnpm --filter @argus/content run migrate:create cms_v1 --force-accept-warning
+            # Drizzle asks whether lifecycle_status is new or a rename of the existing
+            # business field `status`. Select the second option so existing values are kept.
+            printf '\033[B\r' | script -q -e -c "pnpm --filter @argus/content run migrate:create cms_v1 --force-accept-warning" /dev/null
           fi
           pnpm --filter @argus/content run generate:types
           pnpm --filter @argus/content run typecheck
@@ -61,6 +65,7 @@ jobs:
           test -n "$migration_file"
           test -s "$migration_file"
           grep -F 'cms_v1' apps/content/src/migrations/index.ts
+          grep -F 'RENAME COLUMN "status" TO "lifecycle_status"' "$migration_file"
       - name: Commit generated artifacts for review
         shell: bash
         run: |
