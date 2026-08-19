@@ -120,6 +120,28 @@ If the control path breaks after applying configuration, rollback remains a loca
 
 The UI additionally requires explicit operator confirmation of the selected backup. The Helper does not trust that UI confirmation as its safety check; it reruns its own validation.
 
+## Transactional control-plane self-update
+
+The first-test single-server updater is intentionally an out-of-band local root operation rather than a normal remote managed command. Updating the control plane through the same API/Agent path it is about to stop would create a circular failure dependency.
+
+`argusctl update` treats `main` only as a registry discovery alias. Before mutation it verifies that:
+
+- the currently running Web, Control API, Worker and Content images all carry the same valid full-commit revision label;
+- their current local image IDs are pinned under that immutable SHA for rollback;
+- the target host-tools alias resolves to a valid full commit SHA;
+- all five target Argus images exist under that same SHA and carry the expected revision label;
+- the complete target native/deployment bundle can be extracted before downtime starts.
+
+Once preflight is complete, the updater saves root-only copies of deployment files, systemd units and native binaries, stops the Agent/Helper and control-plane writers, and takes a custom-format PostgreSQL dump while PostgreSQL remains local and isolated. That dump covers both the normal Argus control schema and Payload's `argus_content` schema.
+
+Only after that snapshot succeeds does the updater install the target assets and allow target startup/migrations. A target update is successful only when service health, Caddy reload, native Agent/Helper startup and the full `argusctl smoke` verification pass.
+
+If a mutation-stage step fails, automatic rollback restores the previous files/binaries. If the database snapshot had completed, rollback terminates database clients, recreates the Argus database from the pre-update dump and starts the previous SHA-pinned control plane. Rollback itself must pass service health and `argusctl smoke` before it is reported as recovered.
+
+The pre-update snapshot is retained after success for investigation/recovery, but V1 does not expose an unrestricted later restore button. A later database rollback can destroy data created after an otherwise successful update, so that capability needs an explicit data-loss confirmation model and retention policy first.
+
+This mechanism is a first-test single-node safety boundary. It is not yet a production rolling-upgrade protocol, HA database migration strategy or general point-in-time recovery system.
+
 ## Secrets and identity limitations
 
 Not yet complete:
@@ -134,6 +156,6 @@ Until a first-class secrets subsystem exists, environment/service credentials sh
 
 ## Recovery limitations
 
-Current transactional restore focuses on the managed system-configuration profile. It is not yet a full disaster-recovery engine for PostgreSQL, Docker volumes, application uploads or whole-project reconstruction.
+Current system-config transactional restore and control-plane update rollback are bounded recovery flows. They are not yet a full disaster-recovery engine for arbitrary Docker volumes, external application databases, uploaded application media or whole-project reconstruction.
 
 Future backup expansion should preserve the same rule used here: a backup capability is not complete until restore, validation and failure recovery are tested.

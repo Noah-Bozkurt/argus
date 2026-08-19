@@ -11,6 +11,7 @@ CADDY_FILE="$INSTALL_DIR/Caddyfile"
 HOST_TOOLS_CONTAINER=""
 DOCKER_CONFIG_DIR=""
 GENERATED_BASIC_AUTH_PASSWORD=""
+EXISTING_INSTALL=0
 
 log() { printf '[argus] %s\n' "$*"; }
 warn() { printf '[argus] warning: %s\n' "$*" >&2; }
@@ -42,6 +43,10 @@ validate_domain() {
 
 validate_basic_user() {
   [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]] || die "ARGUS_BASIC_AUTH_USER may only contain letters, digits, dot, underscore and hyphen"
+}
+
+is_revision() {
+  [[ "$1" =~ ^[0-9a-f]{40}$ ]]
 }
 
 prompt_required() {
@@ -137,17 +142,28 @@ load_or_create_configuration() {
   local requested_content_domain="${ARGUS_CONTENT_DOMAIN:-}"
   local requested_basic_user="${ARGUS_BASIC_AUTH_USER:-}"
   local requested_basic_password="${ARGUS_BASIC_AUTH_PASSWORD:-}"
+  local installed_version=""
 
   if [[ -f "$ENV_FILE" ]]; then
-    log "existing Argus environment found; preserving generated IDs and secrets"
+    EXISTING_INSTALL=1
+    log "existing Argus environment found; preserving generated IDs, secrets and installed revision"
     set -a
     # shellcheck disable=SC1090
     . "$ENV_FILE"
     set +a
+    installed_version="${ARGUS_VERSION:-}"
   fi
 
   ARGUS_REGISTRY="${requested_registry:-${ARGUS_REGISTRY:-ghcr.io/noah-bozkurt}}"
-  ARGUS_VERSION="${requested_version:-${ARGUS_VERSION:-main}}"
+  if [[ "$EXISTING_INSTALL" == "1" && -n "$installed_version" ]]; then
+    if [[ -n "$requested_version" && "$requested_version" != "$installed_version" ]]; then
+      warn "ignoring requested ARGUS_VERSION=$requested_version on an existing install; use 'argusctl update --version $requested_version' for version changes"
+    fi
+    ARGUS_VERSION="$installed_version"
+  else
+    ARGUS_VERSION="${requested_version:-${ARGUS_VERSION:-main}}"
+  fi
+
   ARGUS_DOMAIN="${requested_domain:-${ARGUS_DOMAIN:-}}"
   prompt_required ARGUS_DOMAIN "Primary Argus domain (for example argus.example.com)"
   ARGUS_DOMAIN="$(printf '%s' "$ARGUS_DOMAIN" | tr '[:upper:]' '[:lower:]')"
@@ -206,14 +222,52 @@ registry_login_if_configured() {
     | docker login "$registry_host" -u "$ARGUS_REGISTRY_USERNAME" --password-stdin >/dev/null
 }
 
+resolve_existing_mutable_revision() {
+  if [[ "$EXISTING_INSTALL" != "1" ]] || is_revision "$ARGUS_VERSION"; then
+    return
+  fi
+  [[ -f "$COMPOSE_FILE" ]] || die "existing install uses mutable version '$ARGUS_VERSION' but compose.yaml is missing"
+
+  local cid image_id revision
+  cid="$(docker compose --project-directory "$INSTALL_DIR" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q control-api)"
+  [[ -n "$cid" ]] || die "existing install uses mutable version '$ARGUS_VERSION' and the Control API container is not running; use argusctl diagnostics before rerunning the installer"
+  image_id="$(docker inspect -f '{{.Image}}' "$cid")"
+  revision="$(docker image inspect "$image_id" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+  is_revision "$revision" || die "could not recover immutable revision from the running Control API image"
+
+  log "normalizing legacy mutable installed version '$ARGUS_VERSION' to running revision $revision"
+  ARGUS_VERSION="$revision"
+  export ARGUS_VERSION
+}
+
 pull_host_bundle() {
   registry_login_if_configured
-  local image="${ARGUS_REGISTRY}/argus-host-tools:${ARGUS_VERSION}"
+  resolve_existing_mutable_revision
+
+  local requested="$ARGUS_VERSION"
+  local image="${ARGUS_REGISTRY}/argus-host-tools:${requested}"
   if ! docker pull "$image"; then
     if [[ -z "${ARGUS_REGISTRY_TOKEN:-}" ]]; then
       die "could not pull private Argus images. Set ARGUS_REGISTRY_USERNAME and a read-only ARGUS_REGISTRY_TOKEN, then rerun"
     fi
     die "could not pull $image"
+  fi
+
+  local resolved_revision
+  resolved_revision="$(docker image inspect "$image" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+  is_revision "$resolved_revision" \
+    || die "$image is not a verified Argus artifact with an immutable revision label"
+
+  if [[ "$EXISTING_INSTALL" == "1" ]] && is_revision "$requested" && [[ "$resolved_revision" != "$requested" ]]; then
+    die "installed revision $requested resolved to unexpected artifact revision $resolved_revision"
+  fi
+
+  ARGUS_VERSION="$resolved_revision"
+  export ARGUS_VERSION
+  image="${ARGUS_REGISTRY}/argus-host-tools:${ARGUS_VERSION}"
+  if [[ "$requested" != "$ARGUS_VERSION" ]]; then
+    log "pinning requested version '$requested' to immutable revision $ARGUS_VERSION"
+    docker pull "$image" >/dev/null
   fi
 
   mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR" "$STATE_DIR/backups"
@@ -519,6 +573,9 @@ print_summary() {
   printf '  cd %s && docker compose --env-file .env ps\n' "$INSTALL_DIR"
   printf '  journalctl -u argus-agent -u argus-helper --no-pager -n 100\n'
   printf '  argusctl status\n'
+  printf '  sudo argusctl smoke\n'
+  printf '\nTransactional update (requires read-only registry credentials):\n'
+  printf '  sudo -E argusctl update --version main\n'
 }
 
 main() {
