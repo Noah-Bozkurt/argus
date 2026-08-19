@@ -6,6 +6,11 @@ __ARGUS_DOMAIN__ {
 		reverse_proxy control-api:8080
 	}
 
+	@public_status path /status/*
+	handle @public_status {
+		reverse_proxy web:3000
+	}
+
 	handle {
 		basic_auth {
 			__BASIC_AUTH_USER__ __BASIC_AUTH_HASH__
