@@ -68,3 +68,40 @@ jobs:
             org.opencontainers.image.source=${{ github.event.workflow_run.repository.html_url }}
             org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
             org.opencontainers.image.version=${{ github.event.workflow_run.head_sha }}
+
+  verify-published-artifacts:
+    name: Verify published artifacts
+    needs:
+      - publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Sign in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify SHA and main tags exist remotely
+        env:
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          for image in \
+            argus-web \
+            argus-control-api \
+            argus-worker \
+            argus-content \
+            argus-host-tools
+          do
+            echo "Verifying ${image}:${TESTED_SHA}"
+            docker buildx imagetools inspect \
+              "ghcr.io/noah-bozkurt/${image}:${TESTED_SHA}" >/dev/null
+
+            echo "Verifying ${image}:main"
+            docker buildx imagetools inspect \
+              "ghcr.io/noah-bozkurt/${image}:main" >/dev/null
+          done
