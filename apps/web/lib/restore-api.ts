@@ -16,7 +16,12 @@ function authHeaders(): Record<string, string> {
   }
 }
 
-export async function preflightBackupRestore(serverId: string, backup: string): Promise<void> {
+async function queueRestoreCommand(
+  serverId: string,
+  backup: string,
+  kind: 'backup.restore.preflight' | 'backup.restore.apply',
+  riskLevel: 'LOW' | 'CRITICAL',
+): Promise<void> {
   const response = await fetch(`${controlApi}/commands`, {
     method: 'POST',
     cache: 'no-store',
@@ -26,8 +31,8 @@ export async function preflightBackupRestore(serverId: string, backup: string): 
     },
     body: JSON.stringify({
       server_id: serverId,
-      command_type: { kind: 'backup.restore.preflight', backup },
-      risk_level: 'LOW',
+      command_type: { kind, backup },
+      risk_level: riskLevel,
       ttl_seconds: 300,
       idempotency_key: randomUUID(),
     }),
@@ -35,4 +40,12 @@ export async function preflightBackupRestore(serverId: string, backup: string): 
   if (!response.ok) {
     throw new Error(`Control API ${response.status}: ${await response.text()}`)
   }
+}
+
+export async function preflightBackupRestore(serverId: string, backup: string): Promise<void> {
+  await queueRestoreCommand(serverId, backup, 'backup.restore.preflight', 'LOW')
+}
+
+export async function applyBackupRestore(serverId: string, backup: string): Promise<void> {
+  await queueRestoreCommand(serverId, backup, 'backup.restore.apply', 'CRITICAL')
 }
