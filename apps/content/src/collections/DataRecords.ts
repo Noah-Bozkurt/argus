@@ -137,11 +137,7 @@ export const DataRecords: CollectionConfig = {
     beforeValidate: [validateRecord],
   },
   versions: {
-    drafts: {
-      autosave: {
-        interval: 1500,
-      },
-    },
+    drafts: true,
     maxPerDoc: 50,
   },
   fields: [
