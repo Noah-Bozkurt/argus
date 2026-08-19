@@ -2,6 +2,7 @@ import { MigrateUpArgs, MigrateDownArgs, sql } from '@payloadcms/db-postgres'
 
 export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   await db.execute(sql`
+   CREATE SCHEMA IF NOT EXISTS "argus_content";
    CREATE TYPE "argus_content"."enum_workspace_users_role" AS ENUM('admin', 'member');
   CREATE TYPE "argus_content"."enum_project_spaces_status" AS ENUM('active', 'paused', 'archived');
   CREATE TYPE "argus_content"."enum_project_memberships_role" AS ENUM('manager', 'editor', 'viewer');
