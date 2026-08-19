@@ -65,12 +65,55 @@ jobs:
           grep -Fq 'pg_dump' scripts/update-first-test.sh
           grep -Fq 'pg_restore' scripts/update-first-test.sh
           grep -Fq 'ROLLBACK_READY=1' scripts/update-first-test.sh
+          grep -Fq 'pg_database_size(current_database())' scripts/update-first-test.sh
+          grep -Fq 'df -PB1' scripts/update-first-test.sh
           grep -Fq 'ExecStartPre=/usr/local/bin/argusctl recover-update' deploy/systemd/argus-helper.service
           grep -Fq 'pg_restore --list' scripts/recover-interrupted-update.sh
           update_lock="$(sed -n 's/^LOCK_FILE="\(.*\)"$/\1/p' scripts/update-first-test.sh | head -n1)"
           recovery_lock="$(sed -n 's/^LOCK_FILE="\(.*\)"$/\1/p' scripts/recover-interrupted-update.sh | head -n1)"
           [[ -n "$update_lock" ]]
           [[ "$update_lock" == "$recovery_lock" ]]
+
+      - name: Test update storage helper safety
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          export ARGUS_STATE_DIR="$tmp/state"
+          # shellcheck disable=SC1091
+          source scripts/update-first-test.sh --internal-test-library
+
+          [[ "$(required_snapshot_space_bytes 0)" == "1073741824" ]]
+          [[ "$(required_snapshot_space_bytes 1073741824)" == "3221225472" ]]
+
+          mkdir -p "$BACKUP_ROOT"
+          make_transaction() {
+            local name="$1" result="${2:-}"
+            mkdir -p "$BACKUP_ROOT/$name/files"
+            printf 'FROM_REVISION=x\n' >"$BACKUP_ROOT/$name/metadata.env"
+            if [[ -n "$result" ]]; then
+              printf '%s\n' "$result" >"$BACKUP_ROOT/$name/result"
+            fi
+          }
+
+          make_transaction 20260819T120005Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb SUCCEEDED
+          make_transaction 20260819T120004Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb ROLLED_BACK
+          make_transaction 20260819T120003Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb SUCCEEDED
+          make_transaction 20260819T120002Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb ROLLED_BACK
+          make_transaction 20260819T120001Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb SUCCEEDED
+          make_transaction 20260819T115959Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb ROLLBACK_FAILED
+          make_transaction 20260819T115958Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb
+          make_transaction manual-snapshot SUCCEEDED
+
+          prune_completed_transactions
+
+          [[ -d "$BACKUP_ROOT/20260819T120005Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb" ]]
+          [[ -d "$BACKUP_ROOT/20260819T120004Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb" ]]
+          [[ -d "$BACKUP_ROOT/20260819T120003Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb" ]]
+          [[ ! -e "$BACKUP_ROOT/20260819T120002Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb" ]]
+          [[ ! -e "$BACKUP_ROOT/20260819T120001Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb" ]]
+          [[ -d "$BACKUP_ROOT/20260819T115959Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb" ]]
+          [[ -d "$BACKUP_ROOT/20260819T115958Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb" ]]
+          [[ -d "$BACKUP_ROOT/manual-snapshot" ]]
 
       - name: Validate Compose configuration
         run: |
