@@ -130,23 +130,33 @@ The first-test single-server updater is intentionally an out-of-band local root 
 - their current local image IDs are pinned under that immutable SHA for rollback;
 - the target host-tools alias resolves to a valid full commit SHA;
 - all five target Argus images exist under that same SHA and carry the expected revision label;
-- the complete target native/deployment bundle can be extracted before downtime starts.
+- the complete target native/deployment bundle can be extracted before downtime starts;
+- enough free snapshot space remains after the target images have actually been pulled.
 
-Once preflight is complete, the updater saves root-only copies of deployment files, systemd units and native binaries, stops the Agent/Helper and control-plane writers, and takes a custom-format PostgreSQL dump while PostgreSQL remains local and isolated. That dump covers both the normal Argus control schema and Payload's `argus_content` schema.
+The updater then creates a format-2 transaction. It copies the pre-update deployment files, native binaries and systemd units and seals that fixed file set with a SHA-256 manifest before the rollback boundary is armed. Agent/Helper and control-plane writers are only stopped after that manifest is durably present and verifies successfully.
 
-Only after that snapshot succeeds does the updater install the target assets and allow target startup/migrations. A target update is successful only when service health, Caddy reload, native Agent/Helper startup and the full `argusctl smoke` verification pass.
+With writers quiesced, the updater takes a custom-format PostgreSQL dump while PostgreSQL remains local and isolated. That dump covers both the normal Argus control schema and Payload's `argus_content` schema. Before target files may be installed, `pg_restore --list` must accept the archive and a separate SHA-256 manifest is persisted for the dump.
 
-If a mutation-stage step fails, automatic rollback restores the previous files/binaries. If the database snapshot had completed, rollback terminates database clients, recreates the Argus database from the pre-update dump and starts the previous SHA-pinned control plane. Rollback itself must pass service health and `argusctl smoke` before it is reported as recovered.
+Target deployment files/binaries may then replace the installed copies. Immediately before any target Compose service may start, the updater writes and syncs a `target-start-armed` marker containing the exact target revision. That marker is the durable boundary that says target startup/migrations may now have happened. A target update is successful only when service health, Caddy reload, native Agent/Helper startup and the full `argusctl smoke` verification pass.
 
-The pre-update snapshot is retained after success for investigation/recovery, but V1 does not expose an unrestricted later restore button. A later database rollback can destroy data created after an otherwise successful update, so that capability needs an explicit data-loss confirmation model and retention policy first.
+If a normal mutation-stage step fails, automatic rollback first verifies the file snapshot checksum and restores the previous files/binaries. The PostgreSQL database is restored only when target start had already been armed; a failure before that marker cannot have launched target migrations through the updater, so recreating the database would add unnecessary risk. When database rollback is required, the stored dump checksum must still validate before the previous SHA-pinned control plane is started. Rollback itself must pass service health and `argusctl smoke` before it is reported as recovered.
+
+Transaction result files and phase markers are written atomically with an explicit filesystem sync. The pre-update snapshot is retained after success for investigation/recovery, but V1 does not expose an unrestricted later restore button. A later database rollback can destroy data created after an otherwise successful update, so that capability still needs an explicit data-loss confirmation model.
 
 ### Interrupted update / reboot recovery
 
-A hard process loss or reboot cannot execute the updater's normal error trap. Argus therefore treats a transaction directory with metadata + a file snapshot but no terminal `SUCCEEDED`/`ROLLED_BACK` result as an interrupted update.
+A hard process loss or reboot cannot execute the updater's normal error trap. The privileged Helper therefore has a local `ExecStartPre` recovery hook that invokes hidden `argusctl recover-update` before Helper startup. Recovery and the live updater use the same lifecycle `flock`: during a normal update the lock is already held and recovery is a no-op; after a reboot the lock is free and the newest unfinished transaction can be evaluated before the Helper and dependent Agent resume normal operation.
 
-The privileged Helper has a local `ExecStartPre` recovery hook. It invokes hidden `argusctl recover-update` before Helper startup. The recovery command uses the same lifecycle `flock` as the live updater: during a normal update the lock is already held and recovery becomes a no-op; after a reboot the lock is free and the incomplete transaction can be restored before the Helper and dependent Agent resume normal operation.
+Format-2 recovery uses durable transaction phases instead of inferring every crash boundary from the current `.env`:
 
-Recovery restores the pre-update deployment files and native binaries first. It only treats `argus.dump` as a valid database rollback source when `pg_restore --list` proves the custom-format archive is structurally complete. This distinction matters because the normal updater cannot install or start the target revision until `pg_dump` returns successfully: an absent or partial dump therefore means target migrations could not yet have run, and restoring that incomplete dump would be more dangerous than leaving the database untouched.
+- metadata without a sealed file-snapshot manifest means the updater had not armed live mutation yet; when the installed revision is still `FROM_REVISION`, the transaction is closed as `ABORTED_PRE_MUTATION` without copying a partial snapshot back over the host;
+- a sealed file snapshot must pass its SHA-256 manifest before any recovery copy occurs;
+- a missing `target-start-armed` marker means target Compose startup/migrations were never permitted, so recovery restores the pre-update files but deliberately leaves PostgreSQL intact;
+- when `target-start-armed` exists, it must contain the expected `TO_REVISION`, the database checksum must validate and `pg_restore --list` must accept the dump before database rollback proceeds.
+
+This also covers a reboot during target-file installation: the rollback file snapshot is already sealed, but because the start marker has not yet been written, recovery restores the mixed/partial installed files without unnecessarily replacing an otherwise untouched database.
+
+Older format-1 transactions remain recoverable through the previous conservative revision/dump logic. A `ROLLBACK_FAILED` result is preserved and is not automatically re-executed forever; subsequent lifecycle work still has to pass the normal installation/smoke checks.
 
 After file/database recovery, the previous SHA-pinned Compose services are started, the Control API and Caddy are validated and each custom container's OCI revision label must match the stored `FROM_REVISION`. When recovery is run manually before a retry, Helper and Agent are also restarted and the full `argusctl smoke` must pass. During boot-time Helper pre-start, systemd continues native service startup after the core rollback; a post-boot `sudo argusctl smoke` remains the final operator verification.
 

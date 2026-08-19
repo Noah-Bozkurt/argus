@@ -11,6 +11,7 @@ BACKUP_ROOT="$STATE_DIR/update-backups"
 LOCK_FILE="$STATE_DIR/update.lock"
 COMPLETED_TRANSACTION_RETENTION=3
 SNAPSHOT_FIXED_HEADROOM_BYTES=1073741824
+TRANSACTION_FORMAT_VERSION=2
 
 DOCKER_CONFIG_DIR=""
 TARGET_BUNDLE_CONTAINER=""
@@ -18,6 +19,7 @@ TARGET_TMP=""
 TRANSACTION_DIR=""
 ROLLBACK_READY=0
 DATABASE_BACKUP_READY=0
+TARGET_START_ARMED=0
 ROLLBACK_IN_PROGRESS=0
 CURRENT_REVISION=""
 TARGET_REVISION=""
@@ -65,6 +67,21 @@ compose() {
 acquire_update_lock() {
   exec 9>"$LOCK_FILE"
   flock -n 9 || die "another Argus update is already running"
+}
+
+durable_write_text() {
+  local path="$1"
+  local value="$2"
+  local tmp="${path}.tmp.$$"
+  printf '%s\n' "$value" >"$tmp"
+  chmod 0600 "$tmp"
+  sync -f "$tmp"
+  mv "$tmp" "$path"
+  sync -f "$(dirname "$path")"
+}
+
+write_transaction_result() {
+  durable_write_text "$TRANSACTION_DIR/result" "$1"
 }
 
 managed_transaction_name() {
@@ -252,6 +269,57 @@ normalize_installed_version() {
   fi
 }
 
+file_snapshot_paths() {
+  cat <<'EOF'
+files/install/.env
+files/install/compose.yaml
+files/install/Caddyfile
+files/install/Caddyfile.template
+files/bin/argus-agent
+files/bin/argus-helper
+files/bin/argusctl
+files/systemd/argus-agent.service
+files/systemd/argus-helper.service
+EOF
+}
+
+verify_file_snapshot() {
+  local transaction="$1"
+  local manifest="$transaction/file-snapshot.sha256"
+  [[ -s "$manifest" ]] || return 1
+
+  local expected actual
+  expected="$(file_snapshot_paths | LC_ALL=C sort)"
+  actual="$(awk '{ print $2 }' "$manifest" | LC_ALL=C sort)"
+  [[ "$actual" == "$expected" ]] || return 1
+
+  (
+    cd "$transaction"
+    sha256sum -c file-snapshot.sha256 >/dev/null 2>&1
+  )
+}
+
+seal_file_snapshot() {
+  local tmp="$TRANSACTION_DIR/file-snapshot.sha256.tmp.$$"
+  local -a paths=()
+  mapfile -t paths < <(file_snapshot_paths)
+
+  (
+    cd "$TRANSACTION_DIR"
+    sha256sum "${paths[@]}" >"$tmp"
+  )
+  chmod 0600 "$tmp"
+  (
+    cd "$TRANSACTION_DIR"
+    sha256sum -c "$tmp" >/dev/null
+  )
+  sync -f "$tmp"
+  mv "$tmp" "$TRANSACTION_DIR/file-snapshot.sha256"
+  sync -f "$TRANSACTION_DIR"
+  verify_file_snapshot "$TRANSACTION_DIR" \
+    || die "pre-update file snapshot failed checksum verification"
+}
+
 backup_installed_files() {
   local backup="$TRANSACTION_DIR/files"
   mkdir -p "$backup/bin" "$backup/systemd" "$backup/install"
@@ -266,6 +334,8 @@ backup_installed_files() {
   cp -a /usr/local/bin/argusctl "$backup/bin/argusctl"
   cp -a /etc/systemd/system/argus-agent.service "$backup/systemd/argus-agent.service"
   cp -a /etc/systemd/system/argus-helper.service "$backup/systemd/argus-helper.service"
+
+  seal_file_snapshot
 }
 
 quiesce_argus() {
@@ -273,6 +343,33 @@ quiesce_argus() {
   systemctl stop argus-agent.service
   systemctl stop argus-helper.service
   compose stop worker web content control-api
+}
+
+verify_database_snapshot_file() {
+  local transaction="$1"
+  local manifest="$transaction/database-snapshot.sha256"
+  [[ -s "$transaction/argus.dump" && -s "$manifest" ]] || return 1
+  [[ "$(awk '{ print $2 }' "$manifest")" == "argus.dump" ]] || return 1
+  (
+    cd "$transaction"
+    sha256sum -c database-snapshot.sha256 >/dev/null 2>&1
+  )
+}
+
+seal_database_snapshot() {
+  compose exec -T postgres pg_restore --list <"$TRANSACTION_DIR/argus.dump" >/dev/null
+
+  local tmp="$TRANSACTION_DIR/database-snapshot.sha256.tmp.$$"
+  (
+    cd "$TRANSACTION_DIR"
+    sha256sum argus.dump >"$tmp"
+  )
+  chmod 0600 "$tmp"
+  sync -f "$tmp"
+  mv "$tmp" "$TRANSACTION_DIR/database-snapshot.sha256"
+  sync -f "$TRANSACTION_DIR"
+  verify_database_snapshot_file "$TRANSACTION_DIR" \
+    || die "pre-update database snapshot failed checksum verification"
 }
 
 create_database_backup() {
@@ -285,7 +382,20 @@ create_database_backup() {
     --no-privileges >"$TRANSACTION_DIR/argus.dump"
   chmod 0600 "$TRANSACTION_DIR/argus.dump"
   [[ -s "$TRANSACTION_DIR/argus.dump" ]] || return 1
+  seal_database_snapshot
   DATABASE_BACKUP_READY=1
+}
+
+arm_target_start() {
+  [[ "$DATABASE_BACKUP_READY" == "1" ]] \
+    || die "target start cannot be armed without a verified database snapshot"
+  verify_file_snapshot "$TRANSACTION_DIR" \
+    || die "target start cannot be armed with an invalid file snapshot"
+  verify_database_snapshot_file "$TRANSACTION_DIR" \
+    || die "target start cannot be armed with an invalid database snapshot"
+
+  durable_write_text "$TRANSACTION_DIR/target-start-armed" "$TARGET_REVISION"
+  TARGET_START_ARMED=1
 }
 
 render_target_caddyfile() {
@@ -356,6 +466,9 @@ wait_control_plane_health() {
 }
 
 start_target() {
+  [[ "$TARGET_START_ARMED" == "1" ]] \
+    || die "target control plane cannot start before the transaction is durably armed"
+
   log "starting target control plane $TARGET_REVISION"
   compose config >/dev/null
   compose up -d --remove-orphans
@@ -431,15 +544,28 @@ rollback_transaction() {
   systemctl stop argus-helper.service >/dev/null 2>&1 || true
   compose stop worker web content control-api >/dev/null 2>&1 || true
 
-  restore_installed_files
-  local files_status=$?
+  verify_file_snapshot "$TRANSACTION_DIR"
+  local snapshot_status=$?
+  local files_status=1
+  if [[ "$snapshot_status" -eq 0 ]]; then
+    restore_installed_files
+    files_status=$?
+  else
+    warn "pre-update file snapshot checksum verification failed"
+  fi
 
   local db_status=0
-  if [[ "$DATABASE_BACKUP_READY" == "1" ]]; then
-    restore_database
+  if [[ "$TARGET_START_ARMED" == "1" ]]; then
+    verify_database_snapshot_file "$TRANSACTION_DIR"
     db_status=$?
+    if [[ "$db_status" -eq 0 ]]; then
+      restore_database
+      db_status=$?
+    else
+      warn "target start was armed but the database snapshot checksum is invalid"
+    fi
   else
-    warn "database was not mutated; skipping database restore"
+    warn "target start was never armed; skipping database restore"
   fi
 
   compose up -d --remove-orphans
@@ -463,12 +589,14 @@ rollback_transaction() {
   fi
 
   if [[ "$files_status" -eq 0 && "$db_status" -eq 0 && "$compose_status" -eq 0 && "$health_status" -eq 0 && "$helper_status" -eq 0 && "$agent_status" -eq 0 && "$smoke_status" -eq 0 ]]; then
-    printf 'ROLLED_BACK\n' >"$TRANSACTION_DIR/result"
-    warn "rollback completed successfully; restored revision $CURRENT_REVISION"
-    return 0
+    if write_transaction_result ROLLED_BACK; then
+      warn "rollback completed successfully; restored revision $CURRENT_REVISION"
+      return 0
+    fi
+    warn "rollback restored the previous revision but could not persist its terminal result"
   fi
 
-  printf 'ROLLBACK_FAILED\n' >"$TRANSACTION_DIR/result"
+  write_transaction_result ROLLBACK_FAILED || true
   warn "automatic rollback did not fully recover Argus"
   warn "transaction backup is preserved at $TRANSACTION_DIR"
   return 1
@@ -511,6 +639,8 @@ main() {
   require_file /etc/systemd/system/argus-helper.service
   command -v docker >/dev/null || die "docker is required"
   command -v flock >/dev/null || die "flock is required"
+  command -v sha256sum >/dev/null || die "sha256sum is required"
+  command -v sync >/dev/null || die "sync is required"
   acquire_update_lock
 
   set -a
@@ -545,12 +675,15 @@ main() {
   mkdir -p "$TRANSACTION_DIR"
   chmod 0700 "$TRANSACTION_DIR"
   cat >"$TRANSACTION_DIR/metadata.env" <<EOF
+TRANSACTION_FORMAT=${TRANSACTION_FORMAT_VERSION}
 FROM_REVISION=${CURRENT_REVISION}
 TO_REVISION=${TARGET_REVISION}
 REQUESTED_VERSION=${REQUESTED_VERSION}
 STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
   chmod 0600 "$TRANSACTION_DIR/metadata.env"
+  sync -f "$TRANSACTION_DIR/metadata.env"
+  sync -f "$TRANSACTION_DIR"
 
   backup_installed_files
   ROLLBACK_READY=1
@@ -558,11 +691,11 @@ EOF
   create_database_backup
 
   install_target_files
+  arm_target_start
   start_target
 
   ROLLBACK_READY=0
-  printf 'SUCCEEDED\n' >"$TRANSACTION_DIR/result"
-  chmod 0600 "$TRANSACTION_DIR/result"
+  write_transaction_result SUCCEEDED
   log "update succeeded: $CURRENT_REVISION -> $TARGET_REVISION"
   log "rollback snapshot retained at $TRANSACTION_DIR"
   prune_completed_transactions

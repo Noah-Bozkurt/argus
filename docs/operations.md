@@ -119,17 +119,20 @@ Before mutation, the updater verifies that all running custom control-plane serv
 
 Target images are pre-pulled while the current control plane is still healthy, so a registry or image-space failure happens before downtime. After those pulls and target-bundle extraction, the updater performs a second storage preflight on the filesystem that holds `/var/lib/argus/update-backups/`. It reads the live PostgreSQL database size and requires at least **2× the database size + 1 GiB** of free space before writers are stopped. This intentionally over-reserves relative to the normally compressed custom-format dump so snapshot creation is not allowed to consume the last usable disk space.
 
-The transaction boundary is:
+New updates use transaction format 2 with explicit durable phase boundaries. The transaction is:
 
-1. preserve the current `.env`, Compose/Caddy assets, native binaries and systemd units;
-2. stop Agent/Helper and the control-plane writers;
-3. take a custom-format `pg_dump` of the complete Argus PostgreSQL database, including both control and Payload schemas;
-4. install the target version-matched assets/binaries and switch `.env` to the target SHA;
-5. start the target control plane and allow normal migrations to run;
-6. wait for service health, reload validated Caddy configuration and restart Helper/Agent;
-7. require `argusctl smoke` to pass before declaring success.
+1. copy the current `.env`, Compose/Caddy assets, native binaries and systemd units into the root-only transaction directory;
+2. seal that exact fixed file set with `file-snapshot.sha256` and verify it before any live mutation is armed;
+3. stop Agent/Helper and the control-plane writers;
+4. take a custom-format `pg_dump` of the complete Argus PostgreSQL database, including both control and Payload schemas;
+5. require `pg_restore --list` to accept the dump, then persist and verify `database-snapshot.sha256`;
+6. install the target version-matched assets/binaries and switch `.env` to the target SHA;
+7. durably write `target-start-armed` with that target SHA; only after this marker may target Compose services start and migrations run;
+8. wait for service health, reload validated Caddy configuration, restart Helper/Agent and require `argusctl smoke` before declaring success.
 
-If any mutation-stage step fails, the updater automatically restores the saved files/binaries. If the database snapshot had already completed, it recreates the Argus database from that snapshot before starting the previous version. The rollback is itself verified with health checks and `argusctl smoke`.
+If a normal mutation-stage step fails, rollback first verifies the sealed file snapshot before restoring it. PostgreSQL is recreated from the pre-update dump only when `target-start-armed` already existed. Before that marker, the target control plane was never allowed to start, so a file-installation failure or crash can be recovered without unnecessarily replacing an otherwise untouched database.
+
+The same phase markers are used after a hard reboot. A format-2 transaction with metadata but no sealed file snapshot is treated as `ABORTED_PRE_MUTATION` when the installed revision is still the original revision. A sealed snapshot with no target-start marker restores the files only. A transaction with `target-start-armed` requires the expected target SHA plus a checksum-valid, structurally readable database dump before database rollback is attempted. Existing format-1 transaction snapshots remain supported by the legacy conservative recovery path.
 
 Transaction snapshots are stored under `/var/lib/argus/update-backups/` with root-only permissions. To prevent normal successful updates from filling a small VPS indefinitely, Argus automatically keeps the **three newest terminal snapshots** whose result is `SUCCEEDED` or `ROLLED_BACK`. Pruning recognizes only Argus-generated transaction directory names with complete metadata/file snapshots. Incomplete transactions, `ROLLBACK_FAILED` transactions and unrelated/manual directories are never automatically removed. Pruning runs before a new update and again after a successful update.
 
