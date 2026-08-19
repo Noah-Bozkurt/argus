@@ -58,7 +58,7 @@ jobs:
           command = 'pnpm --filter @argus/content run migrate:create cms_v1 --force-accept-warning'
           child = pexpect.spawn('/bin/bash', ['-lc', command], encoding='utf-8', timeout=180)
           child.logfile = sys.stdout
-          child.expect('Is lifecycle_status column in data_records table created or renamed from another column?')
+          child.expect(r'created or renamed from another column\?')
           child.send('\x1b[B')
           child.send('\r')
           child.expect(pexpect.EOF)
