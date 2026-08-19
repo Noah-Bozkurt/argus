@@ -1,0 +1,95 @@
+name: Generate Payload CMS V1 migration
+
+on:
+  push:
+    branches:
+      - agent/payload-cms-v1
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: argus
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d argus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/argus
+      ARGUS_CONTENT_DB_SCHEMA: argus_content
+      PAYLOAD_SECRET: cms-validation-payload-secret-000000000000000000
+      PAYLOAD_PUBLIC_URL: http://localhost:3001
+      ARGUS_CONTENT_SYNC_TOKEN: cms-validation-sync-token-000000000000000000000
+      PAYLOAD_DB_PUSH: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/payload-cms-v1
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Generate CMS migration and types
+        run: |
+          pnpm --filter @argus/content run migrate:create cms_v1 --force-accept-warning
+          pnpm --filter @argus/content run generate:types
+          pnpm --filter @argus/content run typecheck
+          pnpm --filter @argus/web exec tsc --noEmit
+      - name: Verify generated migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          migration_file="$(find apps/content/src/migrations -maxdepth 1 -type f -name '*_cms_v1.ts' -print -quit)"
+          test -n "$migration_file"
+          test -s "$migration_file"
+          grep -F 'cms_v1' apps/content/src/migrations/index.ts
+      - name: Apply committed production migrations
+        env:
+          NODE_ENV: production
+        run: pnpm --filter @argus/content run migrate:status
+      - name: Verify CMS schema and isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")" -eq 0
+          test "$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM argus_content.payload_migrations;")" -eq 2
+          psql "$DATABASE_URL" -Atc "SELECT to_regclass('argus_content.data_records_versions');" | grep -F 'data_records_versions'
+          psql "$DATABASE_URL" -Atc "SELECT column_name FROM information_schema.columns WHERE table_schema='argus_content' AND table_name='data_records' AND column_name IN ('_status','published_at') ORDER BY column_name;" | grep -F '_status'
+          psql "$DATABASE_URL" -Atc "SELECT column_name FROM information_schema.columns WHERE table_schema='argus_content' AND table_name='data_models' AND column_name='public_read';" | grep -Fx public_read
+      - name: Verify migration idempotency
+        env:
+          NODE_ENV: production
+        run: |
+          pnpm --filter @argus/content run migrate:status
+          test "$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM argus_content.payload_migrations;")" -eq 2
+      - name: Build Payload production app
+        env:
+          NODE_ENV: production
+        run: pnpm --filter @argus/content run build
+      - name: Commit generated CMS artifacts and remove generator
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/generate-payload-cms-migration.yml
+          git add apps/content/src/migrations apps/content/src/payload-types.ts
+          git diff --cached --stat
+          git commit -m "feat: add generated Payload CMS migration"
+          git push origin HEAD:agent/payload-cms-v1
