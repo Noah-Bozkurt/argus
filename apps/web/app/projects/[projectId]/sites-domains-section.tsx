@@ -3,12 +3,14 @@ import {
   getProjectRepositories,
   getProjectServices,
 } from '../../../lib/api'
+import { getProjectDomainLifecycle } from '../../../lib/domain-lifecycle-api'
 import { getSiteDomainView } from '../../../lib/sites-domains-api'
 import {
   createDomainAction,
   createSiteAction,
   deleteDomainAction,
   deleteSiteAction,
+  evaluateDomainLifecycleAction,
   updateDomainAction,
   updateSiteAction,
 } from './site-domain-actions'
@@ -20,8 +22,9 @@ function dateValue(value: string | null): string {
 }
 
 export default async function SitesDomainsSection({ projectId }: { projectId: string }) {
-  const [view, services, environments, repositories] = await Promise.all([
+  const [view, lifecycle, services, environments, repositories] = await Promise.all([
     getSiteDomainView(projectId),
+    getProjectDomainLifecycle(projectId),
     getProjectServices(projectId),
     getProjectEnvironments(projectId),
     getProjectRepositories(projectId),
@@ -30,6 +33,8 @@ export default async function SitesDomainsSection({ projectId }: { projectId: st
   const environmentNames = new Map(environments.map((environment) => [environment.id, environment.name]))
   const repositoryNames = new Map(repositories.map((repository) => [repository.id, `${repository.owner}/${repository.name}`]))
   const siteNames = new Map(view.sites.map((site) => [site.id, site.name]))
+  const lifecycleByDomain = new Map(lifecycle.map((status) => [status.domain_id, status]))
+  const lifecycleProblems = lifecycle.filter((status) => status.overall_status === 'CRITICAL' || status.overall_status === 'ATTENTION')
 
   return (
     <section>
@@ -37,6 +42,17 @@ export default async function SitesDomainsSection({ projectId }: { projectId: st
       <p>
         Sites and domains are inventory records. Cloudflare routing modes describe how traffic reaches the site; V1 does not write DNS records or provision certificates.
       </p>
+      <p>
+        Domain lifecycle evaluates expiration and recent TLS observations every six hours. It never renews a domain or changes DNS automatically.
+      </p>
+      <form action={async () => { 'use server'; await evaluateDomainLifecycleAction(projectId) }}>
+        <button type="submit">Refresh domain lifecycle</button>
+      </form>
+      {lifecycleProblems.length > 0 ? (
+        <p>{lifecycleProblems.length} domain lifecycle item(s) need attention.</p>
+      ) : lifecycle.length > 0 ? (
+        <p>No domain lifecycle problems detected.</p>
+      ) : null}
 
       <h3>Add site</h3>
       <form action={async (formData) => { 'use server'; await createSiteAction(projectId, formData) }}>
@@ -195,57 +211,69 @@ export default async function SitesDomainsSection({ projectId }: { projectId: st
 
       <h3>Domains</h3>
       {view.domains.length === 0 ? <p>No domains yet.</p> : (
-        view.domains.map((domain) => (
-          <article key={domain.id}>
-            <h4>{domain.hostname}{domain.is_primary ? ' — PRIMARY' : ''}</h4>
-            <p>
-              Site {domain.site_id ? siteNames.get(domain.site_id) ?? domain.site_id : 'unlinked'}
-              {' — '}Routing {domain.routing_mode}
-              {' — '}TLS {domain.tls_status}
-            </p>
-            <p>
-              Registrar {domain.registrar ?? 'unknown'} — DNS {domain.dns_provider ?? 'unknown'} — expires {domain.expires_at ? new Date(domain.expires_at).toLocaleDateString() : 'unknown'}
-            </p>
-            <form action={async (formData) => { 'use server'; await updateDomainAction(projectId, domain.id, formData) }}>
-              <label>
-                Hostname
-                <input name="hostname" required maxLength={253} defaultValue={domain.hostname} />
-              </label>
-              <label>
-                Site
-                <select name="site_id" defaultValue={domain.site_id ?? ''}>
-                  <option value="">Unlinked domain</option>
-                  {view.sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
-                </select>
-              </label>
-              <label>
-                Registrar
-                <input name="registrar" maxLength={120} defaultValue={domain.registrar ?? ''} />
-              </label>
-              <label>
-                DNS provider
-                <input name="dns_provider" maxLength={120} defaultValue={domain.dns_provider ?? ''} />
-              </label>
-              <label>
-                Routing
-                <select name="routing_mode" defaultValue={domain.routing_mode}>
-                  {routingModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
-                </select>
-              </label>
-              <label>
-                Expiration
-                <input name="expires_at" type="date" defaultValue={dateValue(domain.expires_at)} />
-              </label>
-              <label>
-                <input name="is_primary" type="checkbox" defaultChecked={domain.is_primary} /> Primary domain for selected site
-              </label>
-              <button type="submit">Save domain</button>
-            </form>
-            <form action={async () => { 'use server'; await deleteDomainAction(projectId, domain.id) }}>
-              <button type="submit">Delete domain</button>
-            </form>
-          </article>
-        ))
+        view.domains.map((domain) => {
+          const domainLifecycle = lifecycleByDomain.get(domain.id)
+          return (
+            <article key={domain.id}>
+              <h4>{domain.hostname}{domain.is_primary ? ' — PRIMARY' : ''}</h4>
+              <p>
+                Site {domain.site_id ? siteNames.get(domain.site_id) ?? domain.site_id : 'unlinked'}
+                {' — '}Routing {domain.routing_mode}
+                {' — '}TLS {domain.tls_status}
+              </p>
+              <p>
+                Registrar {domain.registrar ?? 'unknown'} — DNS {domain.dns_provider ?? 'unknown'} — expires {domain.expires_at ? new Date(domain.expires_at).toLocaleDateString() : 'unknown'}
+              </p>
+              {domainLifecycle ? (
+                <p>
+                  Lifecycle <strong>{domainLifecycle.overall_status}</strong>
+                  {' — '}Expiration {domainLifecycle.expiration_status}
+                  {domainLifecycle.days_until_expiry !== null ? ` (${domainLifecycle.days_until_expiry} days)` : ''}
+                  {' — '}TLS observation {domainLifecycle.tls_status}
+                  {' — '}Last evaluated {domainLifecycle.last_evaluated_at ? new Date(domainLifecycle.last_evaluated_at).toLocaleString() : 'never'}
+                </p>
+              ) : null}
+              <form action={async (formData) => { 'use server'; await updateDomainAction(projectId, domain.id, formData) }}>
+                <label>
+                  Hostname
+                  <input name="hostname" required maxLength={253} defaultValue={domain.hostname} />
+                </label>
+                <label>
+                  Site
+                  <select name="site_id" defaultValue={domain.site_id ?? ''}>
+                    <option value="">Unlinked domain</option>
+                    {view.sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Registrar
+                  <input name="registrar" maxLength={120} defaultValue={domain.registrar ?? ''} />
+                </label>
+                <label>
+                  DNS provider
+                  <input name="dns_provider" maxLength={120} defaultValue={domain.dns_provider ?? ''} />
+                </label>
+                <label>
+                  Routing
+                  <select name="routing_mode" defaultValue={domain.routing_mode}>
+                    {routingModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Expiration
+                  <input name="expires_at" type="date" defaultValue={dateValue(domain.expires_at)} />
+                </label>
+                <label>
+                  <input name="is_primary" type="checkbox" defaultChecked={domain.is_primary} /> Primary domain for selected site
+                </label>
+                <button type="submit">Save domain</button>
+              </form>
+              <form action={async () => { 'use server'; await deleteDomainAction(projectId, domain.id) }}>
+                <button type="submit">Delete domain</button>
+              </form>
+            </article>
+          )
+        })
       )}
     </section>
   )
