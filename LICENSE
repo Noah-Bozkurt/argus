@@ -1,0 +1,17 @@
+ARGUS PROPRIETARY SOFTWARE LICENSE
+
+Copyright (c) 2026 Noah Bozkurt. All rights reserved.
+
+Argus, including its original source code, documentation, user interfaces, designs, configuration, and other original materials in this repository (the "Software"), is proprietary software.
+
+No license or permission is granted to use, copy, reproduce, modify, adapt, merge, publish, distribute, sublicense, sell, commercially exploit, host for third parties, or create derivative works from the Software, in whole or in part, except where the copyright holder has provided prior written authorization or where such rights cannot lawfully be restricted.
+
+Access to this repository or possession of a copy of the Software does not grant any intellectual-property license beyond permissions expressly provided in writing by the copyright holder.
+
+Authorized users may use the Software only within the scope of the authorization granted to them. They must not disclose or redistribute source code or other non-public project materials to unauthorized parties.
+
+Third-party software, libraries, assets, and other components incorporated into or used by Argus remain subject to their respective licenses and copyright notices. This license does not replace, limit, or relicense those third-party terms. See THIRD_PARTY_NOTICES.md.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT, TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM OR IN CONNECTION WITH THE SOFTWARE OR ITS USE, TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW.
+
+This license applies to versions of Argus distributed with this notice. It does not revoke rights, if any, that were validly granted for an earlier copy under different terms.
