@@ -48,14 +48,16 @@ jobs:
       - name: Generate initial Payload migration
         run: |
           set -euo pipefail
-          if ! find apps/content/src/migrations -maxdepth 1 -type f -name '*.ts' -print -quit 2>/dev/null | grep -q .; then
+          if ! find apps/content/src/migrations -maxdepth 1 -type f -name '*.ts' ! -name 'index.ts' -print -quit 2>/dev/null | grep -q .; then
             pnpm --filter @argus/content run migrate:create initial_app_data --force-accept-warning
           fi
       - name: Generate Payload types and lockfile
         run: |
           pnpm --filter @argus/content run generate:types
           pnpm install --lockfile-only
-      - name: Apply migration to clean PostgreSQL
+      - name: Apply committed production migrations to clean PostgreSQL
+        env:
+          NODE_ENV: production
         run: pnpm --filter @argus/content run migrate
       - name: Verify isolated schema
         shell: bash
@@ -70,6 +72,8 @@ jobs:
           test "$public_tables" -eq 0
           psql "$DATABASE_URL" -Atc "SELECT schema_name FROM information_schema.schemata WHERE schema_name='argus_content';" | grep -Fx argus_content
       - name: Verify migration status and TypeScript
+        env:
+          NODE_ENV: production
         run: |
           pnpm --filter @argus/content run migrate:status
           pnpm --filter @argus/content run typecheck
