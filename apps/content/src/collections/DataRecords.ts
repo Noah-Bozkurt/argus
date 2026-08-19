@@ -172,6 +172,8 @@ export const DataRecords: CollectionConfig = {
     {
       name: 'lifecycleStatus',
       type: 'select',
+      dbName: 'status',
+      enumName: 'enum_data_records_lifecycle_status',
       required: true,
       defaultValue: 'active',
       options: [
@@ -179,7 +181,7 @@ export const DataRecords: CollectionConfig = {
         { label: 'Archived', value: 'archived' },
       ],
       admin: {
-        description: 'Argus record lifecycle. Kept separate from Payload’s internal draft _status.',
+        description: 'Argus record lifecycle. Kept separate from Payload’s internal draft _status while preserving the existing database column.',
       },
     },
     {
