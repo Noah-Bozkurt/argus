@@ -3,7 +3,6 @@ set -Eeuo pipefail
 umask 077
 
 INSTALL_DIR="${ARGUS_INSTALL_DIR:-/opt/argus}"
-CONFIG_DIR="${ARGUS_CONFIG_DIR:-/etc/argus}"
 STATE_DIR="${ARGUS_STATE_DIR:-/var/lib/argus}"
 ENV_FILE="$INSTALL_DIR/.env"
 COMPOSE_FILE="$INSTALL_DIR/compose.yaml"
@@ -15,6 +14,7 @@ TARGET_BUNDLE_CONTAINER=""
 TARGET_TMP=""
 TRANSACTION_DIR=""
 ROLLBACK_READY=0
+DATABASE_BACKUP_READY=0
 ROLLBACK_IN_PROGRESS=0
 CURRENT_REVISION=""
 TARGET_REVISION=""
@@ -221,6 +221,7 @@ create_database_backup() {
     --no-privileges >"$TRANSACTION_DIR/argus.dump"
   chmod 0600 "$TRANSACTION_DIR/argus.dump"
   [[ -s "$TRANSACTION_DIR/argus.dump" ]] || die "PostgreSQL update backup is empty"
+  DATABASE_BACKUP_READY=1
 }
 
 render_target_caddyfile() {
@@ -266,14 +267,38 @@ wait_control_api() {
   return 1
 }
 
+wait_service_healthy() {
+  local service="$1" cid running health
+  for _ in $(seq 1 60); do
+    cid="$(compose ps -q "$service")"
+    if [[ -n "$cid" ]]; then
+      running="$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null || true)"
+      health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$cid" 2>/dev/null || true)"
+      if [[ "$running" == "true" && "$health" == "healthy" ]]; then
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+wait_control_plane_health() {
+  wait_control_api || return 1
+  local service
+  for service in postgres control-api worker web content; do
+    wait_service_healthy "$service" || return 1
+  done
+}
+
 start_target() {
   log "starting target control plane $TARGET_REVISION"
   compose config >/dev/null
   compose up -d
 
-  if ! wait_control_api; then
+  if ! wait_control_plane_health; then
     compose ps || true
-    compose logs --tail=160 control-api postgres || true
+    compose logs --tail=160 control-api worker web content postgres || true
     return 1
   fi
 
@@ -288,24 +313,28 @@ start_target() {
 
 restore_database() {
   log "restoring PostgreSQL snapshot"
-  compose up -d postgres
+  compose up -d postgres || return 1
+  local ready=0
   for _ in $(seq 1 60); do
     if compose exec -T postgres pg_isready -U argus -d postgres >/dev/null 2>&1; then
+      ready=1
       break
     fi
     sleep 1
   done
-  compose exec -T postgres pg_isready -U argus -d postgres >/dev/null
+  [[ "$ready" == "1" ]] || return 1
 
   compose exec -T postgres psql -v ON_ERROR_STOP=1 -U argus -d postgres \
-    -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='argus' AND pid <> pg_backend_pid();" >/dev/null
-  compose exec -T postgres dropdb -U argus --if-exists argus
-  compose exec -T postgres createdb -U argus argus
+    -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='argus' AND pid <> pg_backend_pid();" >/dev/null \
+    || return 1
+  compose exec -T postgres dropdb -U argus --if-exists argus || return 1
+  compose exec -T postgres createdb -U argus argus || return 1
   compose exec -T postgres pg_restore \
     -U argus \
     -d argus \
     --no-owner \
-    --no-privileges <"$TRANSACTION_DIR/argus.dump"
+    --no-privileges <"$TRANSACTION_DIR/argus.dump" \
+    || return 1
 }
 
 restore_installed_files() {
@@ -339,26 +368,37 @@ rollback_transaction() {
   compose stop worker web content control-api >/dev/null 2>&1 || true
 
   restore_installed_files
-  restore_database
-  local db_status=$?
+  local files_status=$?
+
+  local db_status=0
+  if [[ "$DATABASE_BACKUP_READY" == "1" ]]; then
+    restore_database
+    db_status=$?
+  else
+    warn "database was not mutated; skipping database restore"
+  fi
 
   compose up -d
   local compose_status=$?
+  local health_status=1
   if [[ "$compose_status" -eq 0 ]]; then
+    wait_control_plane_health
+    health_status=$?
     compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
   fi
+
   systemctl enable --now argus-helper.service
   local helper_status=$?
   systemctl enable --now argus-agent.service
   local agent_status=$?
 
   local smoke_status=1
-  if [[ "$db_status" -eq 0 && "$compose_status" -eq 0 && "$helper_status" -eq 0 && "$agent_status" -eq 0 ]]; then
+  if [[ "$files_status" -eq 0 && "$db_status" -eq 0 && "$compose_status" -eq 0 && "$health_status" -eq 0 && "$helper_status" -eq 0 && "$agent_status" -eq 0 ]]; then
     /usr/local/bin/argusctl smoke
     smoke_status=$?
   fi
 
-  if [[ "$db_status" -eq 0 && "$compose_status" -eq 0 && "$helper_status" -eq 0 && "$agent_status" -eq 0 && "$smoke_status" -eq 0 ]]; then
+  if [[ "$files_status" -eq 0 && "$db_status" -eq 0 && "$compose_status" -eq 0 && "$health_status" -eq 0 && "$helper_status" -eq 0 && "$agent_status" -eq 0 && "$smoke_status" -eq 0 ]]; then
     printf 'ROLLED_BACK\n' >"$TRANSACTION_DIR/result"
     warn "rollback completed successfully; restored revision $CURRENT_REVISION"
     return 0
@@ -394,7 +434,6 @@ main() {
   require_file /etc/systemd/system/argus-agent.service
   require_file /etc/systemd/system/argus-helper.service
   command -v docker >/dev/null || die "docker is required"
-  command -v jq >/dev/null || die "jq is required"
 
   set -a
   # shellcheck disable=SC1090
@@ -434,9 +473,9 @@ EOF
   chmod 0600 "$TRANSACTION_DIR/metadata.env"
 
   backup_installed_files
+  ROLLBACK_READY=1
   quiesce_argus
   create_database_backup
-  ROLLBACK_READY=1
 
   install_target_files
   start_target
