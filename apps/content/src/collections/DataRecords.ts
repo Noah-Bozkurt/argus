@@ -124,7 +124,7 @@ export const DataRecords: CollectionConfig = {
   slug: 'data-records',
   admin: {
     group: 'App Data',
-    defaultColumns: ['model', '_status', 'publishedAt', 'lifecycleStatus', 'schemaVersion', 'updatedAt'],
+    defaultColumns: ['model', '_status', 'publishedAt', 'status', 'schemaVersion', 'updatedAt'],
     description: 'Application data publishes immediately. Content models support Payload drafts and publication history.',
   },
   access: {
@@ -170,7 +170,7 @@ export const DataRecords: CollectionConfig = {
       },
     },
     {
-      name: 'lifecycleStatus',
+      name: 'status',
       type: 'select',
       enumName: 'enum_data_records_lifecycle_status',
       required: true,
