@@ -1,4 +1,4 @@
-use protocol::{CommandType, HelperRequest, OperationError};
+use protocol::{HelperRequest, OperationError};
 use tokio::process::Command;
 
 const PROTECTED_LABEL: &str = "com.argus.protected";
@@ -11,13 +11,9 @@ fn denied() -> OperationError {
 }
 
 async fn container_is_protected(container: &str) -> bool {
+    let format = format!("{{{{ index .Config.Labels \"{PROTECTED_LABEL}\" }}}}");
     let output = Command::new("docker")
-        .args([
-            "inspect",
-            "--format",
-            "{{ index .Config.Labels \"com.argus.protected\" }}",
-            container,
-        ])
+        .args(["inspect", "--format", &format, container])
         .output()
         .await;
     let Ok(output) = output else {
