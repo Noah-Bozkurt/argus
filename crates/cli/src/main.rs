@@ -78,9 +78,7 @@ async fn run_embedded_script(name: &str, script: &str, env: Option<(&str, &str)>
         command.env(key, value);
     }
 
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("start {name}"))?;
+    let mut child = command.spawn().with_context(|| format!("start {name}"))?;
     let mut stdin = child
         .stdin
         .take()
