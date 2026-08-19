@@ -82,9 +82,9 @@ fn validate_restore_id(value: &str) -> Result<(), HelperError> {
 fn validate_backup_reference(backup: &str) -> Result<(), HelperError> {
     let valid = backup.ends_with(".tar.gz")
         && backup.len() <= 160
-        && backup
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'));
+        && backup.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        });
     if valid {
         Ok(())
     } else {
@@ -93,7 +93,9 @@ fn validate_backup_reference(backup: &str) -> Result<(), HelperError> {
 }
 
 async fn ensure_private_dir(path: &Path) -> Result<(), HelperError> {
-    tokio::fs::create_dir_all(path).await.map_err(system_error)?;
+    tokio::fs::create_dir_all(path)
+        .await
+        .map_err(system_error)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
