@@ -39,7 +39,10 @@ enum Commands {
         version: String,
     },
     #[command(hide = true)]
-    RecoverUpdate,
+    RecoverUpdate {
+        #[arg(long)]
+        retry_failed: bool,
+    },
     System {
         #[command(subcommand)]
         command: SystemCommands,
@@ -107,17 +110,18 @@ async fn run_first_server_smoke() -> Result<()> {
     run_embedded_script("first-server smoke test", FIRST_SERVER_SMOKE, None).await
 }
 
-async fn run_update_recovery() -> Result<()> {
+async fn run_update_recovery(retry_failed: bool) -> Result<()> {
+    let env = retry_failed.then_some(("ARGUS_UPDATE_RECOVERY_RETRY_FAILED", "1"));
     run_embedded_script(
         "interrupted Argus update recovery",
         INTERRUPTED_UPDATE_RECOVERY,
-        None,
+        env,
     )
     .await
 }
 
 async fn run_first_server_update(version: &str) -> Result<()> {
-    run_update_recovery().await?;
+    run_update_recovery(false).await?;
     run_embedded_script(
         "transactional Argus update",
         FIRST_SERVER_UPDATE,
@@ -187,7 +191,7 @@ async fn main() -> Result<()> {
         }
         Commands::Smoke => run_first_server_smoke().await?,
         Commands::Update { version } => run_first_server_update(&version).await?,
-        Commands::RecoverUpdate => run_update_recovery().await?,
+        Commands::RecoverUpdate { retry_failed } => run_update_recovery(retry_failed).await?,
         Commands::System {
             command: SystemCommands::Info,
         } => {
@@ -241,6 +245,21 @@ mod tests {
     fn hidden_recovery_command_is_parseable_for_systemd() {
         let cli =
             Cli::try_parse_from(["argusctl", "recover-update"]).expect("parse recovery command");
-        assert!(matches!(cli.command, Commands::RecoverUpdate));
+        assert!(matches!(
+            cli.command,
+            Commands::RecoverUpdate {
+                retry_failed: false
+            }
+        ));
+    }
+
+    #[test]
+    fn failed_recovery_retry_requires_explicit_flag() {
+        let cli = Cli::try_parse_from(["argusctl", "recover-update", "--retry-failed"])
+            .expect("parse failed recovery retry");
+        assert!(matches!(
+            cli.command,
+            Commands::RecoverUpdate { retry_failed: true }
+        ));
     }
 }
