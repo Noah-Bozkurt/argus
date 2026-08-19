@@ -51,8 +51,9 @@ jobs:
           set -euo pipefail
           if ! find apps/content/src/migrations -maxdepth 1 -type f -name '*_cms_v1.ts' -print -quit | grep -q .; then
             # Drizzle asks whether lifecycle_status is new or a rename of the existing
-            # business field `status`. Select the second option so existing values are kept.
-            printf '\033[B\r' | script -q -e -c "pnpm --filter @argus/content run migrate:create cms_v1 --force-accept-warning" /dev/null
+            # business field `status`. Wait until the prompt is visible, then select the
+            # second option so active/archived values are preserved by a column rename.
+            (sleep 5; printf '\033[B\r') | script -q -e -c "pnpm --filter @argus/content run migrate:create cms_v1 --force-accept-warning" /dev/null
           fi
           pnpm --filter @argus/content run generate:types
           pnpm --filter @argus/content run typecheck
