@@ -1,4 +1,5 @@
 mod firewall;
+mod restore_preflight;
 
 use anyhow::Context;
 use helper::{HelperApi, HelperError};
@@ -109,6 +110,9 @@ async fn execute_request(
             api.backup_create(&backup_id, &profile).await.map(|_| None)
         }
         HelperRequest::BackupVerify { backup } => api.backup_verify(&backup).await.map(|_| None),
+        HelperRequest::BackupRestorePreflight { restore_id, backup } => {
+            restore_preflight::run(&restore_id, &backup).await.map(Some)
+        }
     }
 }
 

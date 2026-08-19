@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: &str = "1.7";
+pub const PROTOCOL_VERSION: &str = "1.8";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentHandshake {
@@ -78,6 +78,8 @@ pub enum CommandType {
     BackupCreate { profile: String },
     #[serde(rename = "backup.verify")]
     BackupVerify { backup: String },
+    #[serde(rename = "backup.restore.preflight")]
+    BackupRestorePreflight { backup: String },
 }
 impl CommandType {
     pub fn conflict_group(&self) -> &'static str {
@@ -100,6 +102,7 @@ impl CommandType {
             CommandType::SecurityFirewallEnable => "security.mutate",
             CommandType::BackupCreate { .. } => "backup.create",
             CommandType::BackupVerify { .. } => "backup.verify",
+            CommandType::BackupRestorePreflight { .. } => "backup.restore.preflight",
         }
     }
     pub fn required_capability(&self) -> Capability {
@@ -141,7 +144,9 @@ impl CommandType {
                 name: "security.firewall".into(),
                 version: "v1".into(),
             },
-            CommandType::BackupCreate { .. } | CommandType::BackupVerify { .. } => Capability {
+            CommandType::BackupCreate { .. }
+            | CommandType::BackupVerify { .. }
+            | CommandType::BackupRestorePreflight { .. } => Capability {
                 name: "backup".into(),
                 version: "v1".into(),
             },
@@ -344,6 +349,8 @@ pub enum HelperRequest {
     BackupCreate { backup_id: String, profile: String },
     #[serde(rename = "backup.verify")]
     BackupVerify { backup: String },
+    #[serde(rename = "backup.restore.preflight")]
+    BackupRestorePreflight { restore_id: String, backup: String },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelperResponse {
@@ -378,9 +385,13 @@ mod tests {
         let verify = CommandType::BackupVerify {
             backup: "abc.tar.gz".into(),
         };
+        let preflight = CommandType::BackupRestorePreflight {
+            backup: "abc.tar.gz".into(),
+        };
         assert_eq!(create.required_capability().name, "backup");
         assert_eq!(verify.required_capability().name, "backup");
-        assert!(!create.requires_maintenance());
+        assert_eq!(preflight.required_capability().name, "backup");
+        assert!(!preflight.requires_maintenance());
     }
     #[test]
     fn compose_commands_require_compose_capability() {
@@ -405,6 +416,6 @@ mod tests {
     }
     #[test]
     fn protocol_version_validation_rejects_older_versions() {
-        assert!(validate_protocol_version("1.6").is_err());
+        assert!(validate_protocol_version("1.7").is_err());
     }
 }

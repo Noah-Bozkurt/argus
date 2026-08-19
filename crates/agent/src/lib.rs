@@ -195,6 +195,19 @@ impl HelperClient {
         .await
         .map(|_| ())
     }
+    pub async fn backup_restore_preflight(
+        &self,
+        restore_id: Uuid,
+        backup: &str,
+    ) -> Result<String, OperationError> {
+        Ok(self
+            .request(HelperRequest::BackupRestorePreflight {
+                restore_id: restore_id.to_string(),
+                backup: backup.into(),
+            })
+            .await?
+            .unwrap_or_default())
+    }
     async fn request(&self, request: HelperRequest) -> Result<Option<String>, OperationError> {
         let mut stream = UnixStream::connect(&self.socket)
             .await
@@ -330,6 +343,11 @@ impl AgentRuntime {
             protocol::CommandType::BackupVerify { backup } => {
                 self.helper.backup_verify(backup).await.map(|_| None)
             }
+            protocol::CommandType::BackupRestorePreflight { backup } => self
+                .helper
+                .backup_restore_preflight(command.id, backup)
+                .await
+                .map(Some),
         };
         match result {
             Ok(output) => CommandResult {

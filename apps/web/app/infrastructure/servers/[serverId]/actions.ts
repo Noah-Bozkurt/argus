@@ -15,6 +15,7 @@ import {
   type ServiceAction,
 } from '../../../../lib/api'
 import { enableDesiredFirewall } from '../../../../lib/firewall-api'
+import { preflightBackupRestore } from '../../../../lib/restore-api'
 
 export async function actOnService(serverId: string, service: string, action: ServiceAction) {
   await serviceAction(serverId, service, action)
@@ -34,6 +35,10 @@ export async function createSystemConfigBackup(serverId: string) {
 
 export async function verifySystemConfigBackup(serverId: string, backup: string) {
   await verifyBackup(serverId, backup)
+}
+
+export async function preflightSystemConfigRestore(serverId: string, backup: string) {
+  await preflightBackupRestore(serverId, backup)
 }
 
 export async function beginMaintenance(serverId: string, durationMinutes: number, reason: string) {
