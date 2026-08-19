@@ -1,0 +1,20 @@
+name: Cleanup merged Payload migration branch
+
+on:
+  push:
+    branches:
+      - agent/payload-project-sync-v1
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Delete merged branch
+        run: |
+          if git ls-remote --exit-code --heads origin refs/heads/agent/payload-production-migrations-v1 >/dev/null 2>&1; then
+            git push origin --delete agent/payload-production-migrations-v1
+          fi
