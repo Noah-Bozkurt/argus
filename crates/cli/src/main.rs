@@ -239,8 +239,8 @@ mod tests {
 
     #[test]
     fn hidden_recovery_command_is_parseable_for_systemd() {
-        let cli = Cli::try_parse_from(["argusctl", "recover-update"])
-            .expect("parse recovery command");
+        let cli =
+            Cli::try_parse_from(["argusctl", "recover-update"]).expect("parse recovery command");
         assert!(matches!(cli.command, Commands::RecoverUpdate));
     }
 }
