@@ -5,8 +5,10 @@ import { fileURLToPath } from 'url'
 
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
+const workspaceRoot = path.resolve(dirname, '../..')
 
 const nextConfig: NextConfig = {
+  outputFileTracingRoot: workspaceRoot,
   webpack: (webpackConfig) => {
     webpackConfig.resolve.extensionAlias = {
       '.cjs': ['.cts', '.cjs'],
@@ -16,7 +18,7 @@ const nextConfig: NextConfig = {
     return webpackConfig
   },
   turbopack: {
-    root: path.resolve(dirname),
+    root: workspaceRoot,
   },
 }
 
