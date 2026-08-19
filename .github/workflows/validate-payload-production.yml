@@ -1,0 +1,80 @@
+name: Validate Payload production runtime
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: argus
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d argus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: production
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/argus
+      ARGUS_CONTENT_DB_SCHEMA: argus_content
+      PAYLOAD_SECRET: validation-only-payload-secret-00000000000000000
+      PAYLOAD_PUBLIC_URL: http://localhost:3001
+      ARGUS_CONTENT_SYNC_TOKEN: validation-only-sync-token-0000000000000000000
+      PAYLOAD_DB_PUSH: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/payload-production-migrations-v1
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Initialize Payload in production and apply prodMigrations
+        run: pnpm --filter @argus/content run migrate:status
+      - name: Verify schema isolation and migration record
+        shell: bash
+        run: |
+          set -euo pipefail
+          content_tables="$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM information_schema.tables WHERE table_schema='argus_content';")"
+          public_tables="$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")"
+          echo "argus_content table count: $content_tables"
+          echo "public table count: $public_tables"
+          test "$content_tables" -gt 0
+          test "$public_tables" -eq 0
+          psql "$DATABASE_URL" -Atc "SELECT count(*) FROM argus_content.payload_migrations WHERE name='20260819_073853_initial_app_data';" | grep -Fx 1
+          psql "$DATABASE_URL" -Atc "SELECT to_regclass('argus_content.workspace_users'),to_regclass('argus_content.project_spaces'),to_regclass('argus_content.data_models'),to_regclass('argus_content.data_records'),to_regclass('argus_content.data_relations');" | grep -F 'workspace_users'
+      - name: Verify production migration idempotency
+        run: pnpm --filter @argus/content run migrate:status
+      - name: Verify migration was not duplicated
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -Atc "SELECT count(*) FROM argus_content.payload_migrations WHERE name='20260819_073853_initial_app_data';" | grep -Fx 1
+      - name: Build Payload production app
+        run: pnpm --filter @argus/content run build
+      - name: Remove one-shot validation workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/validate-payload-production.yml
+          git commit -m "chore: remove one-shot Payload runtime validation"
+          git push origin HEAD:agent/payload-production-migrations-v1
