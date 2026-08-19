@@ -1,9 +1,17 @@
 __ARGUS_DOMAIN__ {
 	encode zstd gzip
-	basic_auth {
-		__BASIC_AUTH_USER__ __BASIC_AUTH_HASH__
+
+	@agent path /enrollment/complete /agent/*
+	handle @agent {
+		reverse_proxy control-api:8080
 	}
-	reverse_proxy web:3000
+
+	handle {
+		basic_auth {
+			__BASIC_AUTH_USER__ __BASIC_AUTH_HASH__
+		}
+		reverse_proxy web:3000
+	}
 }
 
 __ARGUS_CONTENT_DOMAIN__ {
@@ -19,18 +27,5 @@ __ARGUS_CONTENT_DOMAIN__ {
 			__BASIC_AUTH_USER__ __BASIC_AUTH_HASH__
 		}
 		reverse_proxy content:3000
-	}
-}
-
-__ARGUS_NODE_DOMAIN__ {
-	encode zstd gzip
-
-	@agent path /enrollment/complete /agent/*
-	handle @agent {
-		reverse_proxy control-api:8080
-	}
-
-	handle {
-		respond "Not Found" 404
 	}
 }
