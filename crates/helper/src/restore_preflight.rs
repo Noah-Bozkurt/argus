@@ -196,7 +196,7 @@ fn allowed_path(value: &str) -> bool {
 async fn extract_candidate(archive: &Path, staging: &Path) -> Result<(), HelperError> {
     let archive_text = archive.to_string_lossy().into_owned();
     let staging_text = staging.to_string_lossy().into_owned();
-    run(
+    run_command(
         "tar",
         &[
             "-xzf",
@@ -243,13 +243,13 @@ async fn validate_ssh(staging: &Path) -> Result<(), HelperError> {
         .await
         .map_err(system_error)?;
     let validation_text = validation_path.to_string_lossy().into_owned();
-    run("sshd", &["-t", "-f", &validation_text]).await
+    run_command("sshd", &["-t", "-f", &validation_text]).await
 }
 
 async fn validate_apt(staging: &Path) -> Result<(), HelperError> {
     let config = staging.join("etc/apt/apt.conf.d/20auto-upgrades");
     let config_text = config.to_string_lossy().into_owned();
-    run("apt-config", &["-c", &config_text, "dump"]).await
+    run_command("apt-config", &["-c", &config_text, "dump"]).await
 }
 
 async fn validate_ufw(staging: &Path, checks: &mut Vec<String>) -> Result<(), HelperError> {
@@ -266,7 +266,7 @@ async fn validate_ufw(staging: &Path, checks: &mut Vec<String>) -> Result<(), He
     Ok(())
 }
 
-async fn run(program: &str, args: &[&str]) -> Result<(), HelperError> {
+async fn run_command(program: &str, args: &[&str]) -> Result<(), HelperError> {
     run_capture(program, args).await.map(|_| ())
 }
 
