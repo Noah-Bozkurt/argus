@@ -30,7 +30,8 @@ The repository already contains substantial working slices for:
 - an embedded `argusctl smoke` verification path for a real installed server;
 - immutable installed revisions even when `main` is used as the discovery alias;
 - main-only image publication that runs only after normal CI succeeds and verifies expected remote GHCR tags;
-- a single-server transactional `argusctl update` path with database/file preflight backup and automatic failure rollback.
+- a single-server transactional `argusctl update` path with sealed file/database rollback material, durable crash phases, disk-space preflight, bounded successful-snapshot retention and fail-closed interrupted-update recovery;
+- a checkpoint-based first-server lifecycle acceptance runner that can record install, real reboot, installer-rerun and update evidence without persisting plaintext Argus secrets in its report.
 
 These capabilities are described by the canonical documents in this directory. They should not be interpreted as a completed production product.
 
@@ -53,6 +54,26 @@ The first supported target is deliberately narrow:
 - native systemd Agent + Helper.
 
 Cloudflare Tunnel, arm64 and provider-specific provisioning should not be added before this first path is proven.
+
+### Lifecycle acceptance runner
+
+`scripts/first-server-acceptance.sh` turns the repeatable host-lifecycle portion of the first test into explicit checkpoints. It is evidence tooling, not a substitute for the real server: `install` still runs the real installer, `post-reboot` requires the Linux boot ID to have actually changed, and `update` requires a different immutable revision plus a matching durable `SUCCEEDED` update transaction.
+
+Run it from the authenticated source checkout on the disposable server using the same domain/private-registry environment required by the normal lifecycle:
+
+```bash
+sudo -E ./scripts/first-server-acceptance.sh install
+# reboot the host
+sudo -E ./scripts/first-server-acceptance.sh post-reboot
+sudo -E ./scripts/first-server-acceptance.sh rerun-installer
+# after a newer green main revision has been published:
+sudo -E ./scripts/first-server-acceptance.sh update
+sudo ./scripts/first-server-acceptance.sh report
+```
+
+The runner stores root-only checkpoint state under `/var/lib/argus/acceptance/first-server/` by default. It fingerprints the generated high-entropy IDs/secrets to prove installer reruns and reboots preserve identity without writing those plaintext values into the final report. The report records immutable revisions, the real-reboot proof, smoke-test checkpoints and the exact successful update transaction. Registry credentials are never copied into acceptance state.
+
+This only covers the reproducible host lifecycle subset. It does **not** mark project/CMS/backup/restore/protected-container/manual-failure checklist items as passed; those still require explicit execution on the real disposable server.
 
 ### First server test checklist
 
@@ -78,6 +99,8 @@ Cloudflare Tunnel, arm64 and provider-specific provisioning should not be added 
 20. exercise the explicit first-test reset path and perform one second clean install;
 21. record every manual workaround as an installer/product bug rather than adding undocumented setup knowledge.
 
+The lifecycle acceptance runner directly records evidence for checklist items 2-5, 17 and 18. The remaining items stay separate acceptance work and must not be inferred from a lifecycle `PASS` report.
+
 ### What is intentionally not required yet
 
 The first test does not require:
@@ -100,9 +123,9 @@ Priorities should first be driven by failures and usability gaps found in that t
 
 - turn the successful main-SHA lifecycle into named/versioned release installation rather than relying on `main` for discovery;
 - publish release manifests/checksums and pin images by immutable digest where practical;
-- add update-backup retention policy and a strongly confirmed operator-driven rollback/recovery workflow;
+- add a strongly confirmed operator-driven rollback/recovery workflow for retained update snapshots;
 - add arm64 after the amd64 install/update/reset cycle is stable;
-- improve install/update diagnostics and recovery from interrupted host reboots;
+- improve install/update diagnostics based on failures observed during the real lifecycle test;
 - add optional Cloudflare Tunnel/direct-proxy modes without making them core requirements;
 - evolve single-server update into production-grade multi-node/rolling control-plane upgrade semantics only when that topology exists.
 
@@ -151,6 +174,7 @@ Priorities should first be driven by failures and usability gaps found in that t
 ## Sequencing rules
 
 - do not call the deployment test-ready until normal CI and the main image publication succeed;
+- do not call the first-server milestone passed until the real VPS/VM checkpoints and remaining checklist evidence have actually been executed;
 - keep Client optional in core models;
 - prefer a complete safe vertical slice over a broad but fake feature surface;
 - privileged mutations need typed APIs, authorization, audit and failure semantics;
