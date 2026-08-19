@@ -1,17 +1,11 @@
 use helper::HelperError;
-use serde::Serialize;
-use std::{path::{Component, Path, PathBuf}, process::Stdio};
+use std::{
+    path::{Component, Path, PathBuf},
+    process::Stdio,
+};
 use tokio::{io::AsyncWriteExt, process::Command};
 
 const MAX_ARCHIVE_ENTRIES: usize = 512;
-
-#[derive(Debug, Serialize)]
-struct PreflightSummary {
-    backup: String,
-    checks: Vec<String>,
-    staged: bool,
-    live_changes: bool,
-}
 
 pub async fn run(restore_id: &str, backup: &str) -> Result<String, HelperError> {
     validate_restore_id(restore_id)?;
@@ -31,18 +25,22 @@ pub async fn run(restore_id: &str, backup: &str) -> Result<String, HelperError> 
 
     let result = async {
         extract_candidate(&archive, &staging).await?;
-        let mut checks = vec!["sha256".into(), "archive_allowlist".into(), "staged_extract".into()];
+        let mut checks = vec![
+            "sha256".to_string(),
+            "archive_allowlist".to_string(),
+            "staged_extract".to_string(),
+        ];
         validate_ssh(&staging).await?;
         checks.push("ssh_config".into());
         validate_apt(&staging).await?;
         checks.push("apt_config".into());
         validate_ufw(&staging, &mut checks).await?;
-        serde_json::to_string(&PreflightSummary {
-            backup: backup.to_string(),
-            checks,
-            staged: true,
-            live_changes: false,
-        })
+        serde_json::to_string(&serde_json::json!({
+            "backup": backup,
+            "checks": checks,
+            "staged": true,
+            "live_changes": false,
+        }))
         .map_err(|error| HelperError::SystemCommandFailed(error.to_string()))
     }
     .await;
@@ -74,7 +72,11 @@ fn validate_restore_id(value: &str) -> Result<(), HelperError> {
         && value
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || character == '-');
-    if valid { Ok(()) } else { Err(HelperError::InvalidRequest) }
+    if valid {
+        Ok(())
+    } else {
+        Err(HelperError::InvalidRequest)
+    }
 }
 
 fn validate_backup_reference(backup: &str) -> Result<(), HelperError> {
@@ -83,13 +85,15 @@ fn validate_backup_reference(backup: &str) -> Result<(), HelperError> {
         && backup
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'));
-    if valid { Ok(()) } else { Err(HelperError::InvalidBackupReference) }
+    if valid {
+        Ok(())
+    } else {
+        Err(HelperError::InvalidBackupReference)
+    }
 }
 
 async fn ensure_private_dir(path: &Path) -> Result<(), HelperError> {
-    tokio::fs::create_dir_all(path)
-        .await
-        .map_err(system_error)?;
+    tokio::fs::create_dir_all(path).await.map_err(system_error)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -100,12 +104,20 @@ async fn ensure_private_dir(path: &Path) -> Result<(), HelperError> {
     Ok(())
 }
 
-async fn verify_integrity(backup_dir: &Path, archive: &Path, backup: &str) -> Result<(), HelperError> {
+async fn verify_integrity(
+    backup_dir: &Path,
+    archive: &Path,
+    backup: &str,
+) -> Result<(), HelperError> {
     let expected = tokio::fs::read_to_string(backup_dir.join(format!("{backup}.sha256")))
         .await
         .map_err(|_| HelperError::BackupIntegrityFailed)?;
     let expected = expected.trim();
-    if expected.len() != 64 || !expected.chars().all(|character| character.is_ascii_hexdigit()) {
+    if expected.len() != 64
+        || !expected
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
         return Err(HelperError::BackupIntegrityFailed);
     }
     let archive_text = archive.to_string_lossy().into_owned();
@@ -149,7 +161,10 @@ fn validate_archive_entries(entries: &[ArchiveEntry]) -> Result<(), HelperError>
     let mut ssh_config = false;
     let mut apt_config = false;
     for entry in entries {
-        if !matches!(entry.kind, '-' | 'd') || !safe_relative_path(&entry.path) || !allowed_path(&entry.path) {
+        if !matches!(entry.kind, '-' | 'd')
+            || !safe_relative_path(&entry.path)
+            || !allowed_path(&entry.path)
+        {
             return Err(HelperError::InvalidRequest);
         }
         ssh_config |= entry.path == "etc/ssh/sshd_config";
@@ -164,9 +179,9 @@ fn validate_archive_entries(entries: &[ArchiveEntry]) -> Result<(), HelperError>
 fn safe_relative_path(value: &str) -> bool {
     let path = Path::new(value);
     !path.is_absolute()
-        && path.components().all(|component| {
-            matches!(component, Component::Normal(_) | Component::CurDir)
-        })
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
 }
 
 fn allowed_path(value: &str) -> bool {
@@ -197,7 +212,9 @@ async fn extract_candidate(archive: &Path, staging: &Path) -> Result<(), HelperE
 
 async fn validate_ssh(staging: &Path) -> Result<(), HelperError> {
     let source = staging.join("etc/ssh/sshd_config");
-    let content = tokio::fs::read_to_string(&source).await.map_err(system_error)?;
+    let content = tokio::fs::read_to_string(&source)
+        .await
+        .map_err(system_error)?;
     let include_root = staging.join("etc/ssh/sshd_config.d");
     let include_root = include_root.to_string_lossy();
     let mut validation = String::new();
@@ -222,7 +239,9 @@ async fn validate_ssh(staging: &Path) -> Result<(), HelperError> {
         }
     }
     let validation_path = staging.join("sshd_config.validation");
-    tokio::fs::write(&validation_path, validation).await.map_err(system_error)?;
+    tokio::fs::write(&validation_path, validation)
+        .await
+        .map_err(system_error)?;
     let validation_text = validation_path.to_string_lossy().into_owned();
     run("sshd", &["-t", "-f", &validation_text]).await
 }
