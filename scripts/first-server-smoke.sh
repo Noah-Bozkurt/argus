@@ -45,8 +45,10 @@ verify_compose_service() {
   if [[ "$require_health" == "1" ]]; then
     health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$cid")"
     [[ "$health" == "healthy" ]] || die "Compose service '$service' health is '$health'"
+    pass "Compose service $service is running and healthy"
+  else
+    pass "Compose service $service is running"
   fi
-  pass "Compose service $service is running${require_health:+ and healthy}"
 }
 
 wait_until() {
