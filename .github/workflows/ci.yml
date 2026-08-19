@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace
+      - run: cargo test --workspace --locked
       - run: cargo fmt --all -- --check
 
   web:
@@ -94,7 +94,7 @@ jobs:
           RUST_LOG: info
         run: |
           set -euo pipefail
-          cargo run -p control-api >/tmp/argus-control-api.log 2>&1 &
+          cargo run --locked -p control-api >/tmp/argus-control-api.log 2>&1 &
           pid=$!
           trap 'kill "$pid" >/dev/null 2>&1 || true' EXIT
           for _ in $(seq 1 300); do
