@@ -1,5 +1,6 @@
 mod firewall;
 mod restore_preflight;
+mod restore_transaction;
 
 use anyhow::Context;
 use helper::{HelperApi, HelperError};
@@ -113,6 +114,14 @@ async fn execute_request(
         HelperRequest::BackupRestorePreflight { restore_id, backup } => {
             restore_preflight::run(&restore_id, &backup).await.map(Some)
         }
+        HelperRequest::BackupRestoreApply { restore_id, backup } => {
+            restore_transaction::apply(&restore_id, &backup)
+                .await
+                .map(Some)
+        }
+        HelperRequest::BackupRestoreCommit { restore_id } => {
+            restore_transaction::commit(&restore_id).await.map(|_| None)
+        }
     }
 }
 
@@ -152,6 +161,15 @@ async fn handle_client(stream: UnixStream, api: Arc<HelperApi>) -> anyhow::Resul
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let args = std::env::args().collect::<Vec<_>>();
+    if args.len() == 3 && args[1] == "--restore-rollback" {
+        restore_transaction::rollback(&args[2]).await?;
+        return Ok(());
+    }
+    if args.len() != 1 {
+        anyhow::bail!("unsupported argus-helper invocation");
+    }
+
     tracing_subscriber::fmt::init();
     let socket =
         std::env::var("ARGUS_HELPER_SOCKET").unwrap_or_else(|_| "/run/argus/helper.sock".into());
