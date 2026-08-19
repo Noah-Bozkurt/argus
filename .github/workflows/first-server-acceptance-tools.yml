@@ -1,0 +1,20 @@
+name: First Server Acceptance Tooling
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  acceptance-tooling:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate acceptance scripts
+        run: |
+          set -euo pipefail
+          bash -n scripts/first-server-acceptance.sh
+          bash -n scripts/test-first-server-acceptance.sh
+      - name: Test acceptance helpers
+        run: bash scripts/test-first-server-acceptance.sh
