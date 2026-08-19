@@ -8,6 +8,7 @@ const dirname = path.dirname(filename)
 const workspaceRoot = path.resolve(dirname, '../..')
 
 const nextConfig: NextConfig = {
+  output: 'standalone',
   outputFileTracingRoot: workspaceRoot,
   webpack: (webpackConfig) => {
     webpackConfig.resolve.extensionAlias = {
