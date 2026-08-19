@@ -3,6 +3,7 @@ import {
   actOnContainer,
   actOnServer,
   actOnService,
+  applySystemConfigRestore,
   beginMaintenance,
   createSystemConfigBackup,
   enforceDesiredFirewall,
@@ -147,21 +148,38 @@ export default async function ServerPage({ params }: { params: { serverId: strin
             <p>No backups found.</p>
           ) : (
             <ul>
-              {snapshot.backups.artifacts.map((backup) => (
-                <li key={backup.name}>
-                  <strong>{backup.verified ? 'VERIFIED' : 'UNVERIFIED'}</strong> {backup.name} — {backup.profile} — {backup.size_bytes} bytes — SHA-256 {backup.sha256 || 'missing'}
-                  <form action={async () => { 'use server'; await verifySystemConfigBackup(server.server_id, backup.name) }}>
-                    <button type="submit">Verify integrity</button>
-                  </form>
-                  <form action={async () => { 'use server'; await preflightSystemConfigRestore(server.server_id, backup.name) }}>
-                    <button type="submit">Validate for restore</button>
-                  </form>
-                </li>
-              ))}
+              {snapshot.backups.artifacts.map((backup) => {
+                const restoreAllowed = Boolean(activeMaintenance && backup.verified)
+                return (
+                  <li key={backup.name}>
+                    <strong>{backup.verified ? 'VERIFIED' : 'UNVERIFIED'}</strong> {backup.name} — {backup.profile} — {backup.size_bytes} bytes — SHA-256 {backup.sha256 || 'missing'}
+                    <form action={async () => { 'use server'; await verifySystemConfigBackup(server.server_id, backup.name) }}>
+                      <button type="submit">Verify integrity</button>
+                    </form>
+                    <form action={async () => { 'use server'; await preflightSystemConfigRestore(server.server_id, backup.name) }}>
+                      <button type="submit">Validate for restore</button>
+                    </form>
+                    <form action={async (formData) => { 'use server'; await applySystemConfigRestore(server.server_id, backup.name, formData) }}>
+                      <label>
+                        Type <code>{backup.name}</code> to confirm
+                        <input
+                          name="confirmation"
+                          required
+                          autoComplete="off"
+                          disabled={!restoreAllowed}
+                        />
+                      </label>
+                      <button type="submit" disabled={!restoreAllowed}>Restore configuration</button>
+                    </form>
+                    {!activeMaintenance ? <small>Live restore requires an active maintenance window.</small> : null}
+                    {!backup.verified ? <small>Verify this backup before live restore.</small> : null}
+                  </li>
+                )
+              })}
             </ul>
           )}
           <p>
-            Restore preflight performs a fresh checksum, archive allowlist, isolated extraction and SSH/APT/UFW syntax checks. It never writes live configuration. Live restore remains unavailable until transactional rollback and post-restore connectivity verification are implemented.
+            Restore preflight never writes live configuration. Live restore is CRITICAL: the helper re-runs preflight, snapshots the current SSH/UFW/update configuration, arms a 120-second local rollback, applies the fixed allowlisted paths and validates the live result. Rollback is only disarmed after the Agent successfully reports the command result to the Control API.
           </p>
         </>
       )}
