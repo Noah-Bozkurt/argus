@@ -6,8 +6,12 @@
   "scripts": {
     "build": "next build",
     "dev": "next dev",
+    "generate:db-schema": "payload generate:db-schema",
     "generate:importmap": "payload generate:importmap",
     "generate:types": "payload generate:types",
+    "migrate": "payload migrate",
+    "migrate:create": "payload migrate:create",
+    "migrate:status": "payload migrate:status",
     "payload": "payload",
     "start": "next start",
     "typecheck": "tsc --noEmit"
