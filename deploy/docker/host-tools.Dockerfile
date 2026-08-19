@@ -13,4 +13,8 @@ FROM scratch AS artifact
 COPY --from=build /src/target/x86_64-unknown-linux-musl/release/argus-agent /out/argus-agent
 COPY --from=build /src/target/x86_64-unknown-linux-musl/release/argus-helper /out/argus-helper
 COPY --from=build /src/target/x86_64-unknown-linux-musl/release/argusctl /out/argusctl
+COPY deploy/compose/compose.yaml /deploy/compose.yaml
+COPY deploy/compose/Caddyfile.template /deploy/Caddyfile.template
+COPY deploy/systemd/argus-agent.service /deploy/systemd/argus-agent.service
+COPY deploy/systemd/argus-helper.service /deploy/systemd/argus-helper.service
 CMD ["/out/argusctl", "version"]
