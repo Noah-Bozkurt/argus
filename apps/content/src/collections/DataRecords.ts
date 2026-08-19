@@ -39,6 +39,14 @@ function validScalar(type: string, value: unknown): boolean {
 
 const validateRecord: CollectionBeforeValidateHook = async ({ data, operation, originalDoc, req }) => {
   if (!data) return data
+  if (operation === 'update' && originalDoc) {
+    data.project = originalDoc.project
+    data.model = originalDoc.model
+    data.organizationId = originalDoc.organizationId
+    data.argusProjectId = originalDoc.argusProjectId
+    data.createdBy = originalDoc.createdBy
+  }
+
   const project = data.project ?? originalDoc?.project
   const modelValue = data.model ?? originalDoc?.model
   const modelID = relationshipID(modelValue)
@@ -120,26 +128,15 @@ export const DataRecords: CollectionConfig = {
     beforeValidate: [validateRecord],
   },
   fields: [
-    {
-      name: 'organizationId',
-      type: 'text',
-      required: true,
-      index: true,
-      admin: { readOnly: true },
-    },
-    {
-      name: 'argusProjectId',
-      type: 'text',
-      required: true,
-      index: true,
-      admin: { readOnly: true },
-    },
+    { name: 'organizationId', type: 'text', required: true, index: true, admin: { readOnly: true } },
+    { name: 'argusProjectId', type: 'text', required: true, index: true, admin: { readOnly: true } },
     {
       name: 'project',
       type: 'relationship',
       relationTo: 'project-spaces',
       required: true,
       index: true,
+      admin: { description: 'Immutable after creation.' },
     },
     {
       name: 'model',
@@ -147,13 +144,9 @@ export const DataRecords: CollectionConfig = {
       relationTo: 'data-models',
       required: true,
       index: true,
+      admin: { description: 'Immutable after creation.' },
     },
-    {
-      name: 'schemaVersion',
-      type: 'number',
-      required: true,
-      admin: { readOnly: true },
-    },
+    { name: 'schemaVersion', type: 'number', required: true, admin: { readOnly: true } },
     {
       name: 'values',
       type: 'json',
