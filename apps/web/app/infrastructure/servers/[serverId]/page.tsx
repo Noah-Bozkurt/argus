@@ -7,6 +7,7 @@ import {
   createSystemConfigBackup,
   enforceDesiredFirewall,
   finishMaintenance,
+  preflightSystemConfigRestore,
   saveDesiredState,
   verifySystemConfigBackup,
 } from './actions'
@@ -152,11 +153,16 @@ export default async function ServerPage({ params }: { params: { serverId: strin
                   <form action={async () => { 'use server'; await verifySystemConfigBackup(server.server_id, backup.name) }}>
                     <button type="submit">Verify integrity</button>
                   </form>
+                  <form action={async () => { 'use server'; await preflightSystemConfigRestore(server.server_id, backup.name) }}>
+                    <button type="submit">Validate for restore</button>
+                  </form>
                 </li>
               ))}
             </ul>
           )}
-          <p>Restore is intentionally unavailable until preflight, rollback, and post-restore verification exist.</p>
+          <p>
+            Restore preflight performs a fresh checksum, archive allowlist, isolated extraction and SSH/APT/UFW syntax checks. It never writes live configuration. Live restore remains unavailable until transactional rollback and post-restore connectivity verification are implemented.
+          </p>
         </>
       )}
 
