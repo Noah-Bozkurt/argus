@@ -12,7 +12,11 @@ The name is inspired by **Argus Panoptes**, the many-eyed watchman from Greek my
 
 ## Status
 
-Argus is under active development and is not yet considered production-ready. A substantial control-plane, operations and Payload-based content foundation is implemented. The next test milestone is a reproducible installer, which is required before the first real server test.
+Argus is under active development and is not yet considered production-ready. A substantial control-plane, operations and Payload-based content foundation is implemented.
+
+The repository now contains the first reproducible single-server deployment path for Ubuntu/Debian amd64: a Compose-based control plane, native Agent/Helper services, a rerunnable installer, a disposable-host reset path, and CI readiness checks for clean database startup and production application builds. Custom Argus images are designed to publish from `main` only after the normal CI workflow succeeds.
+
+The next milestone is the first real installation on a clean test server. Every manual workaround found during that test should be treated as an installer or product bug rather than becoming undocumented setup knowledge. See the [Roadmap](docs/roadmap.md) for the exact test sequence and current limitations.
 
 ## Documentation
 
