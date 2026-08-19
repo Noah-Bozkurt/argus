@@ -9,6 +9,7 @@ LOCK_FILE="/run/lock/argus-update.lock"
 ENV_FILE="$INSTALL_DIR/.env"
 COMPOSE_FILE="$INSTALL_DIR/compose.yaml"
 CADDY_FILE="$INSTALL_DIR/Caddyfile"
+PRESTART_MODE="${ARGUS_UPDATE_RECOVERY_PRESTART:-0}"
 
 log() { printf '[argus-recovery] %s\n' "$*"; }
 warn() { printf '[argus-recovery] warning: %s\n' "$*" >&2; }
@@ -28,7 +29,7 @@ acquire_recovery_lock() {
   if ! flock -n 9; then
     # A live updater owns the same lock. This is expected when the Helper is
     # restarted near the end of a normal update transaction.
-    log "active update owns the lifecycle lock; skipping boot recovery"
+    log "active update owns the lifecycle lock; skipping recovery"
     exit 0
   fi
 }
@@ -76,6 +77,9 @@ compose_current() {
 
 stop_current_runtime_best_effort() {
   systemctl stop argus-agent.service >/dev/null 2>&1 || true
+  if [[ "$PRESTART_MODE" != "1" ]]; then
+    systemctl stop argus-helper.service >/dev/null 2>&1 || true
+  fi
 
   if [[ -f "$ENV_FILE" && -f "$COMPOSE_FILE" ]]; then
     load_installed_env_if_available
@@ -187,6 +191,17 @@ verify_rollback_revision() {
   done
 }
 
+finalize_native_runtime_if_manual() {
+  if [[ "$PRESTART_MODE" == "1" ]]; then
+    log "rollback core restored; systemd will continue Helper/Agent startup"
+    return
+  fi
+
+  systemctl enable --now argus-helper.service
+  systemctl enable --now argus-agent.service
+  /usr/local/bin/argusctl smoke
+}
+
 recover_transaction() {
   local transaction="$1"
   log "recovering interrupted transaction $transaction"
@@ -203,12 +218,16 @@ recover_transaction() {
     compose_current logs --tail=160 control-api postgres || true
     die "restored Control API did not become healthy"
   }
+  compose_current exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
   verify_rollback_revision
+  finalize_native_runtime_if_manual
 
   printf 'ROLLED_BACK\n' >"$transaction/result"
   chmod 0600 "$transaction/result"
   log "interrupted update rolled back to $FROM_REVISION"
-  log "Helper/Agent startup may now continue; run 'sudo argusctl smoke' after boot for full verification"
+  if [[ "$PRESTART_MODE" == "1" ]]; then
+    log "run 'sudo argusctl smoke' after boot for full native-service verification"
+  fi
 }
 
 main() {
