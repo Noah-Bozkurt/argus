@@ -140,7 +140,19 @@ If a mutation-stage step fails, automatic rollback restores the previous files/b
 
 The pre-update snapshot is retained after success for investigation/recovery, but V1 does not expose an unrestricted later restore button. A later database rollback can destroy data created after an otherwise successful update, so that capability needs an explicit data-loss confirmation model and retention policy first.
 
-This mechanism is a first-test single-node safety boundary. It is not yet a production rolling-upgrade protocol, HA database migration strategy or general point-in-time recovery system.
+### Interrupted update / reboot recovery
+
+A hard process loss or reboot cannot execute the updater's normal error trap. Argus therefore treats a transaction directory with metadata + a file snapshot but no terminal `SUCCEEDED`/`ROLLED_BACK` result as an interrupted update.
+
+The privileged Helper has a local `ExecStartPre` recovery hook. It invokes hidden `argusctl recover-update` before Helper startup. The recovery command uses the same lifecycle `flock` as the live updater: during a normal update the lock is already held and recovery becomes a no-op; after a reboot the lock is free and the incomplete transaction can be restored before the Helper and dependent Agent resume normal operation.
+
+Recovery restores the pre-update deployment files and native binaries first. It only treats `argus.dump` as a valid database rollback source when `pg_restore --list` proves the custom-format archive is structurally complete. This distinction matters because the normal updater cannot install or start the target revision until `pg_dump` returns successfully: an absent or partial dump therefore means target migrations could not yet have run, and restoring that incomplete dump would be more dangerous than leaving the database untouched.
+
+After file/database recovery, the previous SHA-pinned Compose services are started, the Control API and Caddy are validated and each custom container's OCI revision label must match the stored `FROM_REVISION`. When recovery is run manually before a retry, Helper and Agent are also restarted and the full `argusctl smoke` must pass. During boot-time Helper pre-start, systemd continues native service startup after the core rollback; a post-boot `sudo argusctl smoke` remains the final operator verification.
+
+The crash-recovery hook only protects updates performed after a version containing this hook is installed. An older updater cannot retroactively guarantee recovery for instruction-level failure windows before the new Helper unit/CLI have first landed on disk.
+
+This mechanism remains a first-test single-node safety boundary. It is not yet a production rolling-upgrade protocol, HA database migration strategy or general point-in-time recovery system.
 
 ## Secrets and identity limitations
 

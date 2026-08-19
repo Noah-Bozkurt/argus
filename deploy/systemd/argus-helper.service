@@ -10,6 +10,11 @@ Group=argus
 RuntimeDirectory=argus
 RuntimeDirectoryMode=0750
 EnvironmentFile=-/etc/argus/helper.env
+Environment=ARGUS_UPDATE_RECOVERY_PRESTART=1
+# A normal update owns /run/lock/argus-update.lock, so this is a no-op while
+# argusctl update is actively restarting the Helper. After a hard reboot the
+# lock is free and an incomplete transaction is restored before Helper startup.
+ExecStartPre=/usr/local/bin/argusctl recover-update
 ExecStart=/usr/local/bin/argus-helper
 Restart=on-failure
 RestartSec=2
