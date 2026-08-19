@@ -19,6 +19,7 @@ mod compose_stacks;
 mod dependency_graph;
 mod deployments_releases;
 mod desired_state;
+mod domain_lifecycle;
 mod environments;
 mod github_integration;
 mod incident_automation;
@@ -40,6 +41,7 @@ use compose_stacks::ComposeStackStore;
 use dependency_graph::DependencyGraphStore;
 use deployments_releases::DeploymentReleaseStore;
 use desired_state::{DesiredState, DesiredStateError, DesiredStateStore};
+use domain_lifecycle::DomainLifecycleStore;
 use environments::EnvironmentStore;
 use github_integration::{GitHubIntegrationStore, GitHubProvider};
 use incident_automation::IncidentAutomationStore;
@@ -69,6 +71,7 @@ struct AppState {
     change_correlation: ChangeCorrelationStore,
     dependency_graph: DependencyGraphStore,
     deployments_releases: DeploymentReleaseStore,
+    domain_lifecycle: DomainLifecycleStore,
     environments: EnvironmentStore,
     compose_stacks: ComposeStackStore,
     workspace: ProjectWorkspaceStore,
@@ -168,6 +171,7 @@ async fn main() -> anyhow::Result<()> {
     let change_correlation = ChangeCorrelationStore::connect(&config.database_url).await?;
     let dependency_graph = DependencyGraphStore::connect(&config.database_url).await?;
     let deployments_releases = DeploymentReleaseStore::connect(&config.database_url).await?;
+    let domain_lifecycle = DomainLifecycleStore::connect(&config.database_url).await?;
     let environments = EnvironmentStore::connect(&config.database_url).await?;
     let compose_stacks = ComposeStackStore::connect(&config.database_url).await?;
     let workspace = ProjectWorkspaceStore::connect(&config.database_url).await?;
@@ -190,6 +194,7 @@ async fn main() -> anyhow::Result<()> {
         change_correlation,
         dependency_graph,
         deployments_releases,
+        domain_lifecycle,
         environments,
         compose_stacks,
         workspace,
@@ -231,6 +236,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(compose_stacks::router())
         .merge(deployments_releases::router())
         .merge(sites_domains::router())
+        .merge(domain_lifecycle::router())
         .merge(site_monitoring::router())
         .merge(monitor_scheduling::router())
         .merge(dependency_graph::router())

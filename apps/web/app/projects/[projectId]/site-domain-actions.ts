@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { evaluateProjectDomainLifecycle } from '../../../lib/domain-lifecycle-api'
 import {
   createDomain,
   createSite,
@@ -76,5 +77,10 @@ export async function updateDomainAction(projectId: string, domainId: string, fo
 
 export async function deleteDomainAction(projectId: string, domainId: string) {
   await deleteDomain(projectId, domainId)
+  revalidatePath(`/projects/${projectId}`)
+}
+
+export async function evaluateDomainLifecycleAction(projectId: string) {
+  await evaluateProjectDomainLifecycle(projectId)
   revalidatePath(`/projects/${projectId}`)
 }
