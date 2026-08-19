@@ -15,7 +15,7 @@ struct Cli {
     #[arg(
         long,
         env = "ARGUS_AGENT_CONFIG",
-        default_value = "/etc/argus/agent.json"
+        default_value = "/var/lib/argus/agent.json"
     )]
     config: PathBuf,
     #[command(subcommand)]
