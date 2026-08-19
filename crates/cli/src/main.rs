@@ -7,11 +7,7 @@ use std::{
     process::Stdio,
     time::Duration,
 };
-use tokio::{
-    io::AsyncWriteExt,
-    net::UnixStream,
-    process::Command,
-};
+use tokio::{io::AsyncWriteExt, net::UnixStream, process::Command};
 use uuid::Uuid;
 
 const FIRST_SERVER_SMOKE: &str = include_str!("../../../scripts/first-server-smoke.sh");
@@ -85,7 +81,10 @@ async fn run_first_server_smoke() -> Result<()> {
         .context("write first-server smoke test")?;
     drop(stdin);
 
-    let status = child.wait().await.context("wait for first-server smoke test")?;
+    let status = child
+        .wait()
+        .await
+        .context("wait for first-server smoke test")?;
     if !status.success() {
         anyhow::bail!("first-server smoke test failed");
     }
