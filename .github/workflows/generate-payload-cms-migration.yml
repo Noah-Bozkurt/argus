@@ -1,9 +1,9 @@
 name: Generate Payload CMS V1 migration
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/payload-cms-v1
+      - main
 
 permissions:
   contents: write
