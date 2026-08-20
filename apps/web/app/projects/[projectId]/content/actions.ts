@@ -18,6 +18,8 @@ export async function createContentModelAction(projectId: string, formData: Form
       label: text(formData, `field_${index}_label`),
       type: text(formData, `field_${index}_type`) as ContentField['type'],
       required: formData.get(`field_${index}_required`) === 'on',
+      target_model_id: text(formData, `field_${index}_target_model_id`) || null,
+      has_many: formData.get(`field_${index}_has_many`) === 'on',
     })
   }
   await createContentModel(projectId, {
@@ -54,7 +56,8 @@ export async function saveContentRecordAction(projectId: string, fields: Content
   await saveContentRecord(projectId, {
     model_id: text(formData, 'model_id'),
     record_id: text(formData, 'record_id') || undefined,
-    values: Object.fromEntries(fields.map((field) => [field.key, fieldValue(formData, field)])),
+    values: Object.fromEntries(fields.filter((field) => field.type !== 'relationship').map((field) => [field.key, fieldValue(formData, field)])),
+    relationships: Object.fromEntries(fields.filter((field) => field.type === 'relationship').map((field) => [field.key, formData.getAll(`relation_${field.key}`).map(String).filter(Boolean)])),
     layout,
     publish: text(formData, 'intent') === 'publish',
   })

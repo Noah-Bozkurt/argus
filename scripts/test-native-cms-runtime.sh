@@ -44,6 +44,35 @@ jq -e '.record.editorial_status == "published"' <<<"$published_response" >/dev/n
 public_published="$(curl -fsS "$CONTENT_URL/public/projects/$PROJECT_ID/content/articles")"
 jq -e '(.records | length) == 1 and .records[0].values.title == "Published title" and .records[0].values.body == "Published body"' <<<"$public_published" >/dev/null
 
+draft_target="$(curl -fsS -X POST "$CONTENT_URL/internal/argus/cms/projects/$PROJECT_ID" \
+  "${auth[@]}" -H 'Content-Type: application/json' \
+  --data "{\"operation\":\"save_record\",\"model_id\":\"$model_id\",\"values\":{\"title\":\"Private draft\",\"body\":\"Must not expand\"},\"publish\":false}")"
+draft_target_id="$(jq -er '.record.id' <<<"$draft_target")"
+
+feature_model="$(curl -fsS -X POST "$CONTENT_URL/internal/argus/cms/projects/$PROJECT_ID" \
+  "${auth[@]}" -H 'Content-Type: application/json' \
+  --data "{\"operation\":\"create_model\",\"model\":{\"name\":\"Features\",\"slug\":\"features\",\"public_read\":true,\"fields\":[{\"key\":\"title\",\"label\":\"Title\",\"type\":\"text\",\"required\":true},{\"key\":\"article\",\"label\":\"Article\",\"type\":\"relationship\",\"required\":true,\"target_model_id\":\"$model_id\",\"has_many\":false}]}}")"
+feature_model_id="$(jq -er '.model.id' <<<"$feature_model")"
+jq -e --arg target "$model_id" '.model.fields[1].target_model_id == $target and .model.fields[1].has_many == false' <<<"$feature_model" >/dev/null
+
+feature="$(curl -fsS -X POST "$CONTENT_URL/internal/argus/cms/projects/$PROJECT_ID" \
+  "${auth[@]}" -H 'Content-Type: application/json' \
+  --data "{\"operation\":\"save_record\",\"model_id\":\"$feature_model_id\",\"values\":{\"title\":\"Featured\"},\"relationships\":{\"article\":[\"$record_id\"]},\"publish\":true}")"
+feature_id="$(jq -er '.record.id' <<<"$feature")"
+jq -e '(.records[0] | has("relationships")) | not' <<<"$(curl -fsS "$CONTENT_URL/public/projects/$PROJECT_ID/content/features")" >/dev/null
+jq -e --arg article "$record_id" '.records[0].relationships.article[0].id == $article and .records[0].relationships.article[0].model == "articles" and .records[0].relationships.article[0].values.title == "Published title"' \
+  <<<"$(curl -fsS "$CONTENT_URL/public/projects/$PROJECT_ID/content/features?expand=relationships")" >/dev/null
+
+curl -fsS -X POST "$CONTENT_URL/internal/argus/cms/projects/$PROJECT_ID" "${auth[@]}" -H 'Content-Type: application/json' \
+  --data "{\"operation\":\"save_record\",\"model_id\":\"$feature_model_id\",\"values\":{\"title\":\"Draft target feature\"},\"relationships\":{\"article\":[\"$draft_target_id\"]},\"publish\":true}" >/dev/null
+jq -e '.records | map(select(.values.title == "Draft target feature"))[0].relationships == {}' \
+  <<<"$(curl -fsS "$CONTENT_URL/public/projects/$PROJECT_ID/content/features?expand=relationships")" >/dev/null
+
+missing_relation_status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$CONTENT_URL/internal/argus/cms/projects/$PROJECT_ID" \
+  "${auth[@]}" -H 'Content-Type: application/json' \
+  --data "{\"operation\":\"save_record\",\"model_id\":\"$feature_model_id\",\"values\":{\"title\":\"Missing\"},\"relationships\":{},\"publish\":false}")"
+[[ "$missing_relation_status" == 400 ]] || { echo "missing required relationship returned $missing_relation_status" >&2; exit 1; }
+
 component_response="$(curl -fsS -X POST "$CONTENT_URL/internal/argus/cms/projects/$PROJECT_ID" \
   "${auth[@]}" -H 'Content-Type: application/json' \
   --data '{"operation":"create_model","model":{"name":"Hero","slug":"hero","content_role":"component","public_read":true,"fields":[{"key":"heading","label":"Heading","type":"text","required":true},{"key":"body","label":"Body","type":"textarea","required":false}]}}')"
@@ -79,5 +108,6 @@ jq -e --arg model "$model_id" --arg record "$record_id" '
   (.models | any(.id == $model and .slug == "articles" and .public_read == true)) and
   (.records | any(.id == $record and .model_id == $model and .editorial_status == "published"))
 ' <<<"$workspace" >/dev/null
+jq -e --arg source "$feature_id" --arg target "$record_id" '.relations | any(.source_record_id == $source and .target_record_id == $target and .field_key == "article")' <<<"$workspace" >/dev/null
 
 printf 'native CMS runtime acceptance passed\n'

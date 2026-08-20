@@ -64,7 +64,9 @@ The relationship validator checks:
 - the target record belongs to the relationship's declared target model;
 - single-value relationships do not receive multiple targets.
 
-Public CMS V1 does not expand these relationships yet; public expansion needs an additional rule that every target is independently public/published.
+The native Content workspace exposes relationship target/cardinality settings and project-local record pickers. Relationship writes are validated before persistence: the field must belong to the source model, every target must use the declared target model in the same Project, required/cardinality rules are enforced, and immutable edges are replaced as a set when a record is saved.
+
+Public reads do not expand relationships by default. Callers may explicitly request one bounded level with `?expand=relationships`. Expansion is capped at 100 edges per response and includes a target only when its Project, model and record are active, the target model permits public reads, and the target record is independently published. Draft, private, archived and cross-project targets are omitted rather than leaked; recursive expansion is not supported.
 
 ## Data vs content
 
@@ -120,7 +122,7 @@ The native page editor can add, edit, reorder and remove typed blocks. Every blo
 
 The Web server talks to Payload through `/internal/argus/cms/projects/:projectId`. This route is not a public browser API. It requires the high-entropy internal content token plus Argus organization and user headers, and resolves the mirrored Project by both Argus Project UUID and organization before every query or mutation. Payload access checks are bypassed only after that explicit server-to-server scope check; normal Payload user endpoints retain their existing membership rules.
 
-The native editor supports scalar fields (text, long text, number, boolean, date/date-time and JSON) in collection records, page fields and component blocks. Relationships remain managed through the underlying App Data model until the native relationship picker and safe public expansion are implemented.
+The native editor supports scalar fields (text, long text, number, boolean, date/date-time and JSON) in collection records, page fields and component blocks. Collection/page schemas can also declare single- or multi-value relationships and authors select targets from active records in the same Project. Component-block relationship fields remain a future richer-editor extension.
 
 ## Media library
 
@@ -171,6 +173,6 @@ CMS V1 now includes a basic Argus-native model, draft/publication workflow and t
 
 - rich drag-and-drop or site-template-aware visual design (the current editor uses explicit add/move/remove controls and a safe generic preview);
 - client approvals/portal;
-- public relationship graph expansion.
+- recursive or arbitrarily deep public relationship graph expansion.
 
 Those features should build on the existing project/data/content boundaries instead of introducing new ownership models.

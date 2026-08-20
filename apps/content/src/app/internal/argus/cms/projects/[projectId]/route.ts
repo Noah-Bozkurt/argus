@@ -16,7 +16,7 @@ type Model = {
   allowedComponents?: unknown[] | null
   schemaVersion?: number
   status?: string
-  fields?: Array<CmsFieldInput & { id?: string | null }>
+  fields?: Array<CmsFieldInput & { id?: string | null; targetModel?: unknown }>
 }
 
 async function projectFor(payload: Payload, projectId: string, organizationId: string): Promise<Project | null> {
@@ -43,7 +43,8 @@ function modelView(model: Model) {
     content_role: model.contentRole ?? 'collection',
     allowed_component_ids: (model.allowedComponents ?? []).map((value) => typeof value === 'object' && value && 'id' in value ? String(value.id) : String(value)),
     status: model.status ?? 'active',
-    fields: (model.fields ?? []).map(({ key, label, type, required }) => ({ key, label, type, required: required === true })),
+    fields: (model.fields ?? []).map(({ key, label, type, required, targetModel, hasMany }) => ({ key, label, type, required: required === true,
+      target_model_id: typeof targetModel === 'object' && targetModel && 'id' in targetModel ? String((targetModel as { id: unknown }).id) : targetModel ?? null, has_many: hasMany === true })),
   }
 }
 
@@ -65,6 +66,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
     collection: 'data-records', depth: 0, draft: true, limit: 500, overrideAccess: true, pagination: false,
     sort: '-updatedAt', where: { and: [{ project: { equals: project.id } }, { model: { in: modelIds } }] },
   })
+  const recordIds = records.docs.map((record) => String(record.id))
+  const relations = recordIds.length === 0 ? { docs: [] } : await payload.find({
+    collection: 'data-relations', depth: 0, limit: 1000, overrideAccess: true, pagination: false,
+    where: { and: [{ project: { equals: project.id } }, { sourceRecord: { in: recordIds } }] },
+  })
   return NextResponse.json({
     project_status: project.status ?? 'active',
     models: models.docs.map((model) => modelView(model as Model)),
@@ -72,6 +78,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
       const doc = record as { id: string | number; model?: unknown; values?: unknown; layout?: unknown; _status?: string; status?: string; publishedAt?: string | null; updatedAt?: string }
       const modelId = typeof doc.model === 'object' && doc.model && 'id' in doc.model ? String(doc.model.id) : String(doc.model ?? '')
       return { id: doc.id, model_id: modelId, values: doc.values ?? {}, layout: Array.isArray(doc.layout) ? doc.layout : [], editorial_status: doc._status ?? 'draft', lifecycle_status: doc.status ?? 'active', published_at: doc.publishedAt ?? null, updated_at: doc.updatedAt ?? null }
+    }),
+    relations: relations.docs.map((relation) => {
+      const doc = relation as { id: string; sourceRecord?: unknown; targetRecord?: unknown; fieldKey?: string }
+      const idOf = (value: unknown) => typeof value === 'object' && value && 'id' in value ? String(value.id) : String(value ?? '')
+      return { id: doc.id, source_record_id: idOf(doc.sourceRecord), target_record_id: idOf(doc.targetRecord), field_key: doc.fieldKey ?? '' }
     }),
   })
 }
@@ -102,9 +113,26 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
       const modelId = typeof body.model_id === 'string' ? body.model_id : ''
       const model = await modelFor(payload, project, modelId)
       if (!model || model.status !== 'active') return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
-      const fields = (model.fields ?? []).map(({ key, label, type, required }) => ({ key, label, type, required: required === true }))
+      const fields = (model.fields ?? []).map(({ key, label, type, required, targetModel, hasMany }) => ({ key, label, type, required: required === true,
+        targetModel: typeof targetModel === 'object' && targetModel && 'id' in targetModel ? String((targetModel as { id: unknown }).id) : String(targetModel ?? ''), hasMany }))
       const values = validateValues(fields, body.values)
       if (!values) return NextResponse.json({ code: 'INVALID_RECORD' }, { status: 400 })
+      const requestedRelations = body.relationships && typeof body.relationships === 'object' && !Array.isArray(body.relationships)
+        ? body.relationships as Record<string, unknown> : {}
+      const relationTargets = new Map<string, string[]>()
+      for (const field of fields.filter((candidate) => candidate.type === 'relationship')) {
+        const raw = requestedRelations[field.key]
+        const ids = (Array.isArray(raw) ? raw : raw ? [raw] : []).filter((id): id is string => typeof id === 'string' && isUUID(id))
+        if (ids.length !== (Array.isArray(raw) ? raw.length : raw ? 1 : 0) || (!field.hasMany && ids.length > 1) || (field.required && ids.length === 0) || new Set(ids).size !== ids.length) {
+          return NextResponse.json({ code: 'INVALID_RELATIONSHIPS' }, { status: 400 })
+        }
+        for (const targetId of ids) {
+          const target = await payload.find({ collection: 'data-records', depth: 0, draft: true, limit: 1, overrideAccess: true, pagination: false,
+            where: { and: [{ id: { equals: targetId } }, { project: { equals: project.id } }, { model: { equals: field.targetModel } }, { status: { equals: 'active' } }] } })
+          if (target.docs.length !== 1) return NextResponse.json({ code: 'INVALID_RELATIONSHIPS' }, { status: 400 })
+        }
+        relationTargets.set(field.key, ids)
+      }
       const publish = body.publish === true
       const layout = Array.isArray(body.layout) ? body.layout : []
       const data = { organizationId: identity.organizationId, argusProjectId: projectId, project: project.id, model: model.id, schemaVersion: model.schemaVersion ?? 1, values, layout, status: 'active' as const, _status: publish ? 'published' as const : 'draft' as const }
@@ -125,6 +153,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
           ? await payload.create({ collection: 'data-records', depth: 0, draft: false, overrideAccess: true, data })
           : await payload.create({ collection: 'data-records', depth: 0, draft: true, overrideAccess: true, data })
       const record = saved as { id: string; values?: unknown; layout?: unknown; _status?: string; publishedAt?: string | null; updatedAt?: string }
+      const existingRelations = await payload.find({ collection: 'data-relations', depth: 0, limit: 1000, overrideAccess: true, pagination: false,
+        where: { and: [{ project: { equals: project.id } }, { sourceRecord: { equals: record.id } }] } })
+      for (const relation of existingRelations.docs) await payload.delete({ collection: 'data-relations', id: relation.id, overrideAccess: true })
+      for (const [fieldKey, targetIds] of relationTargets) for (const targetRecord of targetIds) await payload.create({
+        collection: 'data-relations', depth: 0, overrideAccess: true,
+        data: { organizationId: identity.organizationId, argusProjectId: projectId, project: project.id,
+          sourceModel: model.id, sourceRecord: record.id, targetModel: fields.find((field) => field.key === fieldKey)?.targetModel ?? '', targetRecord, fieldKey },
+      })
       return NextResponse.json({ record: { id: record.id, model_id: model.id, values: record.values ?? {}, layout: Array.isArray(record.layout) ? record.layout : [], editorial_status: record._status ?? (publish ? 'published' : 'draft'), published_at: record.publishedAt ?? null, updated_at: record.updatedAt } }, { status: recordId ? 200 : 201 })
     }
   } catch (error) {

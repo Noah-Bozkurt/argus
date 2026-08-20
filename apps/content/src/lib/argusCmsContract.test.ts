@@ -66,3 +66,14 @@ test('validates dynamic scalar values and required fields', () => {
   assert.equal(validateValues(fields, { title: 'Hello', unknown: true }), null)
   assert.equal(validateValues(fields, { title: 'Hello', rating: 'four' }), null)
 })
+
+test('normalizes relationships separately from scalar values', () => {
+  const target = '00000000-0000-4000-8000-000000000010'
+  const model = normalizeModelInput({ name: 'Articles', slug: 'articles', fields: [
+    { key: 'title', label: 'Title', type: 'text', required: true },
+    { key: 'author', label: 'Author', type: 'relationship', required: true, target_model_id: target, has_many: false },
+  ] })
+  assert.deepEqual(model?.fields[1], { key: 'author', label: 'Author', type: 'relationship', required: true, targetModel: target, hasMany: false })
+  assert.deepEqual(validateValues(model?.fields ?? [], { title: 'Hello' }), { title: 'Hello' })
+  assert.equal(normalizeModelInput({ name: 'Bad', slug: 'bad', fields: [{ key: 'author', label: 'Author', type: 'relationship' }] }), null)
+})

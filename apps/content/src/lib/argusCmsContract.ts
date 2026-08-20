@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'crypto'
 
 export const MODEL_SLUG_PATTERN = /^[a-z][a-z0-9_]{0,119}$/
 export const FIELD_KEY_PATTERN = /^[a-z][a-z0-9_]{0,119}$/
-export const FIELD_TYPES = ['text', 'textarea', 'number', 'boolean', 'date', 'datetime', 'json'] as const
+export const FIELD_TYPES = ['text', 'textarea', 'number', 'boolean', 'date', 'datetime', 'json', 'relationship'] as const
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 export type CmsFieldInput = {
@@ -10,6 +10,8 @@ export type CmsFieldInput = {
   label: string
   type: (typeof FIELD_TYPES)[number]
   required: boolean
+  targetModel?: string
+  hasMany?: boolean
 }
 export type ContentRole = 'collection' | 'page' | 'component'
 
@@ -59,7 +61,10 @@ export function normalizeModelInput(input: unknown): {
     const type = typeof field.type === 'string' ? field.type : ''
     if (!FIELD_KEY_PATTERN.test(key) || !label || label.length > 160 || !FIELD_TYPES.includes(type as CmsFieldInput['type']) || seen.has(key)) return null
     seen.add(key)
-    fields.push({ key, label, type: type as CmsFieldInput['type'], required: field.required === true })
+    const targetModelId = typeof field.target_model_id === 'string' && UUID_PATTERN.test(field.target_model_id) ? field.target_model_id : undefined
+    if (type === 'relationship' && !targetModelId) return null
+    fields.push({ key, label, type: type as CmsFieldInput['type'], required: field.required === true,
+      ...(type === 'relationship' ? { targetModel: targetModelId, hasMany: field.has_many === true } : {}) })
   }
   return { name, slug, description, publicRead: contentRole !== 'component' && raw.public_read === true, contentRole, allowedComponentIds: contentRole === 'page' ? allowedComponentIds : [], fields }
 }
@@ -67,10 +72,11 @@ export function normalizeModelInput(input: unknown): {
 export function validateValues(fields: CmsFieldInput[], input: unknown): Record<string, unknown> | null {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null
   const values = input as Record<string, unknown>
-  const allowed = new Map(fields.map((field) => [field.key, field]))
+  const scalarFields = fields.filter((field) => field.type !== 'relationship')
+  const allowed = new Map(scalarFields.map((field) => [field.key, field]))
   if (Object.keys(values).some((key) => !allowed.has(key))) return null
 
-  for (const field of fields) {
+  for (const field of scalarFields) {
     const value = values[field.key]
     if (field.required && (value === undefined || value === null || value === '')) return null
     if (value === undefined || value === null || value === '') continue
