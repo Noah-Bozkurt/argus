@@ -18,5 +18,13 @@ __ARGUS_DOMAIN__ {
 
 __ARGUS_CONTENT_DOMAIN__ {
 	encode zstd gzip
-	reverse_proxy content:3000
+
+	@public path /public/* /api/media/file/*
+	handle @public {
+		reverse_proxy content:3000
+	}
+
+	handle {
+		reverse_proxy content:3000
+	}
 }
