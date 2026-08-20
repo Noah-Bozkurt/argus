@@ -81,6 +81,34 @@
   text-align: center;
 }
 
+.signed-in-user {
+  min-width: 0;
+  margin-bottom: 10px;
+  padding: 0 10px 10px;
+}
+
+.signed-in-user strong,
+.signed-in-user small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signed-in-user strong {
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.signed-in-user small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
 .logout-button {
   width: 100%;
   border: 0;
