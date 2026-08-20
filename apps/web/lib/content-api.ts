@@ -200,3 +200,11 @@ export async function updateFormSubmissionStatus(projectId: string, submissionId
 export async function deleteFormSubmission(projectId: string, submissionId: string): Promise<void> {
   await formsRequest(projectId, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'delete_submission', submission_id: submissionId }) })
 }
+
+export async function downloadFormSubmissionsCsv(projectId: string, formId: string): Promise<{ body: ArrayBuffer; disposition: string }> {
+  const response = await fetch(`${contentApi}/internal/argus/forms/projects/${encodeURIComponent(projectId)}/exports/${encodeURIComponent(formId)}`, {
+    cache: 'no-store', headers: headers(),
+  })
+  if (!response.ok) throw new Error(`Content service ${response.status}: ${await response.text()}`)
+  return { body: await response.arrayBuffer(), disposition: response.headers.get('content-disposition') ?? 'attachment; filename="form-submissions.csv"' }
+}

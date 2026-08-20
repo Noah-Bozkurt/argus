@@ -46,7 +46,7 @@ honeypot="$(curl -fsS -X POST "$PUBLIC" -H 'Content-Type: application/json' -H '
 jq -e '.accepted == true and (has("submission_id") | not)' <<<"$honeypot" >/dev/null
 
 first="$(curl -fsS -X POST "$PUBLIC" -H 'Content-Type: application/json' -H 'X-Forwarded-For: 198.51.100.10' \
-  --data '{"values":{"email":"person@example.com","topic":"Support","message":"Need help"}}')"
+  --data '{"values":{"email":"person@example.com","topic":"Support","message":"=2+2"}}')"
 first_id="$(jq -er '.submission_id' <<<"$first")"
 jq -e '.accepted == true and .success_message == "Thanks for reaching out."' <<<"$first" >/dev/null
 for index in $(seq 2 10); do
@@ -65,6 +65,17 @@ jq -e --arg form "$form_id" --arg first "$first_id" '
   (.submissions | any(.id == $first and .status == "new")) and
   (.submissions | all((has("source_hash") | not) and (has("rate_key") | not)))
 ' <<<"$workspace" >/dev/null
+
+export_file="$(mktemp)"
+export_headers="$(mktemp)"
+curl -fsS -D "$export_headers" -o "$export_file" "${auth[@]}" "$INTERNAL/exports/$form_id"
+grep -Fiq 'content-type: text/csv' "$export_headers"
+grep -Fiq 'content-disposition: attachment; filename="contact-submissions.csv"' "$export_headers"
+grep -Fq '"submission_id","status","submitted_at","email","topic","message"' "$export_file"
+grep -Fq '"'"'"'=2+2"' "$export_file"
+[[ "$(wc -l <"$export_file")" -eq 11 ]]
+cross_export="$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" -H "X-Argus-Org-Id: $OTHER_ORG_ID" -H "X-Argus-User-Id: $USER_ID" "$INTERNAL/exports/$form_id")"
+[[ "$cross_export" == 404 ]] || { echo "cross-organization form export returned $cross_export" >&2; exit 1; }
 
 curl -fsS -X POST "$INTERNAL" "${auth[@]}" -H 'Content-Type: application/json' \
   --data "{\"operation\":\"update_submission_status\",\"submission_id\":\"$first_id\",\"status\":\"reviewed\"}" \

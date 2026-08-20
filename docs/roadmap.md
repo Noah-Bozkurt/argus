@@ -141,7 +141,7 @@ Priorities should first be driven by failures and usability gaps found in that t
 - expand the Argus-native CMS abstraction with richer field settings (native project-safe relationship pickers are implemented);
 - richer visual CMS/editor and site-template-aware preview (the typed page/component block editor and safe generic preview are implemented);
 - richer media workflows (the image library, persistent originals and bounded thumbnail/medium/large variants are implemented; field pickers and external object storage remain);
-- richer forms workflows (typed public forms, private submissions and durable throttling are implemented; notifications, exports and conditional fields remain);
+- richer forms workflows (typed public forms, private submissions, durable throttling and bounded formula-safe CSV exports are implemented; notifications and conditional fields remain);
 - richer/recursive relationship APIs where a bounded one-level published-only expansion is insufficient;
 
 ### Operations maturity

@@ -5,6 +5,7 @@ export const FORM_FIELD_TYPES = ['text', 'email', 'textarea', 'number', 'boolean
 export const MAX_FORM_BODY_BYTES = 64 * 1024
 export const FORM_RATE_LIMIT = 10
 export const FORM_RATE_WINDOW_MS = 10 * 60 * 1000
+export const MAX_FORM_EXPORT_ROWS = 10_000
 
 export type FormField = {
   key: string
@@ -99,4 +100,19 @@ export async function readBoundedJson(request: Request): Promise<unknown | null>
   } catch {
     return null
   }
+}
+
+export function csvCell(value: unknown): string {
+  let text = value === undefined || value === null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value)
+  if (/^[\s]*[=+\-@]/.test(text) || /^[\t\r\n]/.test(text)) text = `'${text}`
+  return `"${text.replaceAll('"', '""')}"`
+}
+
+export function formSubmissionsCsv(fields: FormField[], submissions: Array<{ id: string; status: string; submittedAt?: string | null; values?: unknown }>): string {
+  const header = ['submission_id', 'status', 'submitted_at', ...fields.map((field) => field.key)]
+  const rows = submissions.map((submission) => {
+    const values = submission.values && typeof submission.values === 'object' && !Array.isArray(submission.values) ? submission.values as Record<string, unknown> : {}
+    return [submission.id, submission.status, submission.submittedAt ?? '', ...fields.map((field) => values[field.key])]
+  })
+  return `\uFEFF${[header, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n`
 }
