@@ -9,6 +9,10 @@
   Content-Type: text/x-shellscript; charset=utf-8
   Cache-Control: public, max-age=300, must-revalidate
 
+/install
+  Content-Type: text/x-shellscript; charset=utf-8
+  Cache-Control: no-store
+
 /install.sh.sha256
   Content-Type: text/plain; charset=utf-8
   Cache-Control: public, max-age=300, must-revalidate

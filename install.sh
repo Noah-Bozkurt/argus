@@ -8,6 +8,7 @@ STATE_DIR="${ARGUS_STATE_DIR:-/var/lib/argus}"
 ENV_FILE="$INSTALL_DIR/.env"
 COMPOSE_FILE="$INSTALL_DIR/compose.yaml"
 CADDY_FILE="$INSTALL_DIR/Caddyfile"
+REGISTRY_CREDENTIAL_FILE="$CONFIG_DIR/registry.env"
 HOST_TOOLS_CONTAINER=""
 DOCKER_CONFIG_DIR=""
 GENERATED_BASIC_AUTH_PASSWORD=""
@@ -110,6 +111,13 @@ prompt_password() {
 }
 
 prompt_registry_credentials() {
+  if [[ -f "$REGISTRY_CREDENTIAL_FILE" ]]; then
+    [[ "$(stat -c %a "$REGISTRY_CREDENTIAL_FILE")" == "600" ]] || die "$REGISTRY_CREDENTIAL_FILE must have mode 0600"
+    set -a
+    # shellcheck disable=SC1090
+    . "$REGISTRY_CREDENTIAL_FILE"
+    set +a
+  fi
   ARGUS_REGISTRY="${ARGUS_REGISTRY:-ghcr.io/noah-bozkurt}"
   prompt_required ARGUS_REGISTRY_USERNAME "GitHub username"
   if [[ -z "${ARGUS_REGISTRY_TOKEN:-}" ]]; then
@@ -119,6 +127,19 @@ prompt_registry_credentials() {
     [[ -n "$ARGUS_REGISTRY_TOKEN" ]] || die "GitHub token is required"
     export ARGUS_REGISTRY_TOKEN
   fi
+}
+
+save_registry_credentials() {
+  install -m 0700 -d "$CONFIG_DIR"
+  local tmp
+  tmp="$(mktemp "$CONFIG_DIR/registry.env.XXXXXX")"
+  {
+    printf 'ARGUS_REGISTRY=%q\n' "$ARGUS_REGISTRY"
+    printf 'ARGUS_REGISTRY_USERNAME=%q\n' "$ARGUS_REGISTRY_USERNAME"
+    printf 'ARGUS_REGISTRY_TOKEN=%q\n' "$ARGUS_REGISTRY_TOKEN"
+  } >"$tmp"
+  chmod 0600 "$tmp"
+  mv "$tmp" "$REGISTRY_CREDENTIAL_FILE"
 }
 
 install_prerequisites() {
@@ -272,6 +293,7 @@ registry_login_if_configured() {
   local registry_host="${ARGUS_REGISTRY%%/*}"
   printf '%s' "$ARGUS_REGISTRY_TOKEN" \
     | docker login "$registry_host" -u "$ARGUS_REGISTRY_USERNAME" --password-stdin >/dev/null
+  save_registry_credentials
 }
 
 resolve_existing_mutable_revision() {
@@ -687,7 +709,8 @@ print_summary() {
   printf '  argusctl status\n'
   printf '  sudo argusctl smoke\n'
   printf '\nTransactional update:\n'
-  printf '  sudo -E argusctl update --version main\n'
+  printf '  sudo argusctl update --version main\n'
+  printf '  sudo argusctl registry-login  # rotate the stored read-only PAT\n'
 }
 
 main() {

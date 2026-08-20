@@ -23,6 +23,6 @@ export default function AddServerSection({ projectId, environments }: { projectI
       <button type="submit">Create setup code</button>
     </form>
     {error ? <p role="alert">{error}</p> : null}
-    {setupCode ? <div><p>Copy this code now. It is shown only in this response and expires after 15 minutes.</p><input type="password" readOnly value={setupCode} aria-label="Setup code" onFocus={(event) => event.currentTarget.select()} /><p><code>curl -fsS https://install.argus.example/install.sh | sudo bash</code></p></div> : null}
+    {setupCode ? <div><p>Copy this code now. It is shown only in this response and expires after 15 minutes.</p><input type="password" readOnly value={setupCode} aria-label="Setup code" onFocus={(event) => event.currentTarget.select()} /><p><code>curl -fsSL https://argus-installer.pages.dev/install | sudo bash</code></p></div> : null}
   </section>
 }

@@ -15,6 +15,7 @@ const FIRST_SERVER_UPDATE: &str = include_str!("../../../scripts/update-first-te
 const INTERRUPTED_UPDATE_RECOVERY: &str =
     include_str!("../../../scripts/recover-interrupted-update.sh");
 const UNINSTALL: &str = include_str!("../../../scripts/uninstall.sh");
+const REGISTRY_LOGIN: &str = include_str!("../../../scripts/registry-login.sh");
 
 #[derive(Debug, Parser)]
 #[command(name = "argusctl", about = "Argus local diagnostics and lifecycle CLI")]
@@ -44,6 +45,10 @@ enum Commands {
         yes: bool,
         #[arg(long)]
         purge_data: bool,
+    },
+    RegistryLogin {
+        #[arg(long)]
+        username: Option<String>,
     },
     #[command(hide = true)]
     RecoverUpdate {
@@ -148,6 +153,14 @@ async fn run_uninstall(yes: bool, purge_data: bool) -> Result<()> {
     run_embedded_script("Argus uninstall", UNINSTALL, &env).await
 }
 
+async fn run_registry_login(username: Option<&str>) -> Result<()> {
+    let mut env = Vec::new();
+    if let Some(value) = username {
+        env.push(("ARGUS_REGISTRY_USERNAME_OVERRIDE", value));
+    }
+    run_embedded_script("Argus registry login", REGISTRY_LOGIN, &env).await
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -210,6 +223,7 @@ async fn main() -> Result<()> {
         Commands::Smoke => run_first_server_smoke().await?,
         Commands::Update { version } => run_first_server_update(&version).await?,
         Commands::Uninstall { yes, purge_data } => run_uninstall(yes, purge_data).await?,
+        Commands::RegistryLogin { username } => run_registry_login(username.as_deref()).await?,
         Commands::RecoverUpdate { retry_failed } => run_update_recovery(retry_failed).await?,
         Commands::System {
             command: SystemCommands::Info,
@@ -293,5 +307,14 @@ mod tests {
                 purge_data: true
             }
         ));
+    }
+
+    #[test]
+    fn registry_login_accepts_a_username_without_a_token_argument() {
+        let cli = Cli::try_parse_from(["argusctl", "registry-login", "--username", "octocat"])
+            .expect("parse registry login command");
+        assert!(
+            matches!(cli.command, Commands::RegistryLogin { username: Some(value) } if value == "octocat")
+        );
     }
 }

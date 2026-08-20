@@ -7,6 +7,7 @@ STATE_DIR="${ARGUS_STATE_DIR:-/var/lib/argus}"
 ENV_FILE="$INSTALL_DIR/.env"
 COMPOSE_FILE="$INSTALL_DIR/compose.yaml"
 CADDY_FILE="$INSTALL_DIR/Caddyfile"
+REGISTRY_CREDENTIAL_FILE="${ARGUS_CONFIG_DIR:-/etc/argus}/registry.env"
 BACKUP_ROOT="$STATE_DIR/update-backups"
 LOCK_FILE="$STATE_DIR/update.lock"
 COMPLETED_TRANSACTION_RETENTION=3
@@ -150,10 +151,18 @@ preflight_snapshot_space() {
 }
 
 registry_login() {
+  if [[ -f "$REGISTRY_CREDENTIAL_FILE" ]]; then
+    [[ "$(stat -c %a "$REGISTRY_CREDENTIAL_FILE")" == "600" ]] \
+      || die "$REGISTRY_CREDENTIAL_FILE must have mode 0600"
+    set -a
+    # shellcheck disable=SC1090
+    . "$REGISTRY_CREDENTIAL_FILE"
+    set +a
+  fi
   [[ -n "${ARGUS_REGISTRY_USERNAME:-}" ]] \
-    || die "ARGUS_REGISTRY_USERNAME is required for updates"
+    || die "registry credentials are missing; run 'sudo argusctl registry-login'"
   [[ -n "${ARGUS_REGISTRY_TOKEN:-}" ]] \
-    || die "ARGUS_REGISTRY_TOKEN is required for updates; use a read-only package token"
+    || die "registry credentials are missing; run 'sudo argusctl registry-login'"
 
   DOCKER_CONFIG_DIR="$(mktemp -d)"
   chmod 0700 "$DOCKER_CONFIG_DIR"

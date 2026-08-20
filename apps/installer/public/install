@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+origin="${ARGUS_INSTALLER_ORIGIN:-https://argus-installer.pages.dev}"
+tmp="$(mktemp -d)"
+cleanup() { rm -rf -- "$tmp"; }
+trap cleanup EXIT
+
+curl -fsS "$origin/install.sh" -o "$tmp/install.sh"
+curl -fsS "$origin/install.sh.sha256" -o "$tmp/install.sh.sha256"
+(cd "$tmp" && sha256sum -c install.sh.sha256)
+bash "$tmp/install.sh"
