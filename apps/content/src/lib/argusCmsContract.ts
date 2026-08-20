@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'crypto'
 
 export const MODEL_SLUG_PATTERN = /^[a-z][a-z0-9_]{0,119}$/
 export const FIELD_KEY_PATTERN = /^[a-z][a-z0-9_]{0,119}$/
-export const FIELD_TYPES = ['text', 'textarea', 'number', 'boolean', 'date', 'datetime', 'json', 'relationship'] as const
+export const FIELD_TYPES = ['text', 'textarea', 'number', 'boolean', 'date', 'datetime', 'json', 'relationship', 'media'] as const
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 export type CmsFieldInput = {
@@ -64,7 +64,8 @@ export function normalizeModelInput(input: unknown): {
     const targetModelId = typeof field.target_model_id === 'string' && UUID_PATTERN.test(field.target_model_id) ? field.target_model_id : undefined
     if (type === 'relationship' && !targetModelId) return null
     fields.push({ key, label, type: type as CmsFieldInput['type'], required: field.required === true,
-      ...(type === 'relationship' ? { targetModel: targetModelId, hasMany: field.has_many === true } : {}) })
+      ...(['relationship', 'media'].includes(type) ? { hasMany: field.has_many === true } : {}),
+      ...(type === 'relationship' ? { targetModel: targetModelId } : {}) })
   }
   return { name, slug, description, publicRead: contentRole !== 'component' && raw.public_read === true, contentRole, allowedComponentIds: contentRole === 'page' ? allowedComponentIds : [], fields }
 }
@@ -84,7 +85,9 @@ export function validateValues(fields: CmsFieldInput[], input: unknown): Record<
       ? typeof value === 'number' && Number.isFinite(value)
       : field.type === 'boolean'
         ? typeof value === 'boolean'
-        : field.type === 'json'
+      : field.type === 'media'
+        ? field.hasMany ? Array.isArray(value) && value.length > 0 && value.length <= 50 && value.every((id) => typeof id === 'string' && UUID_PATTERN.test(id)) && new Set(value).size === value.length : typeof value === 'string' && UUID_PATTERN.test(value)
+      : field.type === 'json'
           ? true
           : typeof value === 'string' && (!['date', 'datetime'].includes(field.type) || !Number.isNaN(Date.parse(value)))
     if (!valid) return null

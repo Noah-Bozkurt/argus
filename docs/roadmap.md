@@ -28,6 +28,7 @@ The repository already contains substantial working slices for:
 - protected generic draft preview with explicit links to published public content;
 - project-owned collection, page and component schemas with validated ordered block layouts and a native block editor;
 - project-scoped image library with explicit public delivery, persistent storage and bounded optimized variants;
+- project-safe native media fields/pickers for records and component blocks with public-only descriptor resolution;
 - published typed forms with private paginated submissions, honeypot handling and durable privacy-preserving rate limits;
 - native project-scoped relationship fields/pickers with explicit one-level published-only public expansion;
 - a first-test hybrid deployment path using Docker Compose for the control plane and native Agent/Helper services;
@@ -140,7 +141,7 @@ Priorities should first be driven by failures and usability gaps found in that t
 
 - expand the Argus-native CMS abstraction with richer field settings (native project-safe relationship pickers are implemented);
 - richer visual CMS/editor and site-template-aware preview (the typed page/component block editor and safe generic preview are implemented);
-- richer media workflows (the image library, persistent originals and bounded thumbnail/medium/large variants are implemented; field pickers and external object storage remain);
+- richer media workflows (the image library, persistent originals, bounded variants and native field/block pickers are implemented; external object storage remains);
 - richer forms workflows (typed public forms, private submissions, durable throttling and bounded formula-safe CSV exports are implemented; notifications and conditional fields remain);
 - richer/recursive relationship APIs where a bounded one-level published-only expansion is insufficient;
 

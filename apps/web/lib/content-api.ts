@@ -1,7 +1,7 @@
 export type ContentField = {
   key: string
   label: string
-  type: 'text' | 'textarea' | 'number' | 'boolean' | 'date' | 'datetime' | 'json' | 'relationship'
+  type: 'text' | 'textarea' | 'number' | 'boolean' | 'date' | 'datetime' | 'json' | 'relationship' | 'media'
   required: boolean
   target_model_id: string | null
   has_many: boolean

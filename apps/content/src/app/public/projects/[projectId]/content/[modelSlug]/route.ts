@@ -1,12 +1,42 @@
 import config from '@payload-config'
 import { NextResponse } from 'next/server'
-import { getPayload } from 'payload'
+import { getPayload, type Payload } from 'payload'
 
 import { isUUID } from '@/lib/projectScope'
 
 const MODEL_SLUG_PATTERN = /^[a-z][a-z0-9_]*$/
 const MAX_LIMIT = 100
 const MAX_EXPANDED_RELATIONS = 100
+
+type PublicField = { key?: string; type?: string; hasMany?: boolean }
+type PublicMedia = { id: string; alt: string; caption: string; filename: string; mime_type: string; width: number | null; height: number | null; url: string | null; sizes: unknown }
+
+async function publicMediaValues(payload: Payload, projectId: string | number, fields: PublicField[], input: unknown, cache: Map<string, PublicMedia | null>): Promise<Record<string, unknown>> {
+  const values = input && typeof input === 'object' && !Array.isArray(input) ? { ...input as Record<string, unknown> } : {}
+  const mediaFields = fields.filter((candidate) => candidate.type === 'media' && candidate.key)
+  const references = mediaFields.flatMap((field) => {
+    const raw = values[field.key as string]
+    return field.hasMany ? (Array.isArray(raw) ? raw.map(String) : []) : raw ? [String(raw)] : []
+  }).slice(0, 100)
+  const missing = [...new Set(references.filter((id) => !cache.has(id)))]
+  if (missing.length > 0) {
+    const result = await payload.find({ collection: 'media', depth: 0, limit: 100, overrideAccess: true, pagination: false,
+      where: { and: [{ id: { in: missing } }, { project: { equals: projectId } }, { publicRead: { equals: true } }] } })
+    for (const id of missing) cache.set(id, null)
+    for (const raw of result.docs) {
+      const asset = raw as { id: string; alt?: string; caption?: string | null; filename?: string; mimeType?: string; width?: number | null; height?: number | null; url?: string | null; sizes?: unknown }
+      cache.set(String(asset.id), { id: String(asset.id), alt: asset.alt ?? '', caption: asset.caption ?? '', filename: asset.filename ?? '', mime_type: asset.mimeType ?? '', width: asset.width ?? null, height: asset.height ?? null, url: asset.url ?? null, sizes: asset.sizes ?? {} })
+    }
+  }
+  for (const field of mediaFields) {
+    const key = field.key as string
+    const raw = values[key]
+    const ids = field.hasMany ? (Array.isArray(raw) ? raw.map(String) : []) : raw ? [String(raw)] : []
+    const assets = ids.slice(0, 50).map((id) => cache.get(id)).filter((asset): asset is PublicMedia => Boolean(asset))
+    values[key] = field.hasMany ? assets : (assets[0] ?? null)
+  }
+  return values
+}
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -40,6 +70,8 @@ export async function GET(
   const expandRelationships = url.searchParams.get('expand') === 'relationships'
 
   const payload = await getPayload({ config })
+  const mediaCache = new Map<string, PublicMedia | null>()
+  const componentFieldCache = new Map<string, PublicField[] | null>()
   const projects = await payload.find({
     collection: 'project-spaces',
     depth: 0,
@@ -75,7 +107,7 @@ export async function GET(
     id: string | number
     schemaVersion?: number
     contentRole?: string
-    fields?: Array<{ key?: string; type?: string; targetModel?: unknown }>
+    fields?: Array<{ key?: string; type?: string; targetModel?: unknown; hasMany?: boolean }>
   } | undefined
   if (!model) {
     return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404, headers: corsHeaders() })
@@ -113,14 +145,14 @@ export async function GET(
       if (!target) continue
       const targetModelResult = await payload.find({ collection: 'data-models', depth: 0, limit: 1, overrideAccess: true, pagination: false,
         where: { and: [{ id: { equals: idOf(target.model) } }, { project: { equals: project.id } }, { kind: { equals: 'content' } }, { publicRead: { equals: true } }, { status: { equals: 'active' } }] } })
-      const targetModel = targetModelResult.docs[0] as { slug?: string } | undefined
+      const targetModel = targetModelResult.docs[0] as { slug?: string; fields?: PublicField[] } | undefined
       if (!targetModel?.slug) continue
       const sourceId = idOf(relation.sourceRecord)
       const fields = expanded.get(sourceId) ?? {}
       const key = relation.fieldKey ?? ''
       const declaredField = (model.fields ?? []).find((field) => field.key === key && field.type === 'relationship')
       if (!declaredField || idOf(declaredField.targetModel) !== idOf(target.model)) continue
-      ;(fields[key] ??= []).push({ id: target.id, model: targetModel.slug, values: target.values ?? {}, published_at: target.publishedAt ?? null, updated_at: target.updatedAt ?? null })
+      ;(fields[key] ??= []).push({ id: target.id, model: targetModel.slug, values: await publicMediaValues(payload, project.id, targetModel.fields ?? [], target.values, mediaCache), published_at: target.publishedAt ?? null, updated_at: target.updatedAt ?? null })
       expanded.set(sourceId, fields)
     }
   }
@@ -131,7 +163,7 @@ export async function GET(
         slug: modelSlug,
         schema_version: model.schemaVersion ?? null,
       },
-      records: records.docs.map((record) => {
+      records: await Promise.all(records.docs.map(async (record) => {
         const doc = record as {
           id: string | number
           values?: unknown
@@ -139,15 +171,27 @@ export async function GET(
           publishedAt?: string | null
           updatedAt?: string
         }
+        const layout = model.contentRole === 'page' && Array.isArray(doc.layout) ? await Promise.all(doc.layout.map(async (rawBlock) => {
+          const block = rawBlock as { component?: string; values?: unknown }
+          const slug = block.component ?? ''
+          if (!componentFieldCache.has(slug)) {
+            const components = await payload.find({ collection: 'data-models', depth: 0, limit: 1, overrideAccess: true, pagination: false,
+              where: { and: [{ project: { equals: project.id } }, { slug: { equals: slug } }, { kind: { equals: 'content' } }, { contentRole: { equals: 'component' } }, { status: { equals: 'active' } }] } })
+            const component = components.docs[0] as { fields?: PublicField[] } | undefined
+            componentFieldCache.set(slug, component?.fields ?? null)
+          }
+          const componentFields = componentFieldCache.get(slug)
+          return componentFields ? { ...block, values: await publicMediaValues(payload, project.id, componentFields, block.values, mediaCache) } : block
+        })) : []
         return {
           id: doc.id,
-          values: doc.values ?? {},
-          layout: model.contentRole === 'page' && Array.isArray(doc.layout) ? doc.layout : [],
+          values: await publicMediaValues(payload, project.id, model.fields ?? [], doc.values, mediaCache),
+          layout,
           ...(expandRelationships ? { relationships: expanded.get(String(doc.id)) ?? {} } : {}),
           published_at: doc.publishedAt ?? null,
           updated_at: doc.updatedAt ?? null,
         }
-      }),
+      })),
       pagination: {
         page: records.page,
         limit: records.limit,
