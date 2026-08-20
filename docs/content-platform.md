@@ -108,6 +108,8 @@ Pagination is bounded. Public CORS/cache headers are intentional because only ex
 
 The Project workspace links to an Argus-native Content screen. Operators can create project-scoped content types with typed scalar fields, create and edit records, save drafts, and publish without navigating Payload collections or copying internal IDs. Public visibility remains an explicit content-type setting; draft records are never returned by the public endpoint.
 
+Every saved record has an operator preview inside the protected Argus Web interface. The preview renders stored values as text/structured data through React rather than injecting stored HTML, so draft content cannot introduce executable markup. Published records on public content types also link to their real public read endpoint; drafts never receive a public link.
+
 The Web server talks to Payload through `/internal/argus/cms/projects/:projectId`. This route is not a public browser API. It requires the high-entropy internal content token plus Argus organization and user headers, and resolves the mirrored Project by both Argus Project UUID and organization before every query or mutation. Payload access checks are bypassed only after that explicit server-to-server scope check; normal Payload user endpoints retain their existing membership rules.
 
 The initial native editor supports scalar fields (text, long text, number, boolean, date/date-time and JSON). Relationships remain managed through the underlying App Data model until the native relationship picker and safe public expansion are implemented.
@@ -134,7 +136,7 @@ CMS V1 now includes a basic Argus-native model, draft and publication workflow, 
 
 - page/component layout schemas;
 - visual page builder;
-- live site preview;
+- site-template-aware live preview (the current preview is a safe generic record preview);
 - media library/uploads/variants;
 - forms/submissions;
 - client approvals/portal;
