@@ -74,6 +74,7 @@ sudo -E ./scripts/first-server-acceptance.sh install
 sudo -E ./scripts/first-server-acceptance.sh post-reboot
 sudo -E ./scripts/first-server-acceptance.sh product
 sudo -E ./scripts/first-server-acceptance.sh content
+ARGUS_CONFIRM_TRANSACTIONAL_RESTORE=RESTORE-DISPOSABLE-HOST sudo -E ./scripts/first-server-acceptance.sh restore
 sudo -E ./scripts/first-server-acceptance.sh rerun-installer
 # after a newer green main revision has been published:
 sudo -E ./scripts/first-server-acceptance.sh update-rollback
@@ -83,7 +84,7 @@ sudo ./scripts/first-server-acceptance.sh report
 
 The runner stores root-only checkpoint state under `/var/lib/argus/acceptance/first-server/` by default. It fingerprints the generated high-entropy IDs/secrets to prove installer reruns and reboots preserve identity without writing those plaintext values into the final report. The report records immutable revisions, the real-reboot proof, smoke-test checkpoints and the exact successful update transaction. Registry credentials are never copied into acceptance state.
 
-This only covers the reproducible host lifecycle subset. It does **not** mark project/CMS/backup/restore/protected-container/manual-failure checklist items as passed; those still require explicit execution on the real disposable server.
+The runner now has explicit checkpoints for the reproducible project/CMS/App Data/backup/restore/protected-container/update-failure paths as well as the host lifecycle. It does **not** mark any of them as passed merely because the tooling exists or CI validates its helpers; every checkpoint still has to execute successfully on the real disposable server. Reset and second-install evidence remains outside the report until the terminal reset workflow below is automated.
 
 ### First server test checklist
 
@@ -109,7 +110,7 @@ This only covers the reproducible host lifecycle subset. It does **not** mark pr
 20. exercise the explicit first-test reset path and perform one second clean install;
 21. record every manual workaround as an installer/product bug rather than adding undocumented setup knowledge.
 
-The lifecycle acceptance runner directly records evidence for checklist items 2-5, 7-15, restore preflight from 16, and 17-19. The `product` stage creates a new personal Project through the authenticated Control API, requires its `client_id` to remain null, creates environment/service/site structures through supported APIs, verifies persisted audit/domain events and Payload synchronization, proves scheduler execution after the recorded reboot, runs a scheduled monitor, exercises a safe typed Agent action, and proves a protected control-plane container rejects a normal managed Docker action. It creates and verifies a system-config backup and runs typed non-mutating restore preflight. The `content` stage uses that synchronized personal Project to prove immediate-write App Data models/records/relations plus CMS model creation, draft privacy, publication and sanitized public reads through installed Argus-native Payload APIs. `update-rollback` requires a newer immutable target, deliberately fails only after target start has been durably armed, and accepts the checkpoint only when automatic rollback restores the original revision and smoke health; `update` then installs that same target successfully. SQL is used only to verify persisted effects. Transactional restore apply and the other remaining items stay separate acceptance work and must not be inferred from a lifecycle `PASS` report.
+The lifecycle acceptance runner directly records evidence for checklist items 2-5 and 7-19. The `product` stage creates a new personal Project through the authenticated Control API, requires its `client_id` to remain null, creates environment/service/site structures through supported APIs, verifies persisted audit/domain events and Payload synchronization, proves scheduler execution after the recorded reboot, runs a scheduled monitor, exercises a safe typed Agent action, and proves a protected control-plane container rejects a normal managed Docker action. It creates and verifies a system-config backup and runs typed non-mutating restore preflight. The `content` stage uses that synchronized personal Project to prove immediate-write App Data models/records/relations plus CMS model creation, draft privacy, publication and sanitized public reads through installed Argus-native Payload APIs. The explicitly confirmed `restore` stage proves maintenance enforcement, transactional live apply, rollback-timer disarm and post-restore smoke on the disposable host. `update-rollback` requires a newer immutable target, deliberately fails only after target start has been durably armed, and accepts the checkpoint only when automatic rollback restores the original revision and smoke health; `update` then installs that same target successfully. SQL is used only to verify persisted effects. Reset/second-install evidence remains separate and must not be inferred from a lifecycle `PASS` report.
 
 ### What is intentionally not required yet
 
