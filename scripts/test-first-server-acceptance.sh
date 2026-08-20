@@ -145,6 +145,7 @@ write_checkpoint baseline REVISION "$FROM_REVISION" BOOT_ID 00000000-0000-4000-8
 write_checkpoint post-reboot COMPLETED_AT 2026-08-20T00:00:00Z REVISION "$FROM_REVISION" BOOT_ID 00000000-0000-4000-8000-000000000002
 write_checkpoint installer-rerun REVISION "$FROM_REVISION"
 write_checkpoint post-update FROM_REVISION "$FROM_REVISION" TO_REVISION "$TO_REVISION" TRANSACTION "$successful"
+write_checkpoint content PROJECT_ID "$product_project" MODEL_ID 00000000-0000-4000-8000-000000000025 RECORD_ID 00000000-0000-4000-8000-000000000026 MODEL_SLUG acceptance_test
 mkdir -p "$successful"
 printf 'FROM_REVISION=%s\nTO_REVISION=%s\n' "$FROM_REVISION" "$TO_REVISION" >"$successful/metadata.env"
 printf 'SUCCEEDED\n' >"$successful/result"
@@ -152,5 +153,7 @@ stage_report >/dev/null
 grep -Fq "scheduled_site_monitor_job: $monitor_job" "$REPORT_FILE"
 grep -Fq "verified_system_config_backup: $backup_command.tar.gz" "$REPORT_FILE"
 grep -Fq "restore_preflight_command: $preflight_command" "$REPORT_FILE"
+grep -Fq "cms_model: 00000000-0000-4000-8000-000000000025" "$REPORT_FILE"
+grep -Fq "cms_draft_publication_public_read_verified: yes" "$REPORT_FILE"
 
 printf 'first-server acceptance helper tests passed\n'
