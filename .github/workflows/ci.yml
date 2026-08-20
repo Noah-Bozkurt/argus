@@ -61,6 +61,8 @@ jobs:
           bash -n scripts/reset-first-test.sh
           bash -n scripts/first-server-smoke.sh
           bash -n scripts/first-server-product-acceptance.sh
+          bash -n scripts/first-server-restore-acceptance.sh
+          bash -n scripts/test-first-server-restore-acceptance.sh
           bash -n scripts/test-native-cms-runtime.sh
           bash -n scripts/test-media-runtime.sh
           bash -n scripts/test-forms-runtime.sh

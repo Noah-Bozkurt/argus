@@ -16,9 +16,12 @@ jobs:
           set -euo pipefail
           bash -n scripts/first-server-acceptance.sh
           bash -n scripts/first-server-product-acceptance.sh
+          bash -n scripts/first-server-restore-acceptance.sh
           bash -n scripts/test-first-server-acceptance.sh
+          bash -n scripts/test-first-server-restore-acceptance.sh
           node --check scripts/first-server-content-acceptance.mjs
       - name: Test acceptance helpers
         run: |
           bash scripts/test-first-server-acceptance.sh
+          bash scripts/test-first-server-restore-acceptance.sh
           node --test scripts/first-server-content-acceptance.test.mjs

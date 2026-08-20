@@ -31,6 +31,8 @@ Commands:
                    installed server, including Agent and Docker protection checks.
   content          Exercise CMS model, draft, publish and public-read workflows for
                    the personal Project created by the product stage.
+  restore          On a disposable host, require explicit confirmation and exercise
+                   maintenance-gated transactional restore plus post-restore smoke.
   report           Write/print the sanitized lifecycle acceptance report.
   status           Show which lifecycle checkpoints have completed.
 
@@ -362,10 +364,17 @@ stage_content() {
   log "Content acceptance passed for model $model_id and record $record_id"
 }
 
+stage_restore() {
+  require_root
+  [[ -f "$ACCEPTANCE_DIR/product.env" ]] || die "run acceptance stage 'product' first"
+  require_checkpoint content
+  "$REPO_ROOT/scripts/first-server-restore-acceptance.sh"
+}
+
 stage_status() {
   ensure_acceptance_dir
   local name
-  for name in baseline post-reboot installer-rerun rollback-test post-update product content; do
+  for name in baseline post-reboot installer-rerun rollback-test post-update product content restore; do
     if [[ "$name" == product && -f "$ACCEPTANCE_DIR/product.env" ]] ||
        [[ "$name" != product && -f "$(checkpoint_path "$name")" ]]; then
       printf '%-18s %s\n' "$name" complete
@@ -383,11 +392,13 @@ stage_report() {
   done
   [[ -f "$ACCEPTANCE_DIR/product.env" ]] || die "run acceptance stage 'product' first"
   require_checkpoint content
+  require_checkpoint restore
 
   local initial_revision reboot_revision rerun_revision from_revision to_revision transaction product_project_id
   local monitor_job_id backup_name backup_command_id verify_command_id preflight_command_id
   local content_project_id content_model_id content_record_id content_model_slug data_model_id data_record_id data_relation_target_id
   local rollback_from rollback_target rollback_transaction rollback_result
+  local restore_backup restore_command_id restore_maintenance_id restore_gate restore_disarmed restore_smoke
   initial_revision="$(checkpoint_value baseline REVISION)"
   reboot_revision="$(checkpoint_value post-reboot REVISION)"
   rerun_revision="$(checkpoint_value installer-rerun REVISION)"
@@ -398,6 +409,12 @@ stage_report() {
   rollback_target="$(checkpoint_value rollback-test FAILED_TARGET_REVISION)"
   rollback_transaction="$(checkpoint_value rollback-test TRANSACTION)"
   rollback_result="$(checkpoint_value rollback-test RESULT)"
+  restore_backup="$(checkpoint_value restore BACKUP_NAME)"
+  restore_command_id="$(checkpoint_value restore RESTORE_COMMAND_ID)"
+  restore_maintenance_id="$(checkpoint_value restore MAINTENANCE_WINDOW_ID)"
+  restore_gate="$(checkpoint_value restore MAINTENANCE_GATE_VERIFIED)"
+  restore_disarmed="$(checkpoint_value restore TIMED_ROLLBACK_DISARMED)"
+  restore_smoke="$(checkpoint_value restore POST_RESTORE_SMOKE)"
   product_project_id="$(
     set +u
     # Root-owned checkpoint emitted by first-server-product-acceptance.sh.
@@ -426,6 +443,10 @@ stage_report() {
     || die "Content acceptance evidence is invalid"
   [[ "$data_model_id" =~ ^[0-9a-f-]{36}$ && "$data_record_id" =~ ^[0-9a-f-]{36}$ && "$data_relation_target_id" =~ ^[0-9a-f-]{36}$ ]] \
     || die "App Data acceptance evidence is invalid"
+  [[ "$restore_backup" == "$backup_name" && "$restore_command_id" =~ ^[0-9a-f-]{36}$ && "$restore_maintenance_id" =~ ^[0-9a-f-]{36}$ ]] \
+    || die "transactional restore evidence is inconsistent"
+  [[ "$restore_gate" == yes && "$restore_disarmed" == yes && "$restore_smoke" == yes ]] \
+    || die "transactional restore safety evidence is incomplete"
 
   [[ "$initial_revision" == "$reboot_revision" && "$initial_revision" == "$rerun_revision" ]] \
     || die "checkpoint revisions are inconsistent"
@@ -467,6 +488,11 @@ verified_system_config_backup: $backup_name
 backup_create_command: $backup_command_id
 backup_verify_command: $verify_command_id
 restore_preflight_command: $preflight_command_id
+transactional_restore_command: $restore_command_id
+restore_maintenance_window: $restore_maintenance_id
+restore_maintenance_gate_verified: yes
+restore_timed_rollback_disarmed: yes
+post_restore_smoke: yes
 cms_model: $content_model_id
 cms_published_record: $content_record_id
 cms_public_model_slug: $content_model_slug
@@ -477,8 +503,8 @@ app_data_relation_target: $data_relation_target_id
 app_data_immediate_write_and_relation_verified: yes
 
 This report intentionally contains no registry credential or plaintext Argus secret.
-It proves the recorded lifecycle, product, App Data and CMS checkpoints only. Transactional
-restore apply, reset/reinstall and manual-failure acceptance remain separate work.
+It proves the recorded lifecycle, product, App Data, CMS and restore checkpoints only.
+Reset/reinstall remains separate acceptance work.
 EOF
   chmod 0600 "$tmp"
   sync -f "$tmp"
@@ -497,6 +523,7 @@ main() {
     update-rollback) stage_update_rollback ;;
     product) stage_product ;;
     content) stage_content ;;
+    restore) stage_restore ;;
     report) stage_report ;;
     status) stage_status ;;
     -h|--help|help|'') usage ;;

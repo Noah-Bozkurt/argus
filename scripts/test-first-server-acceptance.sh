@@ -154,6 +154,7 @@ write_checkpoint installer-rerun REVISION "$FROM_REVISION"
 write_checkpoint post-update FROM_REVISION "$FROM_REVISION" TO_REVISION "$TO_REVISION" TRANSACTION "$successful"
 write_checkpoint rollback-test FROM_REVISION "$FROM_REVISION" FAILED_TARGET_REVISION "$TO_REVISION" TRANSACTION "$rolled_back" RESULT ROLLED_BACK
 write_checkpoint content PROJECT_ID "$product_project" MODEL_ID 00000000-0000-4000-8000-000000000025 RECORD_ID 00000000-0000-4000-8000-000000000026 MODEL_SLUG acceptance_test DATA_MODEL_ID 00000000-0000-4000-8000-000000000027 DATA_RECORD_ID 00000000-0000-4000-8000-000000000028 DATA_RELATION_TARGET_ID 00000000-0000-4000-8000-000000000029
+write_checkpoint restore BACKUP_NAME "$backup_command.tar.gz" RESTORE_COMMAND_ID 00000000-0000-4000-8000-000000000030 MAINTENANCE_WINDOW_ID 00000000-0000-4000-8000-000000000031 MAINTENANCE_GATE_VERIFIED yes TIMED_ROLLBACK_DISARMED yes POST_RESTORE_SMOKE yes
 mkdir -p "$successful"
 printf 'FROM_REVISION=%s\nTO_REVISION=%s\n' "$FROM_REVISION" "$TO_REVISION" >"$successful/metadata.env"
 printf 'SUCCEEDED\n' >"$successful/result"
@@ -167,5 +168,7 @@ grep -Fq "app_data_model: 00000000-0000-4000-8000-000000000027" "$REPORT_FILE"
 grep -Fq "app_data_immediate_write_and_relation_verified: yes" "$REPORT_FILE"
 grep -Fq "automatic_rollback_transaction: $rolled_back" "$REPORT_FILE"
 grep -Fq "safe_target_start_failure_rolled_back: yes" "$REPORT_FILE"
+grep -Fq "transactional_restore_command: 00000000-0000-4000-8000-000000000030" "$REPORT_FILE"
+grep -Fq "restore_timed_rollback_disarmed: yes" "$REPORT_FILE"
 
 printf 'first-server acceptance helper tests passed\n'
