@@ -9,6 +9,16 @@ function formatHeartbeat(value: string | null): string {
   return value ? new Date(value).toLocaleString() : 'Never'
 }
 
+function Utilization({ value }: { value: number | undefined }) {
+  const safe = typeof value === 'number' ? Math.max(0, Math.min(100, value)) : 0
+  return (
+    <div className="utilization-cell">
+      <div className="utilization-value"><span>{formatPercent(value)}</span></div>
+      <div className="utilization-track"><div className="utilization-fill" style={{ width: `${safe}%` }} /></div>
+    </div>
+  )
+}
+
 export default async function ServersPage() {
   const servers = await getServers()
   const online = servers.filter((server) => server.online).length
@@ -37,21 +47,21 @@ export default async function ServersPage() {
           <div className="empty-state"><strong>No servers registered</strong>Add a server from a project environment to start monitoring it.</div>
         ) : (
           <div className="table-wrap" style={{ border: 0, borderRadius: 0 }}>
-            <table>
+            <table className="responsive-table">
               <thead><tr><th>Server</th><th>Status</th><th>CPU</th><th>RAM</th><th>Disk</th><th>Services</th><th>Last heartbeat</th></tr></thead>
               <tbody>
                 {servers.map((server) => (
                   <tr key={server.server_id}>
                     <td>
                       <div className="row-title"><span className={`status-dot ${server.online ? 'online' : 'danger'}`} /><Link href={`/infrastructure/servers/${server.server_id}`}>{server.hostname}</Link></div>
-                      <div className="row-subtitle"><code>{server.server_id.slice(0, 12)}</code></div>
+                      <div className="row-subtitle">{server.snapshot?.os ?? 'Unknown OS'} · <code>{server.server_id.slice(0, 12)}</code></div>
                     </td>
-                    <td><span className={`badge ${server.online ? 'success' : 'danger'}`}>{server.online ? 'Online' : 'Offline'}</span></td>
-                    <td>{formatPercent(server.snapshot?.cpu_percent)}</td>
-                    <td>{formatPercent(server.snapshot?.ram_percent)}</td>
-                    <td>{formatPercent(server.snapshot?.disk_percent)}</td>
-                    <td>{server.services.length}</td>
-                    <td>{formatHeartbeat(server.last_heartbeat)}</td>
+                    <td data-label="Status"><span className={`badge ${server.online ? 'success' : 'danger'}`}>{server.online ? 'Online' : 'Offline'}</span></td>
+                    <td data-label="CPU"><Utilization value={server.snapshot?.cpu_percent} /></td>
+                    <td data-label="RAM"><Utilization value={server.snapshot?.ram_percent} /></td>
+                    <td data-label="Disk"><Utilization value={server.snapshot?.disk_percent} /></td>
+                    <td data-label="Services">{server.services.length}</td>
+                    <td data-label="Heartbeat">{formatHeartbeat(server.last_heartbeat)}</td>
                   </tr>
                 ))}
               </tbody>
