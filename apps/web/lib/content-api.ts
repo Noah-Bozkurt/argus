@@ -1,8 +1,10 @@
 export type ContentField = {
   key: string
   label: string
-  type: 'text' | 'textarea' | 'number' | 'boolean' | 'date' | 'datetime' | 'json'
+  type: 'text' | 'textarea' | 'number' | 'boolean' | 'date' | 'datetime' | 'json' | 'relationship'
   required: boolean
+  target_model_id: string | null
+  has_many: boolean
 }
 
 export type ContentModel = {
@@ -39,6 +41,7 @@ export type ContentWorkspace = {
   project_status: string
   models: ContentModel[]
   records: ContentRecord[]
+  relations: Array<{ id: string; source_record_id: string; target_record_id: string; field_key: string }>
 }
 
 export type MediaAsset = {
@@ -129,6 +132,7 @@ export async function saveContentRecord(projectId: string, input: {
   values: Record<string, unknown>
   layout: ContentBlock[]
   publish: boolean
+  relationships: Record<string, string[]>
 }): Promise<void> {
   await request(projectId, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'save_record', ...input }) })
 }
