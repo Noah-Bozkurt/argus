@@ -1,0 +1,4 @@
+node_modules/
+apps/installer/dist/
+target/
+*.tsbuildinfo

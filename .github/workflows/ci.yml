@@ -32,6 +32,8 @@ jobs:
       - run: pnpm --filter @argus/web exec tsc --noEmit
       - run: pnpm --filter @argus/content run typecheck
       - run: pnpm --filter @argus/content run test:cms-contract
+      - run: pnpm --filter @argus/installer test
+      - run: pnpm --filter @argus/installer build
 
   server-test-readiness:
     needs:

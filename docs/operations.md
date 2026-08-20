@@ -48,8 +48,11 @@ ARGUS_REGISTRY_TOKEN=<credential able to read the private Argus images>
 
 `ARGUS_VERSION` defaults to `main`, but `main` is only a discovery alias. The installer reads the artifact's `org.opencontainers.image.revision` label, verifies it is a full commit SHA and persists that immutable SHA as the installed `ARGUS_VERSION`. Compose therefore runs commit-addressed Argus images even when installation started from `main`.
 
-For the current private-repository first test, authenticate on the disposable host,
-clone the source, and export a credential that can also read the private GHCR images.
+For the current private-repository first test, open the Argus installer site and enter the
+two DNS names and GitHub username. The generated command downloads the canonical installer
+and checksum from Cloudflare Pages, verifies it locally, and then prompts for a credential
+that can read the private GHCR images. The credential stays in the VPS terminal; the site
+does not receive it. A source checkout is no longer required for installation.
 Avoid putting the credential directly in shell history:
 
 ```bash
@@ -62,12 +65,11 @@ export ARGUS_REGISTRY_TOKEN
 sudo -E ./install.sh
 ```
 
-The checkout credential needs access to this private repository; the registry credential
-needs read access to the private Argus packages. They may be the same credential when its
-policy permits both. The installer uses a temporary isolated Docker configuration for the
+The registry credential needs read access to the private Argus packages. The installer uses
+a temporary isolated Docker configuration for the
 registry login and does not persist the registry token in `/opt/argus/.env`. A named,
-checksummed release bundle that removes the source-checkout requirement remains deployment
-maturity work; cloning a moving `main` branch is not the intended final production UX.
+signed release manifest and short-lived artifact credential remain deployment maturity work;
+the current site intentionally serves the green `main` installer for first-server testing.
 
 The installer:
 

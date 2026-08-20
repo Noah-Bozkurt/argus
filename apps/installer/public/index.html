@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Prepare a verified Argus installation command for Ubuntu or Debian." />
+    <title>Install Argus</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <span class="eyebrow">Argus deployment</span>
+        <h1>Bring your first server online.</h1>
+        <p class="lede">Generate a verified install command for a clean Ubuntu or Debian amd64 VPS. Your package token stays in the server terminal.</p>
+      </header>
+
+      <section class="panel" aria-labelledby="configure-title">
+        <div class="section-heading">
+          <span>01</span>
+          <div><h2 id="configure-title">Configure</h2><p>Point both DNS records at the VPS before installing.</p></div>
+        </div>
+        <form id="installer-form">
+          <label>Argus domain<input id="domain" name="domain" type="text" inputmode="url" placeholder="argus.example.com" required autocomplete="off" /></label>
+          <label>Content domain<input id="content-domain" name="contentDomain" type="text" inputmode="url" placeholder="content.argus.example.com" required autocomplete="off" /></label>
+          <label>GitHub username<input id="registry-user" name="registryUser" type="text" placeholder="your-github-user" required autocomplete="username" /></label>
+          <button type="submit">Generate install command</button>
+        </form>
+        <p id="form-error" class="error" role="alert" hidden></p>
+      </section>
+
+      <section class="panel command-panel" id="command-panel" aria-labelledby="command-title" hidden>
+        <div class="section-heading">
+          <span>02</span>
+          <div><h2 id="command-title">Run on the VPS</h2><p>Use a GitHub token with read-only package access. It is read silently and never sent to this site.</p></div>
+        </div>
+        <pre><code id="command"></code></pre>
+        <button type="button" class="secondary" id="copy-command">Copy command</button>
+        <p id="copy-status" class="status" aria-live="polite"></p>
+      </section>
+
+      <section class="notes" aria-label="Requirements">
+        <div><strong>Supported host</strong><span>Clean Ubuntu or Debian, amd64, root access</span></div>
+        <div><strong>Network</strong><span>Ports 80 and 443 open; both DNS records resolved</span></div>
+        <div><strong>Integrity</strong><span>The command verifies the published SHA-256 before execution</span></div>
+      </section>
+    </main>
+  </body>
+</html>
