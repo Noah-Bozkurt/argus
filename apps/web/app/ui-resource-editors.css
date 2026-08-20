@@ -24,6 +24,37 @@
 }
 .resource-editor-body small { display: block; line-height: 1.5; }
 
+fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-inset);
+}
+legend {
+  padding: 0 7px;
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+select[multiple] { min-height: 132px; }
+input[type="file"] {
+  min-height: 44px;
+  padding: 7px;
+  border-style: dashed;
+}
+input[type="file"]::file-selector-button {
+  min-height: 28px;
+  margin-right: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-soft);
+  padding: 0 10px;
+  cursor: pointer;
+}
+
 .feature-stack > section > .create-drawer {
   margin: 0 17px 16px;
   background: var(--surface-inset);
@@ -83,6 +114,7 @@
 @media (max-width: 760px) {
   .topbar-actions .icon-button { display: none; }
   .control-status { padding-right: 0; font-size: 10px; }
+  fieldset { padding: 12px; }
   .feature-stack > section > .create-drawer,
   .feature-stack > section > .callout { margin-left: 12px; margin-right: 12px; }
   .feature-stack > section > article > .info-grid { grid-template-columns: 1fr; }
