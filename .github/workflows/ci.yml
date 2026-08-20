@@ -477,12 +477,12 @@ jobs:
       - name: Verify migrations and Worker scheduling
         env:
           DATABASE_URL: postgresql://argus:argus-test-password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/argus
-          ARGUS_CONTROL_API_BIND: 127.0.0.1:8080
-          ARGUS_CONTROL_API_URL: http://127.0.0.1:8080
+          ARGUS_CONTROL_API_BIND: 127.0.0.1:18080
+          ARGUS_CONTROL_API_URL: http://127.0.0.1:18080
           ARGUS_WEB_API_TOKEN: 0123456789abcdef0123456789abcdef
           ARGUS_WORKER_TOKEN: abcdef0123456789abcdef0123456789
           ARGUS_CONTENT_URL: http://127.0.0.1:9
-          ARGUS_CONTENT_SYNC_TOKEN: 11111111111111111111111111111111
+          ARGUS_CONTENT_SYNC_TOKEN: '11111111111111111111111111111111'
           ARGUS_WORKER_POLL_SECONDS: 1
           RUST_LOG: info
         run: |
@@ -494,7 +494,7 @@ jobs:
           worker_pid=''
           trap 'kill "$control_pid" ${worker_pid:-} >/dev/null 2>&1 || true' EXIT
           for _ in $(seq 1 300); do
-            if curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then
+            if curl -fsS http://127.0.0.1:18080/health >/dev/null 2>&1; then
               break
             fi
             if ! kill -0 "$control_pid" >/dev/null 2>&1; then
@@ -503,7 +503,7 @@ jobs:
             fi
             sleep 1
           done
-          curl -fsS http://127.0.0.1:8080/health >/dev/null || {
+          curl -fsS http://127.0.0.1:18080/health >/dev/null || {
             echo "Control API did not become healthy within 5 minutes" >&2
             cat "$control_log"
             exit 1
