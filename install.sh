@@ -13,10 +13,6 @@ DOCKER_CONFIG_DIR=""
 GENERATED_BASIC_AUTH_PASSWORD=""
 EXISTING_INSTALL=0
 INSTALL_MODE="${ARGUS_INSTALL_MODE:-}"
-DISTRIBUTION_URL="${ARGUS_DISTRIBUTION_URL:-https://install.argus.example}"
-RELEASE_CHANNEL="${ARGUS_RELEASE_CHANNEL:-stable}"
-DEVICE_SESSION=""
-RELEASE_TMP=""
 LOG_DIR="${ARGUS_LOG_DIR:-/var/log/argus}"
 LOG_FILE="$LOG_DIR/install-$(date -u +%Y%m%dT%H%M%SZ).log"
 STAGE=0
@@ -51,9 +47,6 @@ cleanup() {
   fi
   if [[ -n "$DOCKER_CONFIG_DIR" ]]; then
     rm -rf "$DOCKER_CONFIG_DIR"
-  fi
-  if [[ -n "$RELEASE_TMP" ]]; then
-    rm -rf "$RELEASE_TMP"
   fi
 }
 trap cleanup EXIT
@@ -116,71 +109,23 @@ prompt_password() {
   ARGUS_BASIC_AUTH_PASSWORD="$first"
 }
 
-device_authorize() {
-  if [[ -n "${ARGUS_REGISTRY_TOKEN:-}" ]]; then
-    warn "using emergency registry compatibility path"
-    return
+prompt_registry_credentials() {
+  ARGUS_REGISTRY="${ARGUS_REGISTRY:-ghcr.io/noah-bozkurt}"
+  prompt_required ARGUS_REGISTRY_USERNAME "GitHub username"
+  if [[ -z "${ARGUS_REGISTRY_TOKEN:-}" ]]; then
+    [[ -t 0 ]] || die "ARGUS_REGISTRY_TOKEN is required in non-interactive mode"
+    read -r -s -p 'GitHub token (classic PAT with read:packages): ' ARGUS_REGISTRY_TOKEN
+    printf '\n'
+    [[ -n "$ARGUS_REGISTRY_TOKEN" ]] || die "GitHub token is required"
+    export ARGUS_REGISTRY_TOKEN
   fi
-  local response code url interval expires started status
-  response="$(curl -fsS -X POST "$DISTRIBUTION_URL/api/device/start")" || die "could not start GitHub device authorization"
-  DEVICE_SESSION="$(jq -er '.id' <<<"$response")"
-  code="$(jq -er '.user_code' <<<"$response")"
-  url="$(jq -er '.verification_uri' <<<"$response")"
-  interval="$(jq -er '.interval // 5' <<<"$response")"
-  expires="$(jq -er '.expires_in' <<<"$response")"
-  printf '\nAuthorize this server with GitHub:\n\n  Code: %s\n  Open: %s\n\n' "$code" "$url"
-  started=$SECONDS
-  while (( SECONDS - started < expires )); do
-    sleep "$interval"
-    response="$(curl -sS -w '\n%{http_code}' "$DISTRIBUTION_URL/api/device/sessions/$DEVICE_SESSION")"
-    status="$(tail -n1 <<<"$response")"; response="$(sed '$d' <<<"$response")"
-    if [[ "$status" == "200" && "$(jq -r '.status' <<<"$response")" == "authorized" ]]; then
-      printf 'GitHub authorization confirmed.\n'
-      return
-    fi
-    [[ "$status" == "202" ]] || die "GitHub authorization was denied or expired"
-    interval="$(jq -r '.retry_after // 5' <<<"$response")"
-    printf '.'
-  done
-  die "GitHub device code expired; rerun the installer"
-}
-
-release_public_key() {
-  cat <<'EOF'
------BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAGD+O6E423q4GIkGMWc7kYqtsOH0VHJPTBoHPy90B1NQ=
------END PUBLIC KEY-----
-EOF
-}
-
-download_release_bundle() {
-  local bundle="$1" response object expected size grant actual
-  RELEASE_TMP="$(mktemp -d)"; chmod 0700 "$RELEASE_TMP"
-  response="$(curl -fsS -H "x-argus-device-session: $DEVICE_SESSION" "$DISTRIBUTION_URL/api/releases/$RELEASE_CHANNEL/$bundle/manifest")" || die "could not retrieve release manifest"
-  jq -er '.manifest' <<<"$response" >"$RELEASE_TMP/manifest.json"
-  jq -er '.signature' <<<"$response" | base64 -d >"$RELEASE_TMP/manifest.sig" || die "release manifest signature is invalid"
-  release_public_key >"$RELEASE_TMP/release-public.pem"
-  openssl pkeyutl -verify -pubin -inkey "$RELEASE_TMP/release-public.pem" -rawin -in "$RELEASE_TMP/manifest.json" -sigfile "$RELEASE_TMP/manifest.sig" >/dev/null \
-    || die "release manifest signature verification failed"
-  [[ "$(jq -r '.architecture' "$RELEASE_TMP/manifest.json")" == "amd64" ]] || die "release architecture does not match this host"
-  [[ "$(jq -r '.bundle' "$RELEASE_TMP/manifest.json")" == "$bundle" ]] || die "release manifest contains the wrong bundle"
-  ARGUS_VERSION="$(jq -er '.commit_sha' "$RELEASE_TMP/manifest.json")"; is_revision "$ARGUS_VERSION" || die "release manifest has an invalid revision"
-  object="$(jq -er '.artifact.object' "$RELEASE_TMP/manifest.json")"
-  expected="$(jq -er '.artifact.sha256' "$RELEASE_TMP/manifest.json")"
-  size="$(jq -er '.artifact.size' "$RELEASE_TMP/manifest.json")"
-  grant="$(curl -fsS -H "x-argus-device-session: $DEVICE_SESSION" -H 'content-type: application/json' -d "$(jq -nc --arg object "$object" '{object:$object}')" "$DISTRIBUTION_URL/api/artifact-grants" | jq -er '.url')"
-  curl -fL --retry 3 --continue-at - "$grant" -o "$RELEASE_TMP/bundle.tar.zst" || die "release download failed"
-  actual="$(stat -c %s "$RELEASE_TMP/bundle.tar.zst")"; [[ "$actual" == "$size" ]] || die "release bundle size verification failed"
-  printf '%s  %s\n' "$expected" "$RELEASE_TMP/bundle.tar.zst" | sha256sum -c - >/dev/null || die "release bundle checksum verification failed"
-  mkdir "$RELEASE_TMP/unpacked"
-  tar --zstd -xf "$RELEASE_TMP/bundle.tar.zst" -C "$RELEASE_TMP/unpacked" || die "could not extract release bundle"
 }
 
 install_prerequisites() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
   apt-get install -y --no-install-recommends \
-    ca-certificates curl jq openssl zstd iproute2 ufw unattended-upgrades
+    ca-certificates curl jq openssl iproute2 ufw unattended-upgrades
 }
 
 install_docker() {
@@ -234,7 +179,7 @@ preflight() {
     || die "first-test installer currently supports amd64 only"
 
   install_prerequisites
-  if [[ "$INSTALL_MODE" == "control-plane" ]]; then install_docker; fi
+  install_docker
 
   if [[ "$INSTALL_MODE" == "control-plane" && ! -f "$COMPOSE_FILE" ]]; then
     for port in 80 443; do
@@ -317,9 +262,7 @@ load_or_create_configuration() {
 }
 
 registry_login_if_configured() {
-  if [[ -z "${ARGUS_REGISTRY_TOKEN:-}" ]]; then
-    return
-  fi
+  [[ -n "${ARGUS_REGISTRY_TOKEN:-}" ]] || die "ARGUS_REGISTRY_TOKEN is required"
   [[ -n "${ARGUS_REGISTRY_USERNAME:-}" ]] \
     || die "ARGUS_REGISTRY_USERNAME is required when ARGUS_REGISTRY_TOKEN is set"
 
@@ -350,36 +293,12 @@ resolve_existing_mutable_revision() {
 }
 
 pull_host_bundle() {
-  if [[ -z "${ARGUS_REGISTRY_TOKEN:-}" ]]; then
-    download_release_bundle control-plane
-    local root="$RELEASE_TMP/unpacked"
-    for required in images.tar out/argus-agent out/argus-helper out/argusctl deploy/compose.yaml deploy/Caddyfile.template deploy/systemd/argus-agent.service deploy/systemd/argus-helper.service; do
-      [[ -s "$root/$required" ]] || die "verified control-plane bundle is incomplete: $required"
-    done
-    docker load -i "$root/images.tar" >/dev/null
-    mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR" "$STATE_DIR/backups"
-    install -m 0644 "$root/deploy/compose.yaml" "$COMPOSE_FILE"
-    install -m 0644 "$root/deploy/Caddyfile.template" "$INSTALL_DIR/Caddyfile.template"
-    install -m 0755 "$root/out/argus-agent" /usr/local/bin/argus-agent
-    install -m 0755 "$root/out/argus-helper" /usr/local/bin/argus-helper
-    install -m 0755 "$root/out/argusctl" /usr/local/bin/argusctl
-    install -m 0644 "$root/deploy/systemd/argus-agent.service" /etc/systemd/system/argus-agent.service
-    install -m 0644 "$root/deploy/systemd/argus-helper.service" /etc/systemd/system/argus-helper.service
-    systemctl daemon-reload
-    export ARGUS_VERSION
-    return
-  fi
   registry_login_if_configured
   resolve_existing_mutable_revision
 
   local requested="$ARGUS_VERSION"
   local image="${ARGUS_REGISTRY}/argus-host-tools:${requested}"
-  if ! docker pull "$image"; then
-    if [[ -z "${ARGUS_REGISTRY_TOKEN:-}" ]]; then
-      die "could not pull private Argus images. Set ARGUS_REGISTRY_USERNAME and a read-only ARGUS_REGISTRY_TOKEN, then rerun"
-    fi
-    die "could not pull $image"
-  fi
+  docker pull "$image" || die "could not pull $image; verify the PAT has read:packages access"
 
   local resolved_revision
   resolved_revision="$(docker image inspect "$image" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
@@ -496,7 +415,7 @@ compose() {
 
 start_control_plane() {
   compose config >/dev/null
-  if [[ -n "${ARGUS_REGISTRY_TOKEN:-}" ]]; then compose pull; fi
+  compose pull
   configure_firewall_if_active
   compose up -d
 
@@ -530,17 +449,30 @@ install_managed_node() {
     read -r -s -p 'Argus setup code: ' setup_code; printf '\n'
   fi
   parse_setup_code "$setup_code"; unset setup_code ARGUS_SETUP_CODE
-  download_release_bundle managed-node
-  local root="$RELEASE_TMP/unpacked"
-  for required in out/argus-agent out/argus-helper out/argusctl deploy/systemd/argus-agent.service deploy/systemd/argus-helper.service; do
-    [[ -s "$root/$required" ]] || die "verified managed-node bundle is incomplete: $required"
+  registry_login_if_configured
+  local requested="${ARGUS_VERSION:-main}" image="${ARGUS_REGISTRY}/argus-host-tools:${ARGUS_VERSION:-main}" revision tmp
+  docker pull "$image" || die "could not pull $image; verify the PAT has read:packages access"
+  revision="$(docker image inspect "$image" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+  is_revision "$revision" || die "$image is missing an immutable revision label"
+  ARGUS_VERSION="$revision"
+  image="${ARGUS_REGISTRY}/argus-host-tools:${ARGUS_VERSION}"
+  [[ "$requested" == "$ARGUS_VERSION" ]] || docker pull "$image" >/dev/null
+  tmp="$(mktemp -d)"; chmod 0700 "$tmp"
+  HOST_TOOLS_CONTAINER="$(docker create "$image")"
+  docker cp "$HOST_TOOLS_CONTAINER:/out/." "$tmp/"
+  docker cp "$HOST_TOOLS_CONTAINER:/deploy/systemd/argus-agent.service" "$tmp/argus-agent.service"
+  docker cp "$HOST_TOOLS_CONTAINER:/deploy/systemd/argus-helper.service" "$tmp/argus-helper.service"
+  docker rm "$HOST_TOOLS_CONTAINER" >/dev/null; HOST_TOOLS_CONTAINER=""
+  for required in argus-agent argus-helper argusctl argus-agent.service argus-helper.service; do
+    [[ -s "$tmp/$required" ]] || die "host-tools image is incomplete: $required"
   done
   ensure_argus_user
-  install -m 0755 "$root/out/argus-agent" /usr/local/bin/argus-agent
-  install -m 0755 "$root/out/argus-helper" /usr/local/bin/argus-helper
-  install -m 0755 "$root/out/argusctl" /usr/local/bin/argusctl
-  install -m 0644 "$root/deploy/systemd/argus-agent.service" /etc/systemd/system/argus-agent.service
-  install -m 0644 "$root/deploy/systemd/argus-helper.service" /etc/systemd/system/argus-helper.service
+  install -m 0755 "$tmp/argus-agent" /usr/local/bin/argus-agent
+  install -m 0755 "$tmp/argus-helper" /usr/local/bin/argus-helper
+  install -m 0755 "$tmp/argusctl" /usr/local/bin/argusctl
+  install -m 0644 "$tmp/argus-agent.service" /etc/systemd/system/argus-agent.service
+  install -m 0644 "$tmp/argus-helper.service" /etc/systemd/system/argus-helper.service
+  rm -rf "$tmp"
   systemctl daemon-reload
   write_helper_env
   cat >"$CONFIG_DIR/agent.env" <<EOF
@@ -755,7 +687,7 @@ print_summary() {
   printf '  argusctl status\n'
   printf '  sudo argusctl smoke\n'
   printf '\nTransactional update:\n'
-  printf '  sudo argusctl update --version stable\n'
+  printf '  sudo -E argusctl update --version main\n'
 }
 
 main() {
@@ -764,8 +696,8 @@ main() {
   touch "$LOG_FILE"; chmod 0600 "$LOG_FILE"
   stage "Checking host requirements"
   preflight
-  stage "Authorizing release access"
-  device_authorize
+  stage "Authenticating to private GHCR"
+  prompt_registry_credentials
   if [[ "$INSTALL_MODE" == "agent" ]]; then
     stage "Installing managed-node bundle"
     install_managed_node

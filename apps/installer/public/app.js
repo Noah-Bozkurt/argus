@@ -4,7 +4,7 @@ command.textContent = `ARGUS_INSTALL_TMP="$(mktemp -d)"
 curl -fsS '${window.location.origin}/install.sh' -o "$ARGUS_INSTALL_TMP/install.sh"
 curl -fsS '${window.location.origin}/install.sh.sha256' -o "$ARGUS_INSTALL_TMP/install.sh.sha256"
 (cd "$ARGUS_INSTALL_TMP" && sha256sum -c install.sh.sha256)
-sudo ARGUS_DISTRIBUTION_URL='${window.location.origin}' bash "$ARGUS_INSTALL_TMP/install.sh"
+sudo bash "$ARGUS_INSTALL_TMP/install.sh"
 ARGUS_INSTALL_STATUS=$?
 rm -rf "$ARGUS_INSTALL_TMP"
 (exit "$ARGUS_INSTALL_STATUS")`;

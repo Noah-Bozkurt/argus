@@ -45,3 +45,11 @@ test("public site is a generic verified command without configuration fields", a
   assert.match(script, /sha256sum -c/);
   assert.doesNotMatch(script, /ARGUS_REGISTRY_TOKEN|read -rsp/);
 });
+
+test("guided installer uses hidden PAT authentication without distribution storage", async () => {
+  const installer = await readFile(resolve(rootDir, "install.sh"), "utf8");
+  assert.match(installer, /classic PAT with read:packages/);
+  assert.match(installer, /read -r -s -p 'GitHub token/);
+  assert.match(installer, /INSTALL_MODE.*control-plane.*agent/s);
+  assert.doesNotMatch(installer, /R2|device\/start|artifact-grants|release_public_key/);
+});

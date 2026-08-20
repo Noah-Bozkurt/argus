@@ -9,11 +9,11 @@
     <script src="/app.js" defer></script>
   </head>
   <body><main>
-    <header><span class="eyebrow">Argus installer</span><h1>Bring a server online.</h1><p class="lede">Run the verified installer on a clean Ubuntu or Debian amd64 server. GitHub authorization and configuration happen securely in your terminal.</p></header>
+    <header><span class="eyebrow">Argus installer</span><h1>Bring a server online.</h1><p class="lede">Run the verified installer on a clean Ubuntu or Debian amd64 server. Configuration and private GHCR authentication happen securely in your terminal.</p></header>
     <section class="panel command-panel" aria-labelledby="command-title">
       <div class="section-heading"><span>01</span><div><h2 id="command-title">Run on the server</h2><p>The checksum is verified before the installer starts.</p></div></div>
       <pre><code id="command"></code></pre><button type="button" class="secondary" id="copy-command">Copy command</button>
     </section>
-    <section class="notes" aria-label="Requirements"><div><strong>Supported host</strong><span>Ubuntu or Debian, amd64, root access</span></div><div><strong>Authorization</strong><span>A GitHub account with access to the private Argus repository</span></div><div><strong>Secrets</strong><span>No GitHub token is entered into or stored by the installer</span></div></section>
+    <section class="notes" aria-label="Requirements"><div><strong>Supported host</strong><span>Ubuntu or Debian, amd64, root access</span></div><div><strong>Authorization</strong><span>A classic GitHub PAT with read:packages</span></div><div><strong>Secrets</strong><span>The token is entered silently and used through a temporary Docker configuration</span></div></section>
   </main></body>
 </html>
