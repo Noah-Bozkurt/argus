@@ -35,7 +35,7 @@ enum Commands {
     Connection,
     Smoke,
     Update {
-        #[arg(long, default_value = "main")]
+        #[arg(long, default_value = "stable")]
         version: String,
     },
     #[command(hide = true)]
@@ -222,10 +222,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn update_defaults_to_main_discovery_tag() {
+    fn update_defaults_to_stable_release_channel() {
         let cli = Cli::try_parse_from(["argusctl", "update"]).expect("parse update command");
         match cli.command {
-            Commands::Update { version } => assert_eq!(version, "main"),
+            Commands::Update { version } => assert_eq!(version, "stable"),
             _ => panic!("expected update command"),
         }
     }

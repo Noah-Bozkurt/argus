@@ -23,7 +23,10 @@ TARGET_START_ARMED=0
 ROLLBACK_IN_PROGRESS=0
 CURRENT_REVISION=""
 TARGET_REVISION=""
-REQUESTED_VERSION="${ARGUS_TARGET_VERSION:-main}"
+REQUESTED_VERSION="${ARGUS_TARGET_VERSION:-stable}"
+DISTRIBUTION_URL="${ARGUS_DISTRIBUTION_URL:-https://install.argus.example}"
+DEVICE_SESSION=""
+VERIFIED_BUNDLE_ROOT=""
 
 log() { printf '[argus-update] %s\n' "$*"; }
 warn() { printf '[argus-update] warning: %s\n' "$*" >&2; }
@@ -163,6 +166,50 @@ registry_login() {
     | docker login "$registry_host" -u "$ARGUS_REGISTRY_USERNAME" --password-stdin >/dev/null
 }
 
+device_authorize_update() {
+  [[ -z "${ARGUS_REGISTRY_TOKEN:-}" ]] || return 0
+  local response interval expires started http
+  response="$(curl -fsS -X POST "$DISTRIBUTION_URL/api/device/start")" || die "could not start GitHub device authorization"
+  DEVICE_SESSION="$(jq -er '.id' <<<"$response")"
+  interval="$(jq -er '.interval // 5' <<<"$response")"; expires="$(jq -er '.expires_in' <<<"$response")"
+  printf '\nAuthorize this update at %s with code %s\n\n' "$(jq -r '.verification_uri' <<<"$response")" "$(jq -r '.user_code' <<<"$response")"
+  started=$SECONDS
+  while (( SECONDS - started < expires )); do
+    sleep "$interval"
+    response="$(curl -sS -w '\n%{http_code}' "$DISTRIBUTION_URL/api/device/sessions/$DEVICE_SESSION")"
+    http="$(tail -n1 <<<"$response")"; response="$(sed '$d' <<<"$response")"
+    [[ "$http" == 200 ]] && return 0
+    [[ "$http" == 202 ]] || die "GitHub authorization was denied or expired"
+    interval="$(jq -r '.retry_after // 5' <<<"$response")"
+  done
+  die "GitHub device code expired"
+}
+
+download_verified_target() {
+  TARGET_TMP="$(mktemp -d)"; chmod 0700 "$TARGET_TMP"
+  local response object checksum size grant actual
+  response="$(curl -fsS -H "x-argus-device-session: $DEVICE_SESSION" "$DISTRIBUTION_URL/api/releases/$REQUESTED_VERSION/control-plane/manifest")" || die "could not retrieve target manifest"
+  jq -er '.manifest' <<<"$response" >"$TARGET_TMP/manifest.json"
+  jq -er '.signature' <<<"$response" | base64 -d >"$TARGET_TMP/manifest.sig" || die "invalid manifest signature encoding"
+  cat >"$TARGET_TMP/public.pem" <<'EOF'
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAGD+O6E423q4GIkGMWc7kYqtsOH0VHJPTBoHPy90B1NQ=
+-----END PUBLIC KEY-----
+EOF
+  openssl pkeyutl -verify -pubin -inkey "$TARGET_TMP/public.pem" -rawin -in "$TARGET_TMP/manifest.json" -sigfile "$TARGET_TMP/manifest.sig" >/dev/null || die "target manifest signature verification failed"
+  [[ "$(jq -r '.architecture' "$TARGET_TMP/manifest.json")" == amd64 && "$(jq -r '.bundle' "$TARGET_TMP/manifest.json")" == control-plane ]] || die "target manifest does not match this host"
+  TARGET_REVISION="$(jq -er '.commit_sha' "$TARGET_TMP/manifest.json")"; validate_revision "$TARGET_REVISION"
+  object="$(jq -er '.artifact.object' "$TARGET_TMP/manifest.json")"; checksum="$(jq -er '.artifact.sha256' "$TARGET_TMP/manifest.json")"; size="$(jq -er '.artifact.size' "$TARGET_TMP/manifest.json")"
+  grant="$(curl -fsS -H "x-argus-device-session: $DEVICE_SESSION" -H 'content-type: application/json' -d "$(jq -nc --arg object "$object" '{object:$object}')" "$DISTRIBUTION_URL/api/artifact-grants" | jq -er '.url')"
+  curl -fL --retry 3 --continue-at - "$grant" -o "$TARGET_TMP/bundle.tar.zst" || die "target bundle download failed"
+  actual="$(stat -c %s "$TARGET_TMP/bundle.tar.zst")"; [[ "$actual" == "$size" ]] || die "target bundle size verification failed"
+  printf '%s  %s\n' "$checksum" "$TARGET_TMP/bundle.tar.zst" | sha256sum -c - >/dev/null || die "target bundle checksum verification failed"
+  mkdir "$TARGET_TMP/release"; tar --zstd -xf "$TARGET_TMP/bundle.tar.zst" -C "$TARGET_TMP/release"
+  [[ -s "$TARGET_TMP/release/images.tar" ]] || die "target bundle is incomplete"
+  docker load -i "$TARGET_TMP/release/images.tar" >/dev/null
+  VERIFIED_BUNDLE_ROOT="$TARGET_TMP/release"
+}
+
 image_revision() {
   local image="$1"
   docker image inspect "$image" \
@@ -223,6 +270,17 @@ pull_and_verify_target() {
 }
 
 prepare_target_bundle() {
+  if [[ -n "$VERIFIED_BUNDLE_ROOT" ]]; then
+    local root="$VERIFIED_BUNDLE_ROOT"
+    cp "$root/out/argus-agent" "$TARGET_TMP/argus-agent"
+    cp "$root/out/argus-helper" "$TARGET_TMP/argus-helper"
+    cp "$root/out/argusctl" "$TARGET_TMP/argusctl"
+    cp "$root/deploy/compose.yaml" "$TARGET_TMP/compose.yaml"
+    cp "$root/deploy/Caddyfile.template" "$TARGET_TMP/Caddyfile.template"
+    cp "$root/deploy/systemd/argus-agent.service" "$TARGET_TMP/argus-agent.service"
+    cp "$root/deploy/systemd/argus-helper.service" "$TARGET_TMP/argus-helper.service"
+    return
+  fi
   TARGET_TMP="$(mktemp -d)"
   chmod 0700 "$TARGET_TMP"
   local image="${ARGUS_REGISTRY}/argus-host-tools:${TARGET_REVISION}"
@@ -664,7 +722,7 @@ main() {
   : "${ARGUS_DOMAIN:?missing ARGUS_DOMAIN}"
   : "${ARGUS_CONTENT_DOMAIN:?missing ARGUS_CONTENT_DOMAIN}"
 
-  registry_login
+  if [[ -n "${ARGUS_REGISTRY_TOKEN:-}" ]]; then registry_login; else device_authorize_update; fi
   resolve_current_revision
   normalize_installed_version
 
@@ -672,7 +730,7 @@ main() {
   /usr/local/bin/argusctl smoke
 
   prune_completed_transactions
-  pull_and_verify_target
+  if [[ -n "${ARGUS_REGISTRY_TOKEN:-}" ]]; then pull_and_verify_target; else download_verified_target; fi
   if [[ "$TARGET_REVISION" == "$CURRENT_REVISION" ]]; then
     log "already running requested revision $CURRENT_REVISION"
     return

@@ -47,18 +47,13 @@ jobs:
             [[ -z "$images" ]] || images+=','
             images+="$image"
           }
-          changed() { ! git diff --quiet HEAD^ HEAD -- "$@"; }
-
-          changed apps/web packages package.json pnpm-lock.yaml pnpm-workspace.yaml deploy/docker/web.Dockerfile \
-            && add_image argus-web deploy/docker/web.Dockerfile
-          changed apps/content packages package.json pnpm-lock.yaml pnpm-workspace.yaml deploy/docker/content.Dockerfile \
-            && add_image argus-content deploy/docker/content.Dockerfile
-          changed services/control-api crates migrations Cargo.toml Cargo.lock deploy/docker/control-api.Dockerfile \
-            && add_image argus-control-api deploy/docker/control-api.Dockerfile
-          changed services/worker crates/common crates/protocol migrations Cargo.toml Cargo.lock deploy/docker/worker.Dockerfile \
-            && add_image argus-worker deploy/docker/worker.Dockerfile
-          changed crates install.sh scripts deploy/compose deploy/systemd deploy/docker/host-tools.Dockerfile Cargo.toml Cargo.lock \
-            && add_image argus-host-tools deploy/docker/host-tools.Dockerfile
+          # Every green revision is exported as a coherent immutable bundle, so all
+          # images receive the tested SHA even when only one component changed.
+          add_image argus-web deploy/docker/web.Dockerfile
+          add_image argus-content deploy/docker/content.Dockerfile
+          add_image argus-control-api deploy/docker/control-api.Dockerfile
+          add_image argus-worker deploy/docker/worker.Dockerfile
+          add_image argus-host-tools deploy/docker/host-tools.Dockerfile
 
           if [[ -n "$include" ]]; then
             echo 'any=true' >>"$GITHUB_OUTPUT"
@@ -141,4 +136,69 @@ jobs:
             echo "Verifying ${image}:main"
             docker buildx imagetools inspect \
               "ghcr.io/noah-bozkurt/${image}:main" >/dev/null
+          done
+
+  export-release-bundles:
+    name: Export signed R2 release bundles
+    needs: verify-published-artifacts
+    runs-on: [self-hosted, linux, x64]
+    env:
+      TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      ARGUS_RELEASE_SIGNING_KEY: ${{ secrets.ARGUS_RELEASE_SIGNING_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Sign in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build immutable bundles and manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          release="$RUNNER_TEMP/argus-release"
+          mkdir -p "$release/control-plane/out" "$release/control-plane/deploy/systemd" "$release/managed-node/out" "$release/managed-node/deploy/systemd"
+          images=(argus-web argus-control-api argus-worker argus-content argus-host-tools)
+          refs=()
+          digests='{}'
+          for image in "${images[@]}"; do
+            ref="ghcr.io/noah-bozkurt/${image}:${TESTED_SHA}"
+            docker pull "$ref"
+            refs+=("$ref")
+            digest="$(docker image inspect "$ref" --format '{{index .RepoDigests 0}}')"
+            digests="$(jq -c --arg image "$image" --arg digest "$digest" '. + {($image):$digest}' <<<"$digests")"
+          done
+          docker save "${refs[@]}" -o "$release/control-plane/images.tar"
+          container="$(docker create "ghcr.io/noah-bozkurt/argus-host-tools:${TESTED_SHA}")"
+          docker cp "$container:/out/." "$release/control-plane/out/"
+          docker cp "$container:/deploy/." "$release/control-plane/deploy/"
+          docker rm "$container"
+          cp "$release/control-plane/out/argus-agent" "$release/control-plane/out/argus-helper" "$release/control-plane/out/argusctl" "$release/managed-node/out/"
+          cp "$release/control-plane/deploy/systemd/argus-agent.service" "$release/control-plane/deploy/systemd/argus-helper.service" "$release/managed-node/deploy/systemd/"
+          for bundle in control-plane managed-node; do
+            artifact="stable/amd64/${bundle}.tar.zst"
+            tar --zstd -C "$release/$bundle" -cf "$release/${bundle}.tar.zst" .
+            checksum="$(sha256sum "$release/${bundle}.tar.zst" | awk '{print $1}')"
+            size="$(stat -c %s "$release/${bundle}.tar.zst")"
+            jq -cn --arg sha "$TESTED_SHA" --arg bundle "$bundle" --arg object "$artifact" --arg checksum "$checksum" --argjson size "$size" --argjson digests "$digests" \
+              '{commit_sha:$sha,architecture:"amd64",bundle:$bundle,channel:"stable",artifact:{object:$object,sha256:$checksum,size:$size},image_digests:$digests}' >"$release/${bundle}.manifest.json"
+            printf '%s' "$ARGUS_RELEASE_SIGNING_KEY" >"$release/signing.pem"
+            openssl pkeyutl -sign -inkey "$release/signing.pem" -rawin -in "$release/${bundle}.manifest.json" -out "$release/${bundle}.manifest.sig.raw"
+            base64 -w0 "$release/${bundle}.manifest.sig.raw" >"$release/${bundle}.manifest.sig"
+          done
+          rm -f "$release/signing.pem" "$release"/*.sig.raw
+      - name: Upload private release objects
+        shell: bash
+        run: |
+          set -euo pipefail
+          release="$RUNNER_TEMP/argus-release"
+          for bundle in control-plane managed-node; do
+            pnpm dlx wrangler@3.90.0 r2 object put "argus-releases/stable/amd64/${bundle}.tar.zst" --file "$release/${bundle}.tar.zst" --remote
+            pnpm dlx wrangler@3.90.0 r2 object put "argus-releases/stable/amd64/${bundle}.manifest.json" --file "$release/${bundle}.manifest.json" --remote
+            pnpm dlx wrangler@3.90.0 r2 object put "argus-releases/stable/amd64/${bundle}.manifest.sig" --file "$release/${bundle}.manifest.sig" --remote
           done

@@ -12,10 +12,38 @@ HOST_TOOLS_CONTAINER=""
 DOCKER_CONFIG_DIR=""
 GENERATED_BASIC_AUTH_PASSWORD=""
 EXISTING_INSTALL=0
+INSTALL_MODE="${ARGUS_INSTALL_MODE:-}"
+DISTRIBUTION_URL="${ARGUS_DISTRIBUTION_URL:-https://install.argus.example}"
+RELEASE_CHANNEL="${ARGUS_RELEASE_CHANNEL:-stable}"
+DEVICE_SESSION=""
+RELEASE_TMP=""
+LOG_DIR="${ARGUS_LOG_DIR:-/var/log/argus}"
+LOG_FILE="$LOG_DIR/install-$(date -u +%Y%m%dT%H%M%SZ).log"
+STAGE=0
+TOTAL_STAGES=7
 
 log() { printf '[argus] %s\n' "$*"; }
 warn() { printf '[argus] warning: %s\n' "$*" >&2; }
 die() { printf '[argus] error: %s\n' "$*" >&2; exit 1; }
+stage() { STAGE=$((STAGE + 1)); printf '\n[%d/%d] %s\n' "$STAGE" "$TOTAL_STAGES" "$1"; }
+
+banner() {
+  printf '\n========================================\n'
+  printf '           ARGUS INSTALLER\n'
+  printf '========================================\n\n'
+}
+
+select_mode() {
+  banner
+  if [[ -z "$INSTALL_MODE" ]]; then
+    [[ -t 0 ]] || die "ARGUS_INSTALL_MODE must be control-plane or agent in non-interactive mode"
+    printf '  1. Install an Argus control plane here.\n'
+    printf '  2. Connect this server to an existing Argus instance.\n\n'
+    read -r -p 'Choose [1-2]: ' choice
+    case "$choice" in 1) INSTALL_MODE=control-plane ;; 2) INSTALL_MODE=agent ;; *) die "invalid installation mode" ;; esac
+  fi
+  [[ "$INSTALL_MODE" == "control-plane" || "$INSTALL_MODE" == "agent" ]] || die "ARGUS_INSTALL_MODE must be control-plane or agent"
+}
 
 cleanup() {
   if [[ -n "$HOST_TOOLS_CONTAINER" ]]; then
@@ -23,6 +51,9 @@ cleanup() {
   fi
   if [[ -n "$DOCKER_CONFIG_DIR" ]]; then
     rm -rf "$DOCKER_CONFIG_DIR"
+  fi
+  if [[ -n "$RELEASE_TMP" ]]; then
+    rm -rf "$RELEASE_TMP"
   fi
 }
 trap cleanup EXIT
@@ -66,11 +97,90 @@ prompt_required() {
   fi
 }
 
+prompt_password() {
+  if [[ -n "${ARGUS_BASIC_AUTH_PASSWORD:-}" ]]; then return; fi
+  if [[ ! -t 0 ]]; then
+    ARGUS_BASIC_AUTH_PASSWORD="$(new_password)"
+    GENERATED_BASIC_AUTH_PASSWORD="$ARGUS_BASIC_AUTH_PASSWORD"
+    return
+  fi
+  local first second
+  read -r -s -p 'Browser password (Enter to generate): ' first; printf '\n'
+  if [[ -z "$first" ]]; then
+    ARGUS_BASIC_AUTH_PASSWORD="$(new_password)"
+    GENERATED_BASIC_AUTH_PASSWORD="$ARGUS_BASIC_AUTH_PASSWORD"
+    return
+  fi
+  read -r -s -p 'Confirm browser password: ' second; printf '\n'
+  [[ "$first" == "$second" ]] || die "passwords do not match"
+  ARGUS_BASIC_AUTH_PASSWORD="$first"
+}
+
+device_authorize() {
+  if [[ -n "${ARGUS_REGISTRY_TOKEN:-}" ]]; then
+    warn "using emergency registry compatibility path"
+    return
+  fi
+  local response code url interval expires started status
+  response="$(curl -fsS -X POST "$DISTRIBUTION_URL/api/device/start")" || die "could not start GitHub device authorization"
+  DEVICE_SESSION="$(jq -er '.id' <<<"$response")"
+  code="$(jq -er '.user_code' <<<"$response")"
+  url="$(jq -er '.verification_uri' <<<"$response")"
+  interval="$(jq -er '.interval // 5' <<<"$response")"
+  expires="$(jq -er '.expires_in' <<<"$response")"
+  printf '\nAuthorize this server with GitHub:\n\n  Code: %s\n  Open: %s\n\n' "$code" "$url"
+  started=$SECONDS
+  while (( SECONDS - started < expires )); do
+    sleep "$interval"
+    response="$(curl -sS -w '\n%{http_code}' "$DISTRIBUTION_URL/api/device/sessions/$DEVICE_SESSION")"
+    status="$(tail -n1 <<<"$response")"; response="$(sed '$d' <<<"$response")"
+    if [[ "$status" == "200" && "$(jq -r '.status' <<<"$response")" == "authorized" ]]; then
+      printf 'GitHub authorization confirmed.\n'
+      return
+    fi
+    [[ "$status" == "202" ]] || die "GitHub authorization was denied or expired"
+    interval="$(jq -r '.retry_after // 5' <<<"$response")"
+    printf '.'
+  done
+  die "GitHub device code expired; rerun the installer"
+}
+
+release_public_key() {
+  cat <<'EOF'
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAGD+O6E423q4GIkGMWc7kYqtsOH0VHJPTBoHPy90B1NQ=
+-----END PUBLIC KEY-----
+EOF
+}
+
+download_release_bundle() {
+  local bundle="$1" response object expected size grant actual
+  RELEASE_TMP="$(mktemp -d)"; chmod 0700 "$RELEASE_TMP"
+  response="$(curl -fsS -H "x-argus-device-session: $DEVICE_SESSION" "$DISTRIBUTION_URL/api/releases/$RELEASE_CHANNEL/$bundle/manifest")" || die "could not retrieve release manifest"
+  jq -er '.manifest' <<<"$response" >"$RELEASE_TMP/manifest.json"
+  jq -er '.signature' <<<"$response" | base64 -d >"$RELEASE_TMP/manifest.sig" || die "release manifest signature is invalid"
+  release_public_key >"$RELEASE_TMP/release-public.pem"
+  openssl pkeyutl -verify -pubin -inkey "$RELEASE_TMP/release-public.pem" -rawin -in "$RELEASE_TMP/manifest.json" -sigfile "$RELEASE_TMP/manifest.sig" >/dev/null \
+    || die "release manifest signature verification failed"
+  [[ "$(jq -r '.architecture' "$RELEASE_TMP/manifest.json")" == "amd64" ]] || die "release architecture does not match this host"
+  [[ "$(jq -r '.bundle' "$RELEASE_TMP/manifest.json")" == "$bundle" ]] || die "release manifest contains the wrong bundle"
+  ARGUS_VERSION="$(jq -er '.commit_sha' "$RELEASE_TMP/manifest.json")"; is_revision "$ARGUS_VERSION" || die "release manifest has an invalid revision"
+  object="$(jq -er '.artifact.object' "$RELEASE_TMP/manifest.json")"
+  expected="$(jq -er '.artifact.sha256' "$RELEASE_TMP/manifest.json")"
+  size="$(jq -er '.artifact.size' "$RELEASE_TMP/manifest.json")"
+  grant="$(curl -fsS -H "x-argus-device-session: $DEVICE_SESSION" -H 'content-type: application/json' -d "$(jq -nc --arg object "$object" '{object:$object}')" "$DISTRIBUTION_URL/api/artifact-grants" | jq -er '.url')"
+  curl -fL --retry 3 --continue-at - "$grant" -o "$RELEASE_TMP/bundle.tar.zst" || die "release download failed"
+  actual="$(stat -c %s "$RELEASE_TMP/bundle.tar.zst")"; [[ "$actual" == "$size" ]] || die "release bundle size verification failed"
+  printf '%s  %s\n' "$expected" "$RELEASE_TMP/bundle.tar.zst" | sha256sum -c - >/dev/null || die "release bundle checksum verification failed"
+  mkdir "$RELEASE_TMP/unpacked"
+  tar --zstd -xf "$RELEASE_TMP/bundle.tar.zst" -C "$RELEASE_TMP/unpacked" || die "could not extract release bundle"
+}
+
 install_prerequisites() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
   apt-get install -y --no-install-recommends \
-    ca-certificates curl jq openssl iproute2 ufw unattended-upgrades
+    ca-certificates curl jq openssl zstd iproute2 ufw unattended-upgrades
 }
 
 install_docker() {
@@ -124,9 +234,9 @@ preflight() {
     || die "first-test installer currently supports amd64 only"
 
   install_prerequisites
-  install_docker
+  if [[ "$INSTALL_MODE" == "control-plane" ]]; then install_docker; fi
 
-  if [[ ! -f "$COMPOSE_FILE" ]]; then
+  if [[ "$INSTALL_MODE" == "control-plane" && ! -f "$COMPOSE_FILE" ]]; then
     for port in 80 443; do
       if ss -ltnH | awk '{print $4}' | grep -Eq ":${port}$"; then
         die "TCP port ${port} is already in use; use a clean first-test host or free the port"
@@ -179,8 +289,7 @@ load_or_create_configuration() {
   if [[ -n "$requested_basic_password" ]]; then
     ARGUS_BASIC_AUTH_PASSWORD="$requested_basic_password"
   elif [[ -z "${ARGUS_BASIC_AUTH_PASSWORD:-}" ]]; then
-    ARGUS_BASIC_AUTH_PASSWORD="$(new_password)"
-    GENERATED_BASIC_AUTH_PASSWORD="$ARGUS_BASIC_AUTH_PASSWORD"
+    prompt_password
   fi
 
   ARGUS_OPERATOR_EMAIL="${ARGUS_OPERATOR_EMAIL:-operator@argus.local}"
@@ -241,6 +350,25 @@ resolve_existing_mutable_revision() {
 }
 
 pull_host_bundle() {
+  if [[ -z "${ARGUS_REGISTRY_TOKEN:-}" ]]; then
+    download_release_bundle control-plane
+    local root="$RELEASE_TMP/unpacked"
+    for required in images.tar out/argus-agent out/argus-helper out/argusctl deploy/compose.yaml deploy/Caddyfile.template deploy/systemd/argus-agent.service deploy/systemd/argus-helper.service; do
+      [[ -s "$root/$required" ]] || die "verified control-plane bundle is incomplete: $required"
+    done
+    docker load -i "$root/images.tar" >/dev/null
+    mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR" "$STATE_DIR/backups"
+    install -m 0644 "$root/deploy/compose.yaml" "$COMPOSE_FILE"
+    install -m 0644 "$root/deploy/Caddyfile.template" "$INSTALL_DIR/Caddyfile.template"
+    install -m 0755 "$root/out/argus-agent" /usr/local/bin/argus-agent
+    install -m 0755 "$root/out/argus-helper" /usr/local/bin/argus-helper
+    install -m 0755 "$root/out/argusctl" /usr/local/bin/argusctl
+    install -m 0644 "$root/deploy/systemd/argus-agent.service" /etc/systemd/system/argus-agent.service
+    install -m 0644 "$root/deploy/systemd/argus-helper.service" /etc/systemd/system/argus-helper.service
+    systemctl daemon-reload
+    export ARGUS_VERSION
+    return
+  fi
   registry_login_if_configured
   resolve_existing_mutable_revision
 
@@ -368,7 +496,7 @@ compose() {
 
 start_control_plane() {
   compose config >/dev/null
-  compose pull
+  if [[ -n "${ARGUS_REGISTRY_TOKEN:-}" ]]; then compose pull; fi
   configure_firewall_if_active
   compose up -d
 
@@ -382,6 +510,57 @@ start_control_plane() {
   compose ps || true
   compose logs --tail=120 control-api postgres || true
   die "Control API did not become healthy"
+}
+
+parse_setup_code() {
+  local code="$1" decoded
+  decoded="$(printf '%s' "$code" | base64 -d 2>/dev/null)" || die "invalid setup code"
+  ARGUS_CONTROL_PLANE_URL="$(jq -er '.control_plane_url' <<<"$decoded")"
+  ARGUS_SERVER_ID="$(jq -er '.server_id' <<<"$decoded")"
+  ARGUS_ENROLLMENT_TOKEN="$(jq -er '.enrollment_token' <<<"$decoded")"
+  if [[ "$ARGUS_CONTROL_PLANE_URL" != https://* && "${ARGUS_ALLOW_INSECURE_CONTROL_PLANE:-0}" != "1" ]]; then
+    die "remote control plane must use HTTPS"
+  fi
+}
+
+install_managed_node() {
+  local setup_code="${ARGUS_SETUP_CODE:-}"
+  if [[ -z "$setup_code" ]]; then
+    [[ -t 0 ]] || die "ARGUS_SETUP_CODE is required in non-interactive agent mode"
+    read -r -s -p 'Argus setup code: ' setup_code; printf '\n'
+  fi
+  parse_setup_code "$setup_code"; unset setup_code ARGUS_SETUP_CODE
+  download_release_bundle managed-node
+  local root="$RELEASE_TMP/unpacked"
+  for required in out/argus-agent out/argus-helper out/argusctl deploy/systemd/argus-agent.service deploy/systemd/argus-helper.service; do
+    [[ -s "$root/$required" ]] || die "verified managed-node bundle is incomplete: $required"
+  done
+  ensure_argus_user
+  install -m 0755 "$root/out/argus-agent" /usr/local/bin/argus-agent
+  install -m 0755 "$root/out/argus-helper" /usr/local/bin/argus-helper
+  install -m 0755 "$root/out/argusctl" /usr/local/bin/argusctl
+  install -m 0644 "$root/deploy/systemd/argus-agent.service" /etc/systemd/system/argus-agent.service
+  install -m 0644 "$root/deploy/systemd/argus-helper.service" /etc/systemd/system/argus-helper.service
+  systemctl daemon-reload
+  write_helper_env
+  cat >"$CONFIG_DIR/agent.env" <<EOF
+ARGUS_CONTROL_PLANE_URL=${ARGUS_CONTROL_PLANE_URL}
+ARGUS_SERVER_ID=${ARGUS_SERVER_ID}
+ARGUS_AGENT_CONFIG=${STATE_DIR}/agent.json
+ARGUS_HELPER_SOCKET=/run/argus/helper.sock
+ARGUS_ENROLLMENT_TOKEN=${ARGUS_ENROLLMENT_TOKEN}
+RUST_LOG=${ARGUS_RUST_LOG:-info}
+EOF
+  chown root:argus "$CONFIG_DIR/agent.env"; chmod 0640 "$CONFIG_DIR/agent.env"
+  systemctl enable --now argus-helper.service argus-agent.service
+  for _ in $(seq 1 60); do [[ -s "$STATE_DIR/agent.json" ]] && break; sleep 2; done
+  [[ -s "$STATE_DIR/agent.json" ]] || die "Argus Agent did not enroll successfully"
+  sed -i '/^ARGUS_ENROLLMENT_TOKEN=/d' "$CONFIG_DIR/agent.env"
+  unset ARGUS_ENROLLMENT_TOKEN
+  systemctl restart argus-agent.service
+  systemctl is-active --quiet argus-helper.service || die "argus-helper.service is not active"
+  systemctl is-active --quiet argus-agent.service || die "argus-agent.service is not active"
+  printf '\nArgus managed node is connected.\nControl plane: %s\nServer ID:     %s\nRevision:      %s\n' "$ARGUS_CONTROL_PLANE_URL" "$ARGUS_SERVER_ID" "$ARGUS_VERSION"
 }
 
 bootstrap_control_plane() {
@@ -567,6 +746,7 @@ print_summary() {
     printf '\nA new first-test password was generated and stored only in the root-readable %s file.\n' "$ENV_FILE"
   fi
   printf '\nVersion:  %s\n' "$ARGUS_VERSION"
+  printf 'Recovery: sudo grep ^ARGUS_BASIC_AUTH_PASSWORD= %s\n' "$ENV_FILE"
   printf 'Config:   %s\n' "$INSTALL_DIR"
   printf 'Agent:    %s\n' "$ARGUS_SERVER_ID"
   printf '\nUseful diagnostics:\n'
@@ -574,21 +754,37 @@ print_summary() {
   printf '  journalctl -u argus-agent -u argus-helper --no-pager -n 100\n'
   printf '  argusctl status\n'
   printf '  sudo argusctl smoke\n'
-  printf '\nTransactional update (requires read-only registry credentials):\n'
-  printf '  sudo -E argusctl update --version main\n'
+  printf '\nTransactional update:\n'
+  printf '  sudo argusctl update --version stable\n'
 }
 
 main() {
+  select_mode
+  install -m 0700 -d "$LOG_DIR"
+  touch "$LOG_FILE"; chmod 0600 "$LOG_FILE"
+  stage "Checking host requirements"
   preflight
+  stage "Authorizing release access"
+  device_authorize
+  if [[ "$INSTALL_MODE" == "agent" ]]; then
+    stage "Installing managed-node bundle"
+    install_managed_node
+    return
+  fi
+  stage "Collecting control-plane configuration"
   load_or_create_configuration
-  log "installing Argus ${ARGUS_VERSION} for ${ARGUS_DOMAIN}"
+  log "installing Argus for ${ARGUS_DOMAIN}"
+  stage "Downloading and verifying release"
   pull_host_bundle
+  stage "Configuring services"
   ensure_argus_user
   write_runtime_env
   generate_caddy_config
+  stage "Starting the control plane"
   start_control_plane
   bootstrap_control_plane
   enroll_local_agent
+  stage "Verifying health"
   verify_installation
   print_summary
 }

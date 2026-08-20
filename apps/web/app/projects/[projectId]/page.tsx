@@ -11,7 +11,8 @@ import IncidentAutomationSection from './incident-automation-section'
 import DependencyGraphSection from './dependency-graph-section'
 import IncidentsSection from './incidents-section'
 import StatusPagesSection from './status-pages-section'
-import { getProjectRepositories, getProjectWorkspace } from '../../../lib/api'
+import AddServerSection from './add-server-section'
+import { getProjectEnvironments, getProjectRepositories, getProjectWorkspace } from '../../../lib/api'
 import {
   createMilestoneAction,
   createNoteAction,
@@ -29,9 +30,10 @@ function formatDate(value: string | null): string {
 }
 
 export default async function ProjectPage({ params }: { params: { projectId: string } }) {
-  const [workspace, repositories] = await Promise.all([
+  const [workspace, repositories, environments] = await Promise.all([
     getProjectWorkspace(params.projectId),
     getProjectRepositories(params.projectId),
+    getProjectEnvironments(params.projectId),
   ])
   const { project, tasks, notes, milestones, activity } = workspace
 
@@ -96,6 +98,8 @@ export default async function ProjectPage({ params }: { params: { projectId: str
       )}
 
       <EnvironmentsSection projectId={project.id} />
+
+      <AddServerSection projectId={project.id} environments={environments} />
 
       <ComposeStacksSection projectId={project.id} />
 

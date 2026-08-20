@@ -77,6 +77,7 @@ services:
     image: ${ARGUS_REGISTRY:-ghcr.io/noah-bozkurt}/argus-web:${ARGUS_VERSION:?ARGUS_VERSION is required}
     environment:
       ARGUS_CONTROL_API_URL: http://control-api:8080
+      ARGUS_PUBLIC_URL: https://${ARGUS_DOMAIN:?ARGUS_DOMAIN is required}
       ARGUS_CONTENT_URL: http://content:3000
       ARGUS_CONTENT_PUBLIC_URL: https://${ARGUS_CONTENT_DOMAIN:?ARGUS_CONTENT_DOMAIN is required}
       ARGUS_CONTENT_SYNC_TOKEN: ${ARGUS_CONTENT_SYNC_TOKEN:?ARGUS_CONTENT_SYNC_TOKEN is required}
