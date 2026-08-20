@@ -39,6 +39,9 @@ on:
       - .github/workflows/ci.yml
       - .github/workflows/deploy-installer-pages.yml
       - .github/workflows/publish-images.yml
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -56,8 +59,11 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       content: ${{ steps.filter.outputs.content }}
       installer: ${{ steps.filter.outputs.installer }}
-      readiness: ${{ steps.filter.outputs.readiness }}
+      deployment: ${{ steps.filter.outputs.deployment }}
+      database: ${{ steps.filter.outputs.database }}
+      cms_runtime: ${{ steps.filter.outputs.cms_runtime }}
       acceptance: ${{ steps.filter.outputs.acceptance }}
+      full: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -93,26 +99,32 @@ jobs:
               - 'pnpm-workspace.yaml'
               - '.github/workflows/ci.yml'
               - '.github/workflows/deploy-installer-pages.yml'
-            readiness:
+            deployment:
+              - 'install.sh'
+              - 'scripts/first-server-smoke.sh'
+              - 'scripts/update-first-test.sh'
+              - 'scripts/recover-interrupted-update.sh'
+              - 'deploy/**'
+              - '.github/workflows/ci.yml'
+            database:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'crates/**'
-              - 'services/**'
-              - 'migrations/**'
-              - 'apps/web/**'
+              - 'services/control-api/**'
+              - 'services/worker/**'
+              - '.github/workflows/ci.yml'
+            cms_runtime:
               - 'apps/content/**'
               - 'packages/**'
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
-              - 'scripts/first-server-smoke.sh'
               - 'scripts/first-server-content-acceptance.mjs'
               - 'scripts/test-native-cms-runtime.sh'
               - 'scripts/test-media-runtime.sh'
               - 'scripts/test-forms-runtime.sh'
-              - 'scripts/update-first-test.sh'
-              - 'scripts/recover-interrupted-update.sh'
-              - 'deploy/**'
+              - 'services/control-api/src/job_execution.rs'
+              - 'services/control-api/migrations/**'
               - '.github/workflows/ci.yml'
             acceptance:
               - 'install.sh'
@@ -124,7 +136,7 @@ jobs:
 
   rust:
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.full == 'true'
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
@@ -199,33 +211,16 @@ jobs:
           bash scripts/test-reset-first-test.sh
           node --test scripts/first-server-content-acceptance.test.mjs
 
-  server-test-readiness:
+  deployment-safety:
     needs:
       - changes
-      - rust
-      - javascript
       - acceptance-tooling
     if: >-
       always() &&
-      needs.changes.outputs.readiness == 'true' &&
+      (needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true') &&
       !contains(needs.*.result, 'failure') &&
       !contains(needs.*.result, 'cancelled')
     runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: argus
-          POSTGRES_PASSWORD: argus-test-password
-          POSTGRES_DB: argus
-        ports:
-          - 5432/tcp
-        options: >-
-          --health-cmd "pg_isready -U argus -d argus"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
     steps:
       - uses: actions/checkout@v4
 
@@ -445,46 +440,116 @@ jobs:
             -v "$caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
 
+  runtime-integration:
+    needs:
+      - changes
+      - rust
+      - javascript
+    if: >-
+      always() &&
+      (needs.changes.outputs.database == 'true' ||
+       needs.changes.outputs.cms_runtime == 'true' ||
+       needs.changes.outputs.full == 'true') &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: argus
+          POSTGRES_PASSWORD: argus-test-password
+          POSTGRES_DB: argus
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U argus -d argus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Boot Control API from an empty PostgreSQL database
+      - name: Verify migrations and Worker scheduling
         env:
           DATABASE_URL: postgresql://argus:argus-test-password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/argus
           ARGUS_CONTROL_API_BIND: 127.0.0.1:8080
+          ARGUS_CONTROL_API_URL: http://127.0.0.1:8080
           ARGUS_WEB_API_TOKEN: 0123456789abcdef0123456789abcdef
           ARGUS_WORKER_TOKEN: abcdef0123456789abcdef0123456789
+          ARGUS_CONTENT_URL: http://127.0.0.1:9
+          ARGUS_CONTENT_SYNC_TOKEN: 11111111111111111111111111111111
+          ARGUS_WORKER_POLL_SECONDS: 1
           RUST_LOG: info
         run: |
           set -euo pipefail
           control_log="$RUNNER_TEMP/argus-control-api.log"
+          worker_log="$RUNNER_TEMP/argus-worker.log"
           cargo run --locked -p control-api >"$control_log" 2>&1 &
-          pid=$!
-          trap 'kill "$pid" >/dev/null 2>&1 || true' EXIT
+          control_pid=$!
+          worker_pid=''
+          trap 'kill "$control_pid" ${worker_pid:-} >/dev/null 2>&1 || true' EXIT
           for _ in $(seq 1 300); do
             if curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then
-              exit 0
+              break
             fi
-            if ! kill -0 "$pid" >/dev/null 2>&1; then
+            if ! kill -0 "$control_pid" >/dev/null 2>&1; then
               cat "$control_log"
               exit 1
             fi
             sleep 1
           done
-          echo "Control API did not become healthy within 5 minutes" >&2
-          cat "$control_log"
+          curl -fsS http://127.0.0.1:8080/health >/dev/null || {
+            echo "Control API did not become healthy within 5 minutes" >&2
+            cat "$control_log"
+            exit 1
+          }
+
+          psql() {
+            docker run --rm --network host \
+              -e PGPASSWORD=argus-test-password postgres:16 \
+              psql -v ON_ERROR_STOP=1 -h 127.0.0.1 \
+              -p '${{ job.services.postgres.ports[5432] }}' -U argus -d argus "$@"
+          }
+
+          [[ "$(psql -Atc "SELECT indexprs IS NULL AND indpred IS NULL FROM pg_index WHERE indexrelid='background_jobs_dedupe_idx'::regclass")" == "t" ]]
+          psql -c "INSERT INTO organizations(id,name) VALUES('00000000-0000-4000-8000-000000000001','CI')"
+
+          cargo run --locked -p argus-worker >"$worker_log" 2>&1 &
+          worker_pid=$!
+          for _ in $(seq 1 60); do
+            if [[ "$(psql -Atc "SELECT EXISTS(SELECT 1 FROM background_jobs WHERE dedupe_key IS NOT NULL)")" == "t" ]]; then
+              exit 0
+            fi
+            if ! kill -0 "$worker_pid" >/dev/null 2>&1; then
+              cat "$worker_log"
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "Worker did not materialize a scheduled job within 60 seconds" >&2
+          cat "$worker_log"
           exit 1
 
       - uses: pnpm/action-setup@v4
+        if: needs.changes.outputs.cms_runtime == 'true' || needs.changes.outputs.full == 'true'
         with:
           version: 9
       - uses: actions/setup-node@v4
+        if: needs.changes.outputs.cms_runtime == 'true' || needs.changes.outputs.full == 'true'
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          cache-dependency-path: pnpm-lock.yaml
+      - if: needs.changes.outputs.cms_runtime == 'true' || needs.changes.outputs.full == 'true'
+        run: pnpm install --frozen-lockfile
 
       - name: Exercise native CMS draft and publication workflow
+        if: needs.changes.outputs.cms_runtime == 'true' || needs.changes.outputs.full == 'true'
         env:
           DATABASE_URL: postgresql://argus:argus-test-password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/argus
           ARGUS_CONTENT_DB_SCHEMA: argus_content
@@ -520,17 +585,3 @@ jobs:
           echo "Payload did not become healthy within 3 minutes" >&2
           cat "$content_log"
           exit 1
-
-      - name: Build Web standalone artifact
-        run: pnpm --filter @argus/web run build
-
-      - name: Build Payload standalone artifact without database access
-        env:
-          NODE_ENV: production
-          DATABASE_URL: postgresql://argus:build-only@127.0.0.1:9/argus
-          ARGUS_CONTENT_DB_SCHEMA: argus_content
-          PAYLOAD_SECRET: payload-build-secret-000000000000
-          PAYLOAD_PUBLIC_URL: http://localhost:3000
-          ARGUS_CONTENT_SYNC_TOKEN: content-sync-build-00000000000000
-          PAYLOAD_DB_PUSH: "false"
-        run: pnpm --filter @argus/content run build
