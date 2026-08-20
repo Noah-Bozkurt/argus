@@ -158,7 +158,7 @@ async fn enqueue_due_schedules(pool: &PgPool) -> Result<u64> {
         let scheduled_for: DateTime<Utc> = row.get("next_run_at");
         let dedupe_key = format!("schedule:{schedule_id}:{}", scheduled_for.to_rfc3339());
         let result = sqlx::query(
-            "INSERT INTO background_jobs(id,organization_id,project_id,schedule_id,job_kind,resource_key,payload,dedupe_key,status,run_at,attempts,max_attempts,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'QUEUED',NOW(),0,$9,NOW(),NOW()) ON CONFLICT(dedupe_key) DO NOTHING",
+            "INSERT INTO background_jobs(id,organization_id,project_id,schedule_id,job_kind,resource_key,payload,dedupe_key,status,run_at,attempts,max_attempts,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'QUEUED',NOW(),0,$9,NOW(),NOW()) ON CONFLICT DO NOTHING",
         )
         .bind(Uuid::new_v4())
         .bind(organization_id)
