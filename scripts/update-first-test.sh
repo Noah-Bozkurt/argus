@@ -417,20 +417,30 @@ arm_target_start() {
 }
 
 render_target_caddyfile() {
-  local hash
+  local hash rendered_caddyfile
   hash="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext "$ARGUS_BASIC_AUTH_PASSWORD")"
-  cp "$TARGET_TMP/Caddyfile.template" "$CADDY_FILE"
+  rendered_caddyfile="$TARGET_TMP/Caddyfile.rendered"
+  cp "$TARGET_TMP/Caddyfile.template" "$rendered_caddyfile"
   sed -i \
     -e "s|__ARGUS_DOMAIN__|${ARGUS_DOMAIN}|g" \
     -e "s|__ARGUS_CONTENT_DOMAIN__|${ARGUS_CONTENT_DOMAIN}|g" \
     -e "s|__BASIC_AUTH_USER__|${ARGUS_BASIC_AUTH_USER}|g" \
     -e "s|__BASIC_AUTH_HASH__|${hash}|g" \
-    "$CADDY_FILE"
-  chmod 0640 "$CADDY_FILE"
+    "$rendered_caddyfile"
+
+  if grep -Eq '__[A-Z0-9_]+__' "$rendered_caddyfile"; then
+    die "rendered Caddyfile still contains an unresolved placeholder"
+  fi
 
   docker run --rm \
-    -v "$CADDY_FILE:/etc/caddy/Caddyfile:ro" \
+    -v "$rendered_caddyfile:/etc/caddy/Caddyfile:ro" \
     caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile >/dev/null
+
+  # Copy the already-rendered content over the existing file. Unlike sed -i,
+  # cp preserves the destination inode, so an existing Caddy bind mount never
+  # observes the unrendered template or remains pinned to a stale inode.
+  cp "$rendered_caddyfile" "$CADDY_FILE"
+  chmod 0640 "$CADDY_FILE"
 }
 
 install_target_files() {
@@ -497,9 +507,8 @@ start_target() {
     return 1
   fi
 
-  # render_target_caddyfile uses sed -i, which replaces the host file inode.
-  # Recreate Caddy so its bind mount follows the newly rendered file rather
-  # than the stale pre-update inode.
+  # Recreate Caddy to pick up any deployment-level changes as well as the
+  # newly validated configuration.
   compose up -d --no-deps --force-recreate caddy
   compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
 
