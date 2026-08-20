@@ -53,6 +53,8 @@ Model slugs and model kind are immutable after creation because they form stable
 
 Record project/model ownership is immutable after creation.
 
+The Argus-native internal App Data API exposes these validated models and records at `/internal/argus/data/projects/:projectId`. It uses the same high-entropy service credential and explicit Organization/User headers as the Content workflow, resolves the mirrored Project before every operation and never exposes Payload collection internals to the browser. App Data models are always private collections, writes publish immediately and relationship validation remains project-local. The Content route remains editorial and draft-aware; the two APIs share Payload's model/record/relation substrate rather than maintaining parallel storage.
+
 ## Relationships
 
 `data-relations` store explicit record-to-record relationships rather than hiding foreign references inside arbitrary JSON.

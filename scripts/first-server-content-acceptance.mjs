@@ -65,7 +65,35 @@ export async function run(env = process.env, fetchImpl = fetch) {
   if (publicRead.records?.length !== 1 || publicRead.records[0]?.id !== recordId ||
       publicRead.records[0]?.values?.title !== 'Acceptance published') throw new Error('published public read is inconsistent')
 
-  return { model_id: modelId, record_id: recordId, model_slug: slug }
+  const dataInternal = `${baseUrl}/internal/argus/data/projects/${projectId}`
+  const dataWorkspace = await json(fetchImpl, dataInternal, { headers })
+  if (dataWorkspace.project_status !== 'active') throw new Error('App Data Project scope is unavailable')
+  const authorModel = await json(fetchImpl, dataInternal, { method: 'POST', headers,
+    body: JSON.stringify({ operation: 'create_model', model: { name: `Authors ${suffix}`, slug: `authors_${suffix.replaceAll('-', '_')}`,
+      fields: [{ key: 'name', label: 'Name', type: 'text', required: true }] } }) })
+  const authorModelId = authorModel.model?.id
+  if (!UUID.test(authorModelId ?? '') || authorModel.model.kind !== 'data') throw new Error('App Data author model response is invalid')
+  const author = await json(fetchImpl, dataInternal, { method: 'POST', headers,
+    body: JSON.stringify({ operation: 'save_record', model_id: authorModelId, values: { name: 'Ada' }, publish: false }) })
+  const authorId = author.record?.id
+  if (!UUID.test(authorId ?? '') || author.record.editorial_status !== 'published') throw new Error('App Data record was not written immediately')
+  const taskModel = await json(fetchImpl, dataInternal, { method: 'POST', headers,
+    body: JSON.stringify({ operation: 'create_model', model: { name: `Tasks ${suffix}`, slug: `tasks_${suffix.replaceAll('-', '_')}`,
+      fields: [{ key: 'title', label: 'Title', type: 'text', required: true },
+        { key: 'author', label: 'Author', type: 'relationship', required: true, target_model_id: authorModelId, has_many: false }] } }) })
+  const taskModelId = taskModel.model?.id
+  if (!UUID.test(taskModelId ?? '') || taskModel.model.kind !== 'data') throw new Error('App Data relationship model response is invalid')
+  const task = await json(fetchImpl, dataInternal, { method: 'POST', headers,
+    body: JSON.stringify({ operation: 'save_record', model_id: taskModelId, values: { title: 'Ship Argus' }, relationships: { author: [authorId] } }) })
+  const taskId = task.record?.id
+  if (!UUID.test(taskId ?? '') || task.record.editorial_status !== 'published') throw new Error('related App Data record is invalid')
+  const storedData = await json(fetchImpl, dataInternal, { headers })
+  if (!storedData.relations?.some((relation) => relation.source_record_id === taskId && relation.target_record_id === authorId && relation.field_key === 'author')) {
+    throw new Error('App Data relationship was not persisted')
+  }
+
+  return { model_id: modelId, record_id: recordId, model_slug: slug,
+    data_model_id: taskModelId, data_record_id: taskId, data_relation_target_id: authorId }
 }
 
 if (process.argv[1] === '-' || (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)) {

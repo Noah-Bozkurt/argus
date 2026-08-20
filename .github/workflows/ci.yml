@@ -318,6 +318,10 @@ jobs:
               bash scripts/test-native-cms-runtime.sh
               bash scripts/test-media-runtime.sh
               bash scripts/test-forms-runtime.sh
+              ARGUS_TEST_PROJECT_ID=00000000-0000-4000-8000-000000000003 \
+              ARGUS_TEST_ORG_ID=00000000-0000-4000-8000-000000000001 \
+              ARGUS_TEST_USER_ID=00000000-0000-4000-8000-000000000002 \
+                node scripts/first-server-content-acceptance.mjs >/dev/null
               exit 0
             fi
             if ! kill -0 "$pid" >/dev/null 2>&1; then

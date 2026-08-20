@@ -286,7 +286,7 @@ stage_product() {
 stage_content() {
   require_root
   [[ -f "$ACCEPTANCE_DIR/product.env" ]] || die "run acceptance stage 'product' first"
-  local project_id organization_id user_id result model_id record_id model_slug
+  local project_id organization_id user_id result model_id record_id model_slug data_model_id data_record_id data_relation_target_id
   project_id="$(checkpoint_value product PROJECT_ID)"
   organization_id="$(read_installed_value ARGUS_ORG_ID)"
   user_id="$(read_installed_value ARGUS_USER_ID)"
@@ -297,10 +297,16 @@ stage_content() {
   model_id="$(jq -er .model_id <<<"$result")"
   record_id="$(jq -er .record_id <<<"$result")"
   model_slug="$(jq -er .model_slug <<<"$result")"
+  data_model_id="$(jq -er .data_model_id <<<"$result")"
+  data_record_id="$(jq -er .data_record_id <<<"$result")"
+  data_relation_target_id="$(jq -er .data_relation_target_id <<<"$result")"
   [[ "$model_id" =~ ^[0-9a-f-]{36}$ && "$record_id" =~ ^[0-9a-f-]{36}$ && "$model_slug" =~ ^acceptance_[a-z0-9_]+$ ]] \
     || die "Content acceptance returned invalid evidence"
+  [[ "$data_model_id" =~ ^[0-9a-f-]{36}$ && "$data_record_id" =~ ^[0-9a-f-]{36}$ && "$data_relation_target_id" =~ ^[0-9a-f-]{36}$ ]] \
+    || die "App Data acceptance returned invalid evidence"
   write_checkpoint content COMPLETED_AT "$(date -u +%Y-%m-%dT%H:%M:%SZ)" PROJECT_ID "$project_id" \
-    MODEL_ID "$model_id" RECORD_ID "$record_id" MODEL_SLUG "$model_slug"
+    MODEL_ID "$model_id" RECORD_ID "$record_id" MODEL_SLUG "$model_slug" DATA_MODEL_ID "$data_model_id" \
+    DATA_RECORD_ID "$data_record_id" DATA_RELATION_TARGET_ID "$data_relation_target_id"
   log "Content acceptance passed for model $model_id and record $record_id"
 }
 
@@ -328,7 +334,7 @@ stage_report() {
 
   local initial_revision reboot_revision rerun_revision from_revision to_revision transaction product_project_id
   local monitor_job_id backup_name backup_command_id verify_command_id preflight_command_id
-  local content_project_id content_model_id content_record_id content_model_slug
+  local content_project_id content_model_id content_record_id content_model_slug data_model_id data_record_id data_relation_target_id
   initial_revision="$(checkpoint_value baseline REVISION)"
   reboot_revision="$(checkpoint_value post-reboot REVISION)"
   rerun_revision="$(checkpoint_value installer-rerun REVISION)"
@@ -351,6 +357,9 @@ stage_report() {
   content_model_id="$(checkpoint_value content MODEL_ID)"
   content_record_id="$(checkpoint_value content RECORD_ID)"
   content_model_slug="$(checkpoint_value content MODEL_SLUG)"
+  data_model_id="$(checkpoint_value content DATA_MODEL_ID)"
+  data_record_id="$(checkpoint_value content DATA_RECORD_ID)"
+  data_relation_target_id="$(checkpoint_value content DATA_RELATION_TARGET_ID)"
   [[ "$product_project_id" =~ ^[0-9a-f-]{36}$ ]] || die "product acceptance Project ID is invalid"
   [[ "$monitor_job_id" =~ ^[0-9a-f-]{36}$ ]] || die "product acceptance monitor job ID is invalid"
   [[ "$backup_command_id" =~ ^[0-9a-f-]{36}$ && "$backup_name" == "$backup_command_id.tar.gz" ]] || die "product acceptance backup evidence is inconsistent"
@@ -358,6 +367,8 @@ stage_report() {
   [[ "$content_project_id" == "$product_project_id" ]] || die "Content acceptance used a different Project"
   [[ "$content_model_id" =~ ^[0-9a-f-]{36}$ && "$content_record_id" =~ ^[0-9a-f-]{36}$ && "$content_model_slug" =~ ^acceptance_[a-z0-9_]+$ ]] \
     || die "Content acceptance evidence is invalid"
+  [[ "$data_model_id" =~ ^[0-9a-f-]{36}$ && "$data_record_id" =~ ^[0-9a-f-]{36}$ && "$data_relation_target_id" =~ ^[0-9a-f-]{36}$ ]] \
+    || die "App Data acceptance evidence is invalid"
 
   [[ "$initial_revision" == "$reboot_revision" && "$initial_revision" == "$rerun_revision" ]] \
     || die "checkpoint revisions are inconsistent"
@@ -398,10 +409,14 @@ cms_model: $content_model_id
 cms_published_record: $content_record_id
 cms_public_model_slug: $content_model_slug
 cms_draft_publication_public_read_verified: yes
+app_data_model: $data_model_id
+app_data_record: $data_record_id
+app_data_relation_target: $data_relation_target_id
+app_data_immediate_write_and_relation_verified: yes
 
 This report intentionally contains no registry credential or plaintext Argus secret.
-It proves the recorded lifecycle, product and CMS checkpoints only. Transactional restore
-apply, general App Data workflows, reset/reinstall and manual-failure acceptance remain separate work.
+It proves the recorded lifecycle, product, App Data and CMS checkpoints only. Transactional
+restore apply, reset/reinstall and manual-failure acceptance remain separate work.
 EOF
   chmod 0600 "$tmp"
   sync -f "$tmp"
