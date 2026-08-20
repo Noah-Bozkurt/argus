@@ -3,6 +3,14 @@ import { createCatalogServiceAction, deleteCatalogServiceAction, updateCatalogSe
 
 const serviceTypes = ['web', 'api', 'worker', 'database', 'queue', 'cron', 'other'] as const
 
+function healthStatusClass(status: string): string {
+  const value = status.toLowerCase()
+  if (value.includes('unhealthy') || value.includes('fail') || value.includes('error')) return 'danger'
+  if (value.includes('degraded') || value.includes('warning')) return 'warning'
+  if (value.includes('healthy') || value.includes('active') || value.includes('ok')) return 'success'
+  return ''
+}
+
 export default async function ServiceCatalogSection({ projectId }: { projectId: string }) {
   const [services, repositories, environments, allServers] = await Promise.all([
     getProjectServices(projectId),
@@ -46,7 +54,7 @@ export default async function ServiceCatalogSection({ projectId }: { projectId: 
           <article key={service.id}>
             <div className="resource-card-head">
               <div><h4>{service.name}</h4><div className="resource-meta">{service.description || 'No description'}</div></div>
-              <div className="action-row"><span className="badge info">{service.service_type}</span><span className={`badge ${service.lifecycle_status === 'ACTIVE' ? 'success' : service.lifecycle_status === 'PAUSED' ? 'warning' : ''}`}>{service.lifecycle_status}</span><span className={`badge ${service.health_status.toLowerCase().includes('healthy') ? 'success' : service.health_status.toLowerCase().includes('fail') ? 'danger' : ''}`}>{service.health_status}</span></div>
+              <div className="action-row"><span className="badge info">{service.service_type}</span><span className={`badge ${service.lifecycle_status === 'ACTIVE' ? 'success' : service.lifecycle_status === 'PAUSED' ? 'warning' : ''}`}>{service.lifecycle_status}</span><span className={`badge ${healthStatusClass(service.health_status)}`}>{service.health_status}</span></div>
             </div>
             <div className="info-grid" style={{ marginTop: 12 }}>
               <div className="info-item"><span className="info-label">Repository</span><span className="info-value">{service.repository_id ? repositoryNames.get(service.repository_id) ?? service.repository_id : 'Unlinked'}</span></div>
