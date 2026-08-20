@@ -15,6 +15,7 @@ jobs:
         run: |
           set -euo pipefail
           bash -n scripts/first-server-acceptance.sh
+          bash -n scripts/first-server-product-acceptance.sh
           bash -n scripts/test-first-server-acceptance.sh
       - name: Test acceptance helpers
         run: bash scripts/test-first-server-acceptance.sh

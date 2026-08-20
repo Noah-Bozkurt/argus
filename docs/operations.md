@@ -144,6 +144,8 @@ Every Argus-owned Compose service is labelled `com.argus.protected=true`. The pr
 
 ## Managed server model
 
+On a disposable first-server test host, `sudo -E ./scripts/first-server-acceptance.sh product` exercises the installed product through its supported Control API. It creates a fresh personal Project without a Client, creates an environment/service/site, verifies audit and domain-event persistence plus Payload project synchronization, runs a read-only typed Agent service action, and confirms the protected Argus control-plane container cannot be restarted through managed Docker actions. The command writes only IDs and completion evidence to the root-only acceptance directory; it does not replace the separate CMS/backup/restore acceptance steps.
+
 A managed server is enrolled with an Argus Agent. Heartbeats provide system identity and snapshots used for online/offline state, CPU/RAM/disk/load/uptime information and capability-specific inventories.
 
 The Agent polls the Control API for typed commands and calls the local privileged Helper. A server is not considered controllable merely because a hostname exists in inventory; it must have an authenticated Agent with the required capability.

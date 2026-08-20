@@ -59,6 +59,7 @@ jobs:
           bash -n install.sh
           bash -n scripts/reset-first-test.sh
           bash -n scripts/first-server-smoke.sh
+          bash -n scripts/first-server-product-acceptance.sh
           bash -n scripts/update-first-test.sh
           bash -n scripts/recover-interrupted-update.sh
           grep -Fq 'org.opencontainers.image.revision' install.sh

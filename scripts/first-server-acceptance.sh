@@ -24,6 +24,8 @@ Commands:
   rerun-installer  Rerun install.sh and prove IDs/secrets/revision are preserved.
   update           Update to ARGUS_ACCEPTANCE_UPDATE_VERSION (default: main), smoke,
                    require a different immutable revision, and verify SUCCEEDED state.
+  product          Exercise a new personal Project and supported product APIs on the
+                   installed server, including Agent and Docker protection checks.
   report           Write/print the sanitized lifecycle acceptance report.
   status           Show which lifecycle checkpoints have completed.
 
@@ -273,11 +275,18 @@ stage_update() {
   log "transactional update accepted: $before -> $after"
 }
 
+stage_product() {
+  require_root
+  require_checkpoint post-reboot
+  "$REPO_ROOT/scripts/first-server-product-acceptance.sh"
+}
+
 stage_status() {
   ensure_acceptance_dir
   local name
-  for name in baseline post-reboot installer-rerun post-update; do
-    if [[ -f "$(checkpoint_path "$name")" ]]; then
+  for name in baseline post-reboot installer-rerun post-update product; do
+    if [[ "$name" == product && -f "$ACCEPTANCE_DIR/product.env" ]] ||
+       [[ "$name" != product && -f "$(checkpoint_path "$name")" ]]; then
       printf '%-18s %s\n' "$name" complete
     else
       printf '%-18s %s\n' "$name" pending
@@ -291,14 +300,23 @@ stage_report() {
   for name in baseline post-reboot installer-rerun post-update; do
     require_checkpoint "$name"
   done
+  [[ -f "$ACCEPTANCE_DIR/product.env" ]] || die "run acceptance stage 'product' first"
 
-  local initial_revision reboot_revision rerun_revision from_revision to_revision transaction
+  local initial_revision reboot_revision rerun_revision from_revision to_revision transaction product_project_id
   initial_revision="$(checkpoint_value baseline REVISION)"
   reboot_revision="$(checkpoint_value post-reboot REVISION)"
   rerun_revision="$(checkpoint_value installer-rerun REVISION)"
   from_revision="$(checkpoint_value post-update FROM_REVISION)"
   to_revision="$(checkpoint_value post-update TO_REVISION)"
   transaction="$(checkpoint_value post-update TRANSACTION)"
+  product_project_id="$(
+    set +u
+    # Root-owned checkpoint emitted by first-server-product-acceptance.sh.
+    # shellcheck disable=SC1090
+    . "$ACCEPTANCE_DIR/product.env"
+    printf '%s\n' "${PROJECT_ID:-}"
+  )"
+  [[ "$product_project_id" =~ ^[0-9a-f-]{36}$ ]] || die "product acceptance Project ID is invalid"
 
   [[ "$initial_revision" == "$reboot_revision" && "$initial_revision" == "$rerun_revision" ]] \
     || die "checkpoint revisions are inconsistent"
@@ -324,10 +342,15 @@ post_reboot_smoke: yes
 post_rerun_smoke: yes
 post_update_smoke: yes
 successful_update_transaction: $transaction
+personal_project_without_client: $product_project_id
+product_api_structures_verified: yes
+typed_agent_action_verified: yes
+control_plane_docker_protection_verified: yes
+payload_project_sync_verified: yes
 
 This report intentionally contains no registry credential or plaintext Argus secret.
-It proves the repository lifecycle checkpoints only; project/CMS/restore/manual-failure
-acceptance items from docs/roadmap.md remain separate first-server test work.
+It proves the recorded lifecycle and product checkpoints only; CMS data/records,
+backup/restore, reset/reinstall and manual-failure acceptance remain separate work.
 EOF
   chmod 0600 "$tmp"
   sync -f "$tmp"
@@ -343,6 +366,7 @@ main() {
     post-reboot) stage_post_reboot ;;
     rerun-installer) stage_rerun_installer ;;
     update) stage_update ;;
+    product) stage_product ;;
     report) stage_report ;;
     status) stage_status ;;
     -h|--help|help|'') usage ;;
