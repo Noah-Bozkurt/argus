@@ -42,6 +42,7 @@ export default async function ProjectPage({ params }: { params: { projectId: str
       <p>{project.description || 'No project description.'}</p>
       <p>Preset: {project.preset} — Status: {project.status} — Open tasks: {project.open_tasks}</p>
       <p>Tags: {project.tags.join(', ') || 'none'}</p>
+      <p><Link href={`/projects/${project.id}/content`}>Manage content</Link></p>
 
       <h2>Repositories</h2>
       <p>Link GitHub repositories to this project. Argus reads project-relevant metadata; GitHub remains the source of truth for code, PRs and issues.</p>

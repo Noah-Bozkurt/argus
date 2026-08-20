@@ -24,6 +24,7 @@ The repository already contains substantial working slices for:
 - Argus Project -> Payload project synchronization;
 - committed Payload production migrations;
 - CMS content models, drafts/version history, publication and explicit public content reads;
+- an Argus-native project Content workflow for scalar content types, drafts and publication;
 - a first-test hybrid deployment path using Docker Compose for the control plane and native Agent/Helper services;
 - private custom images for Argus Web, Control API, Worker, Payload and host-tool artifacts;
 - an Ubuntu/Debian amd64 first-test installer with bootstrap, local Agent enrollment, health verification and disposable reset;
@@ -132,7 +133,7 @@ Priorities should first be driven by failures and usability gaps found in that t
 
 ### Content/product layer
 
-- Argus-native CMS abstraction above Payload internals;
+- expand the Argus-native CMS abstraction with relationship pickers and richer field settings;
 - page/component schemas;
 - visual CMS/editor and preview;
 - media library, variants and optimization;

@@ -77,11 +77,15 @@ services:
     image: ${ARGUS_REGISTRY:-ghcr.io/noah-bozkurt}/argus-web:${ARGUS_VERSION:?ARGUS_VERSION is required}
     environment:
       ARGUS_CONTROL_API_URL: http://control-api:8080
+      ARGUS_CONTENT_URL: http://content:3000
+      ARGUS_CONTENT_SYNC_TOKEN: ${ARGUS_CONTENT_SYNC_TOKEN:?ARGUS_CONTENT_SYNC_TOKEN is required}
       ARGUS_WEB_API_TOKEN: ${ARGUS_WEB_API_TOKEN:?ARGUS_WEB_API_TOKEN is required}
       ARGUS_ORG_ID: ${ARGUS_ORG_ID:?ARGUS_ORG_ID is required}
       ARGUS_USER_ID: ${ARGUS_USER_ID:?ARGUS_USER_ID is required}
     depends_on:
       control-api:
+        condition: service_healthy
+      content:
         condition: service_healthy
     healthcheck:
       test:
