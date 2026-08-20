@@ -144,6 +144,12 @@ export async function unlinkProjectRepository(projectId: string, repositoryId: s
 }
 
 export const getServers = (): Promise<ServerView[]> => request('/servers')
+export async function createServer(projectId: string, environmentId: string, hostname: string): Promise<{ server_id: string }> {
+  return request('/servers', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project_id: projectId, environment_id: environmentId, hostname }) })
+}
+export async function createEnrollmentToken(serverId: string): Promise<{ token: string; expires_at: string }> {
+  return request('/enrollment/tokens', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ server_id: serverId, ttl_seconds: 900 }) })
+}
 export const getServer = (serverId: string): Promise<ServerView> => request(`/servers/${serverId}`)
 export const getCommandHistory = (serverId: string): Promise<CommandHistoryItem[]> => request(`/servers/${serverId}/commands`)
 export const getMaintenanceHistory = (serverId: string): Promise<MaintenanceWindow[]> => request(`/servers/${serverId}/maintenance`)

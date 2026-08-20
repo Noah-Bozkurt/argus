@@ -12,10 +12,34 @@ HOST_TOOLS_CONTAINER=""
 DOCKER_CONFIG_DIR=""
 GENERATED_BASIC_AUTH_PASSWORD=""
 EXISTING_INSTALL=0
+INSTALL_MODE="${ARGUS_INSTALL_MODE:-}"
+LOG_DIR="${ARGUS_LOG_DIR:-/var/log/argus}"
+LOG_FILE="$LOG_DIR/install-$(date -u +%Y%m%dT%H%M%SZ).log"
+STAGE=0
+TOTAL_STAGES=7
 
 log() { printf '[argus] %s\n' "$*"; }
 warn() { printf '[argus] warning: %s\n' "$*" >&2; }
 die() { printf '[argus] error: %s\n' "$*" >&2; exit 1; }
+stage() { STAGE=$((STAGE + 1)); printf '\n[%d/%d] %s\n' "$STAGE" "$TOTAL_STAGES" "$1"; }
+
+banner() {
+  printf '\n========================================\n'
+  printf '           ARGUS INSTALLER\n'
+  printf '========================================\n\n'
+}
+
+select_mode() {
+  banner
+  if [[ -z "$INSTALL_MODE" ]]; then
+    [[ -t 0 ]] || die "ARGUS_INSTALL_MODE must be control-plane or agent in non-interactive mode"
+    printf '  1. Install an Argus control plane here.\n'
+    printf '  2. Connect this server to an existing Argus instance.\n\n'
+    read -r -p 'Choose [1-2]: ' choice
+    case "$choice" in 1) INSTALL_MODE=control-plane ;; 2) INSTALL_MODE=agent ;; *) die "invalid installation mode" ;; esac
+  fi
+  [[ "$INSTALL_MODE" == "control-plane" || "$INSTALL_MODE" == "agent" ]] || die "ARGUS_INSTALL_MODE must be control-plane or agent"
+}
 
 cleanup() {
   if [[ -n "$HOST_TOOLS_CONTAINER" ]]; then
@@ -63,6 +87,37 @@ prompt_required() {
     export "$variable"
   else
     die "$variable is required in non-interactive mode"
+  fi
+}
+
+prompt_password() {
+  if [[ -n "${ARGUS_BASIC_AUTH_PASSWORD:-}" ]]; then return; fi
+  if [[ ! -t 0 ]]; then
+    ARGUS_BASIC_AUTH_PASSWORD="$(new_password)"
+    GENERATED_BASIC_AUTH_PASSWORD="$ARGUS_BASIC_AUTH_PASSWORD"
+    return
+  fi
+  local first second
+  read -r -s -p 'Browser password (Enter to generate): ' first; printf '\n'
+  if [[ -z "$first" ]]; then
+    ARGUS_BASIC_AUTH_PASSWORD="$(new_password)"
+    GENERATED_BASIC_AUTH_PASSWORD="$ARGUS_BASIC_AUTH_PASSWORD"
+    return
+  fi
+  read -r -s -p 'Confirm browser password: ' second; printf '\n'
+  [[ "$first" == "$second" ]] || die "passwords do not match"
+  ARGUS_BASIC_AUTH_PASSWORD="$first"
+}
+
+prompt_registry_credentials() {
+  ARGUS_REGISTRY="${ARGUS_REGISTRY:-ghcr.io/noah-bozkurt}"
+  prompt_required ARGUS_REGISTRY_USERNAME "GitHub username"
+  if [[ -z "${ARGUS_REGISTRY_TOKEN:-}" ]]; then
+    [[ -t 0 ]] || die "ARGUS_REGISTRY_TOKEN is required in non-interactive mode"
+    read -r -s -p 'GitHub token (classic PAT with read:packages): ' ARGUS_REGISTRY_TOKEN
+    printf '\n'
+    [[ -n "$ARGUS_REGISTRY_TOKEN" ]] || die "GitHub token is required"
+    export ARGUS_REGISTRY_TOKEN
   fi
 }
 
@@ -126,7 +181,7 @@ preflight() {
   install_prerequisites
   install_docker
 
-  if [[ ! -f "$COMPOSE_FILE" ]]; then
+  if [[ "$INSTALL_MODE" == "control-plane" && ! -f "$COMPOSE_FILE" ]]; then
     for port in 80 443; do
       if ss -ltnH | awk '{print $4}' | grep -Eq ":${port}$"; then
         die "TCP port ${port} is already in use; use a clean first-test host or free the port"
@@ -179,8 +234,7 @@ load_or_create_configuration() {
   if [[ -n "$requested_basic_password" ]]; then
     ARGUS_BASIC_AUTH_PASSWORD="$requested_basic_password"
   elif [[ -z "${ARGUS_BASIC_AUTH_PASSWORD:-}" ]]; then
-    ARGUS_BASIC_AUTH_PASSWORD="$(new_password)"
-    GENERATED_BASIC_AUTH_PASSWORD="$ARGUS_BASIC_AUTH_PASSWORD"
+    prompt_password
   fi
 
   ARGUS_OPERATOR_EMAIL="${ARGUS_OPERATOR_EMAIL:-operator@argus.local}"
@@ -208,9 +262,7 @@ load_or_create_configuration() {
 }
 
 registry_login_if_configured() {
-  if [[ -z "${ARGUS_REGISTRY_TOKEN:-}" ]]; then
-    return
-  fi
+  [[ -n "${ARGUS_REGISTRY_TOKEN:-}" ]] || die "ARGUS_REGISTRY_TOKEN is required"
   [[ -n "${ARGUS_REGISTRY_USERNAME:-}" ]] \
     || die "ARGUS_REGISTRY_USERNAME is required when ARGUS_REGISTRY_TOKEN is set"
 
@@ -246,12 +298,7 @@ pull_host_bundle() {
 
   local requested="$ARGUS_VERSION"
   local image="${ARGUS_REGISTRY}/argus-host-tools:${requested}"
-  if ! docker pull "$image"; then
-    if [[ -z "${ARGUS_REGISTRY_TOKEN:-}" ]]; then
-      die "could not pull private Argus images. Set ARGUS_REGISTRY_USERNAME and a read-only ARGUS_REGISTRY_TOKEN, then rerun"
-    fi
-    die "could not pull $image"
-  fi
+  docker pull "$image" || die "could not pull $image; verify the PAT has read:packages access"
 
   local resolved_revision
   resolved_revision="$(docker image inspect "$image" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
@@ -382,6 +429,70 @@ start_control_plane() {
   compose ps || true
   compose logs --tail=120 control-api postgres || true
   die "Control API did not become healthy"
+}
+
+parse_setup_code() {
+  local code="$1" decoded
+  decoded="$(printf '%s' "$code" | base64 -d 2>/dev/null)" || die "invalid setup code"
+  ARGUS_CONTROL_PLANE_URL="$(jq -er '.control_plane_url' <<<"$decoded")"
+  ARGUS_SERVER_ID="$(jq -er '.server_id' <<<"$decoded")"
+  ARGUS_ENROLLMENT_TOKEN="$(jq -er '.enrollment_token' <<<"$decoded")"
+  if [[ "$ARGUS_CONTROL_PLANE_URL" != https://* && "${ARGUS_ALLOW_INSECURE_CONTROL_PLANE:-0}" != "1" ]]; then
+    die "remote control plane must use HTTPS"
+  fi
+}
+
+install_managed_node() {
+  local setup_code="${ARGUS_SETUP_CODE:-}"
+  if [[ -z "$setup_code" ]]; then
+    [[ -t 0 ]] || die "ARGUS_SETUP_CODE is required in non-interactive agent mode"
+    read -r -s -p 'Argus setup code: ' setup_code; printf '\n'
+  fi
+  parse_setup_code "$setup_code"; unset setup_code ARGUS_SETUP_CODE
+  registry_login_if_configured
+  local requested="${ARGUS_VERSION:-main}" image="${ARGUS_REGISTRY}/argus-host-tools:${ARGUS_VERSION:-main}" revision tmp
+  docker pull "$image" || die "could not pull $image; verify the PAT has read:packages access"
+  revision="$(docker image inspect "$image" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+  is_revision "$revision" || die "$image is missing an immutable revision label"
+  ARGUS_VERSION="$revision"
+  image="${ARGUS_REGISTRY}/argus-host-tools:${ARGUS_VERSION}"
+  [[ "$requested" == "$ARGUS_VERSION" ]] || docker pull "$image" >/dev/null
+  tmp="$(mktemp -d)"; chmod 0700 "$tmp"
+  HOST_TOOLS_CONTAINER="$(docker create "$image")"
+  docker cp "$HOST_TOOLS_CONTAINER:/out/." "$tmp/"
+  docker cp "$HOST_TOOLS_CONTAINER:/deploy/systemd/argus-agent.service" "$tmp/argus-agent.service"
+  docker cp "$HOST_TOOLS_CONTAINER:/deploy/systemd/argus-helper.service" "$tmp/argus-helper.service"
+  docker rm "$HOST_TOOLS_CONTAINER" >/dev/null; HOST_TOOLS_CONTAINER=""
+  for required in argus-agent argus-helper argusctl argus-agent.service argus-helper.service; do
+    [[ -s "$tmp/$required" ]] || die "host-tools image is incomplete: $required"
+  done
+  ensure_argus_user
+  install -m 0755 "$tmp/argus-agent" /usr/local/bin/argus-agent
+  install -m 0755 "$tmp/argus-helper" /usr/local/bin/argus-helper
+  install -m 0755 "$tmp/argusctl" /usr/local/bin/argusctl
+  install -m 0644 "$tmp/argus-agent.service" /etc/systemd/system/argus-agent.service
+  install -m 0644 "$tmp/argus-helper.service" /etc/systemd/system/argus-helper.service
+  rm -rf "$tmp"
+  systemctl daemon-reload
+  write_helper_env
+  cat >"$CONFIG_DIR/agent.env" <<EOF
+ARGUS_CONTROL_PLANE_URL=${ARGUS_CONTROL_PLANE_URL}
+ARGUS_SERVER_ID=${ARGUS_SERVER_ID}
+ARGUS_AGENT_CONFIG=${STATE_DIR}/agent.json
+ARGUS_HELPER_SOCKET=/run/argus/helper.sock
+ARGUS_ENROLLMENT_TOKEN=${ARGUS_ENROLLMENT_TOKEN}
+RUST_LOG=${ARGUS_RUST_LOG:-info}
+EOF
+  chown root:argus "$CONFIG_DIR/agent.env"; chmod 0640 "$CONFIG_DIR/agent.env"
+  systemctl enable --now argus-helper.service argus-agent.service
+  for _ in $(seq 1 60); do [[ -s "$STATE_DIR/agent.json" ]] && break; sleep 2; done
+  [[ -s "$STATE_DIR/agent.json" ]] || die "Argus Agent did not enroll successfully"
+  sed -i '/^ARGUS_ENROLLMENT_TOKEN=/d' "$CONFIG_DIR/agent.env"
+  unset ARGUS_ENROLLMENT_TOKEN
+  systemctl restart argus-agent.service
+  systemctl is-active --quiet argus-helper.service || die "argus-helper.service is not active"
+  systemctl is-active --quiet argus-agent.service || die "argus-agent.service is not active"
+  printf '\nArgus managed node is connected.\nControl plane: %s\nServer ID:     %s\nRevision:      %s\n' "$ARGUS_CONTROL_PLANE_URL" "$ARGUS_SERVER_ID" "$ARGUS_VERSION"
 }
 
 bootstrap_control_plane() {
@@ -567,6 +678,7 @@ print_summary() {
     printf '\nA new first-test password was generated and stored only in the root-readable %s file.\n' "$ENV_FILE"
   fi
   printf '\nVersion:  %s\n' "$ARGUS_VERSION"
+  printf 'Recovery: sudo grep ^ARGUS_BASIC_AUTH_PASSWORD= %s\n' "$ENV_FILE"
   printf 'Config:   %s\n' "$INSTALL_DIR"
   printf 'Agent:    %s\n' "$ARGUS_SERVER_ID"
   printf '\nUseful diagnostics:\n'
@@ -574,21 +686,37 @@ print_summary() {
   printf '  journalctl -u argus-agent -u argus-helper --no-pager -n 100\n'
   printf '  argusctl status\n'
   printf '  sudo argusctl smoke\n'
-  printf '\nTransactional update (requires read-only registry credentials):\n'
+  printf '\nTransactional update:\n'
   printf '  sudo -E argusctl update --version main\n'
 }
 
 main() {
+  select_mode
+  install -m 0700 -d "$LOG_DIR"
+  touch "$LOG_FILE"; chmod 0600 "$LOG_FILE"
+  stage "Checking host requirements"
   preflight
+  stage "Authenticating to private GHCR"
+  prompt_registry_credentials
+  if [[ "$INSTALL_MODE" == "agent" ]]; then
+    stage "Installing managed-node bundle"
+    install_managed_node
+    return
+  fi
+  stage "Collecting control-plane configuration"
   load_or_create_configuration
-  log "installing Argus ${ARGUS_VERSION} for ${ARGUS_DOMAIN}"
+  log "installing Argus for ${ARGUS_DOMAIN}"
+  stage "Downloading and verifying release"
   pull_host_bundle
+  stage "Configuring services"
   ensure_argus_user
   write_runtime_env
   generate_caddy_config
+  stage "Starting the control plane"
   start_control_plane
   bootstrap_control_plane
   enroll_local_agent
+  stage "Verifying health"
   verify_installation
   print_summary
 }

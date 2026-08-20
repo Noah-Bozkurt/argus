@@ -14,6 +14,7 @@ const FIRST_SERVER_SMOKE: &str = include_str!("../../../scripts/first-server-smo
 const FIRST_SERVER_UPDATE: &str = include_str!("../../../scripts/update-first-test.sh");
 const INTERRUPTED_UPDATE_RECOVERY: &str =
     include_str!("../../../scripts/recover-interrupted-update.sh");
+const UNINSTALL: &str = include_str!("../../../scripts/uninstall.sh");
 
 #[derive(Debug, Parser)]
 #[command(name = "argusctl", about = "Argus local diagnostics and lifecycle CLI")]
@@ -37,6 +38,12 @@ enum Commands {
     Update {
         #[arg(long, default_value = "main")]
         version: String,
+    },
+    Uninstall {
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        purge_data: bool,
     },
     #[command(hide = true)]
     RecoverUpdate {
@@ -74,14 +81,14 @@ async fn load(path: &Path) -> Result<AgentConfig> {
         .with_context(|| format!("read {}", path.display()))
 }
 
-async fn run_embedded_script(name: &str, script: &str, env: Option<(&str, &str)>) -> Result<()> {
+async fn run_embedded_script(name: &str, script: &str, env: &[(&str, &str)]) -> Result<()> {
     let mut command = Command::new("bash");
     command
         .arg("-s")
         .stdin(Stdio::piped())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-    if let Some((key, value)) = env {
+    for (key, value) in env {
         command.env(key, value);
     }
 
@@ -107,7 +114,7 @@ async fn run_embedded_script(name: &str, script: &str, env: Option<(&str, &str)>
 }
 
 async fn run_first_server_smoke() -> Result<()> {
-    run_embedded_script("first-server smoke test", FIRST_SERVER_SMOKE, None).await
+    run_embedded_script("first-server smoke test", FIRST_SERVER_SMOKE, &[]).await
 }
 
 async fn run_update_recovery(retry_failed: bool) -> Result<()> {
@@ -115,7 +122,7 @@ async fn run_update_recovery(retry_failed: bool) -> Result<()> {
     run_embedded_script(
         "interrupted Argus update recovery",
         INTERRUPTED_UPDATE_RECOVERY,
-        env,
+        env.as_slice(),
     )
     .await
 }
@@ -125,9 +132,20 @@ async fn run_first_server_update(version: &str) -> Result<()> {
     run_embedded_script(
         "transactional Argus update",
         FIRST_SERVER_UPDATE,
-        Some(("ARGUS_TARGET_VERSION", version)),
+        &[("ARGUS_TARGET_VERSION", version)],
     )
     .await
+}
+
+async fn run_uninstall(yes: bool, purge_data: bool) -> Result<()> {
+    let mut env = Vec::new();
+    if yes {
+        env.push(("ARGUS_UNINSTALL_CONFIRM", "1"));
+    }
+    if purge_data {
+        env.push(("ARGUS_UNINSTALL_PURGE_DATA", "1"));
+    }
+    run_embedded_script("Argus uninstall", UNINSTALL, &env).await
 }
 
 #[tokio::main]
@@ -191,6 +209,7 @@ async fn main() -> Result<()> {
         }
         Commands::Smoke => run_first_server_smoke().await?,
         Commands::Update { version } => run_first_server_update(&version).await?,
+        Commands::Uninstall { yes, purge_data } => run_uninstall(yes, purge_data).await?,
         Commands::RecoverUpdate { retry_failed } => run_update_recovery(retry_failed).await?,
         Commands::System {
             command: SystemCommands::Info,
@@ -260,6 +279,19 @@ mod tests {
         assert!(matches!(
             cli.command,
             Commands::RecoverUpdate { retry_failed: true }
+        ));
+    }
+
+    #[test]
+    fn uninstall_requires_explicit_flags_for_noninteractive_or_purge_behavior() {
+        let cli = Cli::try_parse_from(["argusctl", "uninstall", "--yes", "--purge-data"])
+            .expect("parse uninstall command");
+        assert!(matches!(
+            cli.command,
+            Commands::Uninstall {
+                yes: true,
+                purge_data: true
+            }
         ));
     }
 }
