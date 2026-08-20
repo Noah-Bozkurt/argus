@@ -8,6 +8,7 @@ import { isUUID } from '@/lib/projectScope'
 type Project = { id: string; organizationId?: string; status?: string }
 type Model = {
   id: string
+  kind?: 'data' | 'content'
   name?: string
   slug?: string
   description?: string | null
@@ -27,18 +28,22 @@ async function projectFor(payload: Payload, projectId: string, organizationId: s
   return (result.docs[0] as Project | undefined) ?? null
 }
 
-async function modelFor(payload: Payload, project: Project, modelId: string): Promise<Model | null> {
+function routeKind(request: Request): 'data' | 'content' {
+  return new URL(request.url).pathname.includes('/internal/argus/data/') ? 'data' : 'content'
+}
+
+async function modelFor(payload: Payload, project: Project, modelId: string, kind: 'data' | 'content'): Promise<Model | null> {
   if (!isUUID(modelId)) return null
   const result = await payload.find({
     collection: 'data-models', depth: 0, limit: 1, overrideAccess: true, pagination: false,
-    where: { and: [{ id: { equals: modelId } }, { project: { equals: project.id } }, { kind: { equals: 'content' } }] },
+    where: { and: [{ id: { equals: modelId } }, { project: { equals: project.id } }, { kind: { equals: kind } }] },
   })
   return (result.docs[0] as Model | undefined) ?? null
 }
 
 function modelView(model: Model) {
   return {
-    id: model.id, name: model.name ?? '', slug: model.slug ?? '', description: model.description ?? '',
+    id: model.id, name: model.name ?? '', slug: model.slug ?? '', description: model.description ?? '', kind: model.kind ?? 'content',
     public_read: model.publicRead === true, schema_version: model.schemaVersion ?? 1,
     content_role: model.contentRole ?? 'collection',
     allowed_component_ids: (model.allowedComponents ?? []).map((value) => typeof value === 'object' && value && 'id' in value ? String(value.id) : String(value)),
@@ -54,12 +59,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
   if (!identity) return NextResponse.json({ code: 'PERMISSION_DENIED' }, { status: 401 })
   if (!isUUID(projectId)) return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
   const payload = await getPayload({ config })
+  const kind = routeKind(request)
   const project = await projectFor(payload, projectId, identity.organizationId)
   if (!project) return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
 
   const models = await payload.find({
     collection: 'data-models', depth: 0, limit: 100, overrideAccess: true, pagination: false,
-    sort: 'name', where: { and: [{ project: { equals: project.id } }, { kind: { equals: 'content' } }] },
+    sort: 'name', where: { and: [{ project: { equals: project.id } }, { kind: { equals: kind } }] },
   })
   const modelIds = models.docs.filter((model) => (model as Model).contentRole !== 'component').map((model) => String(model.id))
   const records = modelIds.length === 0 ? { docs: [] } : await payload.find({
@@ -95,6 +101,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
   const body = await request.json().catch(() => null) as Record<string, unknown> | null
   if (!body || typeof body.operation !== 'string') return NextResponse.json({ code: 'INVALID_REQUEST' }, { status: 400 })
   const payload = await getPayload({ config })
+  const kind = routeKind(request)
   const project = await projectFor(payload, projectId, identity.organizationId)
   if (!project || project.status !== 'active') return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
 
@@ -102,16 +109,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
     if (body.operation === 'create_model') {
       const normalized = normalizeModelInput(body.model)
       if (!normalized) return NextResponse.json({ code: 'INVALID_REQUEST' }, { status: 400 })
+      if (kind === 'data' && normalized.contentRole !== 'collection') return NextResponse.json({ code: 'INVALID_REQUEST' }, { status: 400 })
       const model = await payload.create({
         collection: 'data-models', depth: 0, draft: false, overrideAccess: true,
-        data: { organizationId: identity.organizationId, argusProjectId: projectId, project: project.id, name: normalized.name, slug: normalized.slug, description: normalized.description, kind: 'content', contentRole: normalized.contentRole, allowedComponents: normalized.allowedComponentIds, publicRead: normalized.publicRead, schemaVersion: 1, status: 'active', fields: normalized.fields },
+        data: { organizationId: identity.organizationId, argusProjectId: projectId, project: project.id, name: normalized.name, slug: normalized.slug, description: normalized.description, kind, contentRole: kind === 'data' ? 'collection' : normalized.contentRole, allowedComponents: kind === 'data' ? [] : normalized.allowedComponentIds, publicRead: kind === 'content' && normalized.publicRead, schemaVersion: 1, status: 'active', fields: normalized.fields },
       })
       return NextResponse.json({ model: modelView(model as Model) }, { status: 201 })
     }
 
     if (body.operation === 'save_record') {
       const modelId = typeof body.model_id === 'string' ? body.model_id : ''
-      const model = await modelFor(payload, project, modelId)
+      const model = await modelFor(payload, project, modelId, kind)
       if (!model || model.status !== 'active') return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
       const fields = (model.fields ?? []).map(({ key, label, type, required, targetModel, hasMany }) => ({ key, label, type, required: required === true,
         targetModel: typeof targetModel === 'object' && targetModel && 'id' in targetModel ? String((targetModel as { id: unknown }).id) : String(targetModel ?? ''), hasMany }))
@@ -133,7 +141,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
         }
         relationTargets.set(field.key, ids)
       }
-      const publish = body.publish === true
+      const publish = kind === 'data' || body.publish === true
       const layout = Array.isArray(body.layout) ? body.layout : []
       const data = { organizationId: identity.organizationId, argusProjectId: projectId, project: project.id, model: model.id, schemaVersion: model.schemaVersion ?? 1, values, layout, status: 'active' as const, _status: publish ? 'published' as const : 'draft' as const }
       const recordId = typeof body.record_id === 'string' ? body.record_id : ''
