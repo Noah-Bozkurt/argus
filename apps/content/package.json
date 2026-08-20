@@ -14,7 +14,7 @@
     "migrate:status": "payload migrate:status",
     "payload": "payload",
     "start": "next start",
-    "test:cms-contract": "node --experimental-strip-types --test src/lib/argusCmsContract.test.ts",
+    "test:cms-contract": "node --experimental-strip-types --test src/lib/argusCmsContract.test.ts src/lib/argusMediaContract.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

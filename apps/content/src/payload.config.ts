@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url'
 import { DataModels } from './collections/DataModels'
 import { DataRecords } from './collections/DataRecords'
 import { DataRelations } from './collections/DataRelations'
+import { Media } from './collections/Media'
 import { ProjectMemberships } from './collections/ProjectMemberships'
 import { ProjectSpaces } from './collections/ProjectSpaces'
 import { WorkspaceUsers } from './collections/WorkspaceUsers'
@@ -43,6 +44,7 @@ export default buildConfig({
     DataModels,
     DataRecords,
     DataRelations,
+    Media,
   ],
   db: postgresAdapter({
     idType: 'uuid',

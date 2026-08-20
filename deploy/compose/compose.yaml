@@ -111,6 +111,9 @@ services:
       PAYLOAD_PUBLIC_URL: https://${ARGUS_CONTENT_DOMAIN:?ARGUS_CONTENT_DOMAIN is required}
       ARGUS_CONTENT_SYNC_TOKEN: ${ARGUS_CONTENT_SYNC_TOKEN:?ARGUS_CONTENT_SYNC_TOKEN is required}
       PAYLOAD_DB_PUSH: "false"
+      ARGUS_MEDIA_DIR: /app/media
+    volumes:
+      - content_media:/app/media
     depends_on:
       postgres:
         condition: service_healthy
@@ -149,5 +152,6 @@ services:
 
 volumes:
   postgres_data:
+  content_media:
   caddy_data:
   caddy_config:

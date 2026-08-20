@@ -1,7 +1,7 @@
 import Link from 'next/link'
 
-import { getContentWorkspace, type ContentField } from '../../../../lib/content-api'
-import { createContentModelAction, saveContentRecordAction } from './actions'
+import { getContentWorkspace, getMediaLibrary, type ContentField } from '../../../../lib/content-api'
+import { createContentModelAction, deleteMediaAction, saveContentRecordAction, updateMediaAction, uploadMediaAction } from './actions'
 import { PageLayoutEditor } from './page-layout-editor'
 
 function FieldInput({ field, value }: { field: ContentField; value?: unknown }) {
@@ -38,13 +38,38 @@ function RecordForm({ projectId, model, record, components }: {
 }
 
 export default async function ProjectContentPage({ params }: { params: { projectId: string } }) {
-  const workspace = await getContentWorkspace(params.projectId)
+  const [workspace, media] = await Promise.all([getContentWorkspace(params.projectId), getMediaLibrary(params.projectId)])
   const componentModels = workspace.models.filter((model) => model.content_role === 'component')
+  const publicBase = process.env.ARGUS_CONTENT_PUBLIC_URL?.replace(/\/$/, '')
   return (
     <main>
       <p><Link href={`/projects/${params.projectId}`}>← Project</Link></p>
       <h1>Content</h1>
       <p>Create project-owned content types, save drafts, and publish records. Argus handles the Payload storage details.</p>
+
+      <h2>Media library</h2>
+      <p>Upload project-owned images up to 10 MiB. Argus creates thumbnail, medium and large variants. Public delivery must be enabled explicitly.</p>
+      <form action={async (formData) => { 'use server'; await uploadMediaAction(params.projectId, formData) }}>
+        <label>Image<input name="file" type="file" accept="image/jpeg,image/png,image/webp,image/avif" required /></label>
+        <label>Alternative text<input name="alt" required maxLength={300} /></label>
+        <label>Caption<textarea name="caption" maxLength={2000} /></label>
+        <label><input name="public_read" type="checkbox" value="true" /> Allow public delivery</label>
+        <button type="submit">Upload image</button>
+      </form>
+      {media.length === 0 ? <p>No media uploaded.</p> : <ul>{media.map((asset) => <li key={asset.id}>
+        <strong>{asset.alt}</strong> — {asset.filename} — {asset.width ?? '?'}×{asset.height ?? '?'} — {Math.ceil(asset.filesize / 1024)} KiB — {asset.public_read ? 'public' : 'private'}
+        {asset.public_read && asset.url && publicBase ? <> — <a href={`${publicBase}${asset.url}`} target="_blank" rel="noreferrer">View image</a></> : null}
+        <form action={async (formData) => { 'use server'; await updateMediaAction(params.projectId, asset.id, formData) }}>
+          <label>Alternative text<input name="alt" required maxLength={300} defaultValue={asset.alt} /></label>
+          <label>Caption<textarea name="caption" maxLength={2000} defaultValue={asset.caption} /></label>
+          <label><input name="public_read" type="checkbox" defaultChecked={asset.public_read} /> Allow public delivery</label>
+          <button type="submit">Save media details</button>
+        </form>
+        <form action={async (formData) => { 'use server'; await deleteMediaAction(params.projectId, asset.id, formData) }}>
+          <label><input type="checkbox" name="confirm_delete" required /> Confirm permanent deletion of the original and all variants</label>
+          <button type="submit">Delete media</button>
+        </form>
+      </li>)}</ul>}
 
       <h2>New content type</h2>
       <form action={async (formData) => { 'use server'; await createContentModelAction(params.projectId, formData) }}>
