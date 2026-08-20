@@ -29,6 +29,7 @@ export const ProjectSpaces: CollectionConfig = {
     useAsTitle: 'name',
     group: 'App Data',
     defaultColumns: ['name', 'argusProjectId', 'status', 'clientId'],
+    hidden: ({ user }) => (user as { role?: string } | null)?.role === 'client',
   },
   access: {
     create: createProjectSpace,
