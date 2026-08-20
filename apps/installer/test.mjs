@@ -42,6 +42,8 @@ test("public site is a generic verified command without configuration fields", a
     readFile(resolve(appDir, "public/app.js"), "utf8"),
   ]);
   assert.doesNotMatch(html, /GitHub username|Argus domain|<form/);
+  assert.match(html, /app\.js\?v=pat-installer-1/);
+  assert.match(html, /Loading verified install command/);
   assert.match(script, /sha256sum -c/);
   assert.doesNotMatch(script, /ARGUS_REGISTRY_TOKEN|read -rsp/);
 });

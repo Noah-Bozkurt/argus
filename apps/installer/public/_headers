@@ -12,3 +12,10 @@
 /install.sh.sha256
   Content-Type: text/plain; charset=utf-8
   Cache-Control: public, max-age=300, must-revalidate
+
+/app.js
+  Content-Type: text/javascript; charset=utf-8
+  Cache-Control: no-cache, must-revalidate
+
+/
+  Cache-Control: no-cache, must-revalidate
