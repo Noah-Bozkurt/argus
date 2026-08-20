@@ -34,6 +34,7 @@ The repository already contains substantial working slices for:
 - a first-test hybrid deployment path using Docker Compose for the control plane and native Agent/Helper services;
 - private custom images for Argus Web, Control API, Worker, Payload and host-tool artifacts;
 - an Ubuntu/Debian amd64 first-test installer with bootstrap, local Agent enrollment, health verification and disposable reset;
+- a static Cloudflare Pages installer site that publishes the canonical installer and checksum without receiving or embedding private-registry credentials;
 - an embedded `argusctl smoke` verification path for a real installed server;
 - immutable installed revisions even when `main` is used as the discovery alias;
 - main-only image publication that runs only after normal CI succeeds and verifies expected remote GHCR tags;
@@ -90,7 +91,7 @@ The runner now has explicit checkpoints for the reproducible project/CMS/App Dat
 ### First server test checklist
 
 1. point the main and content DNS names at a clean test server;
-2. run `install.sh` using a private-registry read credential and no manual service setup;
+2. use the Cloudflare Pages installer site to download and checksum-verify `install.sh`, then run it with a private-registry read credential and no manual service setup;
 3. confirm the persisted `ARGUS_VERSION` is a full immutable commit SHA rather than `main`;
 4. run `sudo argusctl smoke` and require every internal/public check to pass;
 5. reboot the server and run `sudo argusctl smoke` again;
@@ -135,7 +136,7 @@ Priorities should first be driven by failures and usability gaps found in that t
 
 - turn the successful main-SHA lifecycle into named/versioned release installation rather than relying on `main` for discovery;
 - publish release manifests/checksums and pin images by immutable digest where practical;
-- add a small authenticated installation portal that lists permitted releases and issues short-lived, single-use bootstrap URLs; the bootstrap must verify a signed release manifest, obtain only ephemeral private-artifact/registry access, avoid persisting download credentials, and never embed a long-lived GitHub or GHCR token in `install.sh`;
+- evolve the static installer site into an authenticated release portal that lists permitted releases and issues short-lived, single-use bootstrap URLs; the bootstrap must verify a signed release manifest, obtain only ephemeral private-artifact/registry access, avoid persisting download credentials, and never embed a long-lived GitHub or GHCR token in `install.sh`;
 - add a strongly confirmed operator-driven rollback/recovery workflow for retained update snapshots;
 - add arm64 after the amd64 install/update/reset cycle is stable;
 - improve install/update diagnostics based on failures observed during the real lifecycle test;
