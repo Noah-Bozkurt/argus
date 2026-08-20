@@ -497,8 +497,11 @@ start_target() {
     return 1
   fi
 
+  # render_target_caddyfile uses sed -i, which replaces the host file inode.
+  # Recreate Caddy so its bind mount follows the newly rendered file rather
+  # than the stale pre-update inode.
+  compose up -d --no-deps --force-recreate caddy
   compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
-  compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null
 
   systemctl enable --now argus-helper.service
   systemctl enable --now argus-agent.service
@@ -589,10 +592,19 @@ rollback_transaction() {
   compose up -d --remove-orphans
   local compose_status=$?
   local health_status=1
+  local caddy_status=1
   if [[ "$compose_status" -eq 0 ]]; then
     wait_control_plane_health
     health_status=$?
-    compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
+    if [[ "$health_status" -eq 0 ]]; then
+      # restore_installed_files may also replace the bind-mounted file inode.
+      compose up -d --no-deps --force-recreate caddy
+      caddy_status=$?
+      if [[ "$caddy_status" -eq 0 ]]; then
+        compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
+        caddy_status=$?
+      fi
+    fi
   fi
 
   systemctl enable --now argus-helper.service
@@ -601,12 +613,12 @@ rollback_transaction() {
   local agent_status=$?
 
   local smoke_status=1
-  if [[ "$files_status" -eq 0 && "$db_status" -eq 0 && "$compose_status" -eq 0 && "$health_status" -eq 0 && "$helper_status" -eq 0 && "$agent_status" -eq 0 ]]; then
+  if [[ "$files_status" -eq 0 && "$db_status" -eq 0 && "$compose_status" -eq 0 && "$health_status" -eq 0 && "$caddy_status" -eq 0 && "$helper_status" -eq 0 && "$agent_status" -eq 0 ]]; then
     /usr/local/bin/argusctl smoke
     smoke_status=$?
   fi
 
-  if [[ "$files_status" -eq 0 && "$db_status" -eq 0 && "$compose_status" -eq 0 && "$health_status" -eq 0 && "$helper_status" -eq 0 && "$agent_status" -eq 0 && "$smoke_status" -eq 0 ]]; then
+  if [[ "$files_status" -eq 0 && "$db_status" -eq 0 && "$compose_status" -eq 0 && "$health_status" -eq 0 && "$caddy_status" -eq 0 && "$helper_status" -eq 0 && "$agent_status" -eq 0 && "$smoke_status" -eq 0 ]]; then
     if write_transaction_result ROLLED_BACK; then
       warn "rollback completed successfully; restored revision $CURRENT_REVISION"
       return 0

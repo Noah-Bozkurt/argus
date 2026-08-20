@@ -6,7 +6,28 @@ RUN apt-get update \
     && rustup target add x86_64-unknown-linux-musl
 
 WORKDIR /src
-COPY . .
+
+# Compile third-party dependencies in a layer that changes only when Cargo
+# manifests change. The final build then recompiles only local Argus crates.
+COPY Cargo.toml Cargo.lock LICENSE ./
+COPY crates/agent/Cargo.toml crates/agent/Cargo.toml
+COPY crates/cli/Cargo.toml crates/cli/Cargo.toml
+COPY crates/common/Cargo.toml crates/common/Cargo.toml
+COPY crates/helper/Cargo.toml crates/helper/Cargo.toml
+COPY crates/protocol/Cargo.toml crates/protocol/Cargo.toml
+COPY crates/system/Cargo.toml crates/system/Cargo.toml
+COPY services/control-api/Cargo.toml services/control-api/Cargo.toml
+COPY services/worker/Cargo.toml services/worker/Cargo.toml
+RUN for package in crates/agent crates/cli crates/common crates/helper crates/protocol crates/system services/control-api services/worker; do \
+      mkdir -p "$package/src"; \
+      printf 'fn main() {}\n' >"$package/src/main.rs"; \
+      printf '\n' >"$package/src/lib.rs"; \
+    done \
+    && cargo build --locked --release --target x86_64-unknown-linux-musl -p agent -p helper -p cli
+
+COPY crates crates
+COPY scripts scripts
+RUN find crates -type f -name '*.rs' -exec touch {} +
 RUN cargo build --locked --release --target x86_64-unknown-linux-musl -p agent -p helper -p cli
 
 FROM scratch AS artifact
