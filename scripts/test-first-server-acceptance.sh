@@ -101,8 +101,15 @@ fi
 source "$(dirname "$0")/first-server-product-acceptance.sh" --internal-test-library
 ARGUS_SERVER_ID=00000000-0000-4000-8000-000000000005
 api() {
-  [[ "$1" == POST && "$2" == /commands ]]
-  printf '%s\n' "$3"
+  if [[ "$1" == POST && "$2" == /commands ]]; then
+    printf '%s\n' "$3"
+  elif [[ "$1" == GET && "$2" == /background-jobs ]]; then
+    printf '%s\n' '{"jobs":[{"id":"00000000-0000-4000-8000-000000000010","job_kind":"site_monitor.check","resource_key":"site","status":"SUCCEEDED","completed_at":"2026-08-20T00:01:00Z"}]}'
+  elif [[ "$1" == GET && "$2" == /servers ]]; then
+    printf '%s\n' '[{"server_id":"00000000-0000-4000-8000-000000000005","snapshot":{"backups":{"artifacts":[{"name":"backup.tar.gz","profile":"system-config","size_bytes":10,"sha256":"abc","verified":true}]}}}]'
+  else
+    return 1
+  fi
 }
 queued="$(queue_command '{"kind":"service.status","service":"argus-agent.service"}' LOW)"
 jq -e --arg server "$ARGUS_SERVER_ID" '
@@ -110,11 +117,40 @@ jq -e --arg server "$ARGUS_SERVER_ID" '
   .command_type.service == "argus-agent.service" and .risk_level == "LOW" and
   .ttl_seconds == 300 and (.idempotency_key | startswith("acceptance-"))
 ' <<<"$queued" >/dev/null
+backup_queued="$(queue_command '{"kind":"backup.create","profile":"system-config"}' MEDIUM)"
+jq -e '.command_type.kind == "backup.create" and .command_type.profile == "system-config" and .risk_level == "MEDIUM"' <<<"$backup_queued" >/dev/null
+[[ "$(wait_for_job site_monitor.check site '' 1 | jq -r .id)" == 00000000-0000-4000-8000-000000000010 ]]
+wait_for_backup backup.tar.gz true 1
 
-write_checkpoint project environment service site safe-command protected-command
+write_checkpoint project environment service site safe-command protected-command monitor-job backup-command.tar.gz backup-command verify-command preflight-command
 [[ "$(stat -c '%a' "$CHECKPOINT_FILE")" == 600 ]]
 # shellcheck disable=SC1090
 . "$CHECKPOINT_FILE"
 [[ "$PROJECT_ID" == project && "$PROTECTED_COMMAND_ID" == protected-command ]]
+[[ "$MONITOR_JOB_ID" == monitor-job && "$BACKUP_NAME" == backup-command.tar.gz ]]
+[[ "$BACKUP_COMMAND_ID" == backup-command && "$VERIFY_COMMAND_ID" == verify-command && "$PREFLIGHT_COMMAND_ID" == preflight-command ]]
+
+# The lifecycle report must consume and expose the expanded product evidence.
+product_project=00000000-0000-4000-8000-000000000020
+monitor_job=00000000-0000-4000-8000-000000000021
+backup_command=00000000-0000-4000-8000-000000000022
+verify_command=00000000-0000-4000-8000-000000000023
+preflight_command=00000000-0000-4000-8000-000000000024
+write_checkpoint "$product_project" environment service site safe-command protected-command "$monitor_job" "$backup_command.tar.gz" "$backup_command" "$verify_command" "$preflight_command"
+
+# Restore lifecycle helpers after sourcing the product helper library above.
+# shellcheck disable=SC1091
+source "$(dirname "$0")/first-server-acceptance.sh" --internal-test-library
+write_checkpoint baseline REVISION "$FROM_REVISION" BOOT_ID 00000000-0000-4000-8000-000000000001 CONFIG_FINGERPRINT "$fingerprint_one"
+write_checkpoint post-reboot COMPLETED_AT 2026-08-20T00:00:00Z REVISION "$FROM_REVISION" BOOT_ID 00000000-0000-4000-8000-000000000002
+write_checkpoint installer-rerun REVISION "$FROM_REVISION"
+write_checkpoint post-update FROM_REVISION "$FROM_REVISION" TO_REVISION "$TO_REVISION" TRANSACTION "$successful"
+mkdir -p "$successful"
+printf 'FROM_REVISION=%s\nTO_REVISION=%s\n' "$FROM_REVISION" "$TO_REVISION" >"$successful/metadata.env"
+printf 'SUCCEEDED\n' >"$successful/result"
+stage_report >/dev/null
+grep -Fq "scheduled_site_monitor_job: $monitor_job" "$REPORT_FILE"
+grep -Fq "verified_system_config_backup: $backup_command.tar.gz" "$REPORT_FILE"
+grep -Fq "restore_preflight_command: $preflight_command" "$REPORT_FILE"
 
 printf 'first-server acceptance helper tests passed\n'

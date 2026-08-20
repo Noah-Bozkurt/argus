@@ -303,6 +303,7 @@ stage_report() {
   [[ -f "$ACCEPTANCE_DIR/product.env" ]] || die "run acceptance stage 'product' first"
 
   local initial_revision reboot_revision rerun_revision from_revision to_revision transaction product_project_id
+  local monitor_job_id backup_name backup_command_id verify_command_id preflight_command_id
   initial_revision="$(checkpoint_value baseline REVISION)"
   reboot_revision="$(checkpoint_value post-reboot REVISION)"
   rerun_revision="$(checkpoint_value installer-rerun REVISION)"
@@ -316,7 +317,15 @@ stage_report() {
     . "$ACCEPTANCE_DIR/product.env"
     printf '%s\n' "${PROJECT_ID:-}"
   )"
+  monitor_job_id="$(checkpoint_value product MONITOR_JOB_ID)"
+  backup_name="$(checkpoint_value product BACKUP_NAME)"
+  backup_command_id="$(checkpoint_value product BACKUP_COMMAND_ID)"
+  verify_command_id="$(checkpoint_value product VERIFY_COMMAND_ID)"
+  preflight_command_id="$(checkpoint_value product PREFLIGHT_COMMAND_ID)"
   [[ "$product_project_id" =~ ^[0-9a-f-]{36}$ ]] || die "product acceptance Project ID is invalid"
+  [[ "$monitor_job_id" =~ ^[0-9a-f-]{36}$ ]] || die "product acceptance monitor job ID is invalid"
+  [[ "$backup_command_id" =~ ^[0-9a-f-]{36}$ && "$backup_name" == "$backup_command_id.tar.gz" ]] || die "product acceptance backup evidence is inconsistent"
+  [[ "$verify_command_id" =~ ^[0-9a-f-]{36}$ && "$preflight_command_id" =~ ^[0-9a-f-]{36}$ ]] || die "product acceptance backup command evidence is invalid"
 
   [[ "$initial_revision" == "$reboot_revision" && "$initial_revision" == "$rerun_revision" ]] \
     || die "checkpoint revisions are inconsistent"
@@ -347,10 +356,16 @@ product_api_structures_verified: yes
 typed_agent_action_verified: yes
 control_plane_docker_protection_verified: yes
 payload_project_sync_verified: yes
+post_reboot_scheduler_execution_verified: yes
+scheduled_site_monitor_job: $monitor_job_id
+verified_system_config_backup: $backup_name
+backup_create_command: $backup_command_id
+backup_verify_command: $verify_command_id
+restore_preflight_command: $preflight_command_id
 
 This report intentionally contains no registry credential or plaintext Argus secret.
-It proves the recorded lifecycle and product checkpoints only; CMS data/records,
-backup/restore, reset/reinstall and manual-failure acceptance remain separate work.
+It proves the recorded lifecycle and product checkpoints only. Transactional restore apply,
+CMS/App Data workflows, reset/reinstall and manual-failure acceptance remain separate work.
 EOF
   chmod 0600 "$tmp"
   sync -f "$tmp"
