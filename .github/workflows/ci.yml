@@ -8,7 +8,7 @@ on:
 
 jobs:
   rust:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -17,7 +17,7 @@ jobs:
       - run: cargo fmt --all -- --check
 
   web:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -35,7 +35,7 @@ jobs:
     needs:
       - rust
       - web
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 20
     services:
       postgres:
@@ -63,6 +63,9 @@ jobs:
           bash -n scripts/first-server-product-acceptance.sh
           bash -n scripts/first-server-restore-acceptance.sh
           bash -n scripts/test-first-server-restore-acceptance.sh
+          bash -n scripts/first-server-reset-reinstall-acceptance.sh
+          bash -n scripts/test-first-server-reset-reinstall-acceptance.sh
+          bash -n scripts/test-reset-first-test.sh
           bash -n scripts/test-native-cms-runtime.sh
           bash -n scripts/test-media-runtime.sh
           bash -n scripts/test-forms-runtime.sh

@@ -8,6 +8,7 @@ INSTALL_DIR="${ARGUS_INSTALL_DIR:-/opt/argus}"
 STATE_DIR="${ARGUS_STATE_DIR:-/var/lib/argus}"
 ENV_FILE="$INSTALL_DIR/.env"
 ACCEPTANCE_DIR="${ARGUS_ACCEPTANCE_DIR:-$STATE_DIR/acceptance/first-server}"
+ACCEPTANCE_ARCHIVE_DIR="${ARGUS_ACCEPTANCE_ARCHIVE_DIR:-/var/lib/argus-acceptance/first-server}"
 REPORT_FILE="$ACCEPTANCE_DIR/report.txt"
 UPDATE_VERSION="${ARGUS_ACCEPTANCE_UPDATE_VERSION:-main}"
 FAILURE_UPDATE_VERSION="${ARGUS_ACCEPTANCE_FAILURE_UPDATE_VERSION:-$UPDATE_VERSION}"
@@ -33,6 +34,8 @@ Commands:
                    the personal Project created by the product stage.
   restore          On a disposable host, require explicit confirmation and exercise
                    maintenance-gated transactional restore plus post-restore smoke.
+  reset-reinstall  Terminal disposable-host stage: archive the PASS report outside
+                   Argus state, reset it, perform a second clean install, and smoke.
   report           Write/print the sanitized lifecycle acceptance report.
   status           Show which lifecycle checkpoints have completed.
 
@@ -371,7 +374,33 @@ stage_restore() {
   "$REPO_ROOT/scripts/first-server-restore-acceptance.sh"
 }
 
+stage_reset_reinstall() {
+  require_root
+  [[ -f "$REPORT_FILE" ]] || die "run acceptance stage 'report' first"
+  ARGUS_ACCEPTANCE_ARCHIVE_DIR="$ACCEPTANCE_ARCHIVE_DIR" \
+    "$REPO_ROOT/scripts/first-server-reset-reinstall-acceptance.sh"
+}
+
 stage_status() {
+  local terminal="$ACCEPTANCE_ARCHIVE_DIR/reset-reinstall.env" phase=""
+  if [[ -f "$terminal" ]]; then
+    phase="$(
+      set +u
+      # Root-owned terminal checkpoint written with shell escaping.
+      # shellcheck disable=SC1090
+      . "$terminal"
+      printf '%s\n' "${PHASE:-}"
+    )"
+  fi
+  if [[ "$phase" == COMPLETE ]]; then
+    local archived_name
+    for archived_name in baseline post-reboot installer-rerun rollback-test post-update product content restore; do
+      printf '%-18s %s\n' "$archived_name" 'complete (archived)'
+    done
+    printf '%-18s %s\n' reset-reinstall complete
+    printf 'final report: %s/final-report.txt\n' "$ACCEPTANCE_ARCHIVE_DIR"
+    return 0
+  fi
   ensure_acceptance_dir
   local name
   for name in baseline post-reboot installer-rerun rollback-test post-update product content restore; do
@@ -382,6 +411,7 @@ stage_status() {
       printf '%-18s %s\n' "$name" pending
     fi
   done
+  printf '%-18s %s\n' reset-reinstall "${phase:-pending}"
 }
 
 stage_report() {
@@ -524,6 +554,7 @@ main() {
     product) stage_product ;;
     content) stage_content ;;
     restore) stage_restore ;;
+    reset-reinstall) stage_reset_reinstall ;;
     report) stage_report ;;
     status) stage_status ;;
     -h|--help|help|'') usage ;;
