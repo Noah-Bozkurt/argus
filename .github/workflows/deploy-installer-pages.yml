@@ -1,38 +1,81 @@
 name: Deploy installer site
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - install.sh
-      - apps/installer/**
-      - .github/workflows/deploy-installer-pages.yml
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
   workflow_dispatch:
+
+concurrency:
+  group: installer-pages-main
+  cancel-in-progress: false
 
 jobs:
   deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: [self-hosted, linux, x64]
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     permissions:
+      actions: read
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out tested revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
       - uses: pnpm/action-setup@v4
         with:
           version: 9
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @argus/installer test
-      - run: pnpm --filter @argus/installer build
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Download CI-built installer site
+        if: github.event_name == 'workflow_run'
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: installer-site
+          path: ${{ runner.temp }}/installer-site
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Build installer site for manual deployment
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @argus/installer test
+          pnpm --filter @argus/installer build
+
       - name: Deploy to Cloudflare Pages
-        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        if: >-
+          (github.event_name == 'workflow_dispatch' || steps.download.outcome == 'success') &&
+          env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        env:
+          INSTALLER_DIST: ${{ github.event_name == 'workflow_dispatch' && 'apps/installer/dist' || format('{0}/installer-site', runner.temp) }}
         run: >-
-          pnpm dlx wrangler@3.90.0 pages deploy apps/installer/dist
+          pnpm dlx wrangler@3.90.0 pages deploy "$INSTALLER_DIST"
           --project-name=argus-installer --branch=main
+
       - name: Report missing deployment configuration
-        if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
-        run: echo "Installer site built successfully; add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets to deploy it."
+        if: >-
+          (github.event_name == 'workflow_dispatch' || steps.download.outcome == 'success') &&
+          (env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == '')
+        run: echo "Installer site is ready; add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets to deploy it."
+
+      - name: Skip deployment when installer was unchanged
+        if: github.event_name == 'workflow_run' && steps.download.outcome != 'success'
+        run: echo "CI did not publish an installer artifact; no installer files changed."

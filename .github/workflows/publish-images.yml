@@ -99,6 +99,8 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: true
           platforms: linux/amd64
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
           tags: |
             ghcr.io/noah-bozkurt/${{ matrix.image }}:main
             ghcr.io/noah-bozkurt/${{ matrix.image }}:${{ github.event.workflow_run.head_sha }}

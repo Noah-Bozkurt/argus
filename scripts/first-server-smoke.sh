@@ -171,8 +171,14 @@ main() {
 
   ss -ltnH | awk '{print $4}' | grep -Eq '^127\.0\.0\.1:8080$' \
     || die "Control API is not bound to host loopback on 127.0.0.1:8080"
-  if ss -ltnH | awk '{print $4}' | grep -Eq '(^|:|\])5432$'; then
-    die "host TCP port 5432 is listening; PostgreSQL must not be exposed by the Argus Compose stack"
+  local postgres_cid postgres_host_bindings
+  postgres_cid="$(compose ps -q postgres)"
+  postgres_host_bindings="$(
+    docker inspect -f '{{with index .HostConfig.PortBindings "5432/tcp"}}{{json .}}{{end}}' \
+      "$postgres_cid"
+  )"
+  if [[ -n "$postgres_host_bindings" && "$postgres_host_bindings" != "null" ]]; then
+    die "Argus PostgreSQL has a host port binding ($postgres_host_bindings); remove its Compose port mapping"
   fi
   pass "Control API is loopback-only and PostgreSQL is not host-exposed"
 

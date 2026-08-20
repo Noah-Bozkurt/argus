@@ -17,6 +17,7 @@ on:
       - scripts/**
       - deploy/**
       - .github/workflows/ci.yml
+      - .github/workflows/deploy-installer-pages.yml
       - .github/workflows/publish-images.yml
   push:
     branches:
@@ -36,7 +37,12 @@ on:
       - scripts/**
       - deploy/**
       - .github/workflows/ci.yml
+      - .github/workflows/deploy-installer-pages.yml
       - .github/workflows/publish-images.yml
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -51,6 +57,7 @@ jobs:
       content: ${{ steps.filter.outputs.content }}
       installer: ${{ steps.filter.outputs.installer }}
       readiness: ${{ steps.filter.outputs.readiness }}
+      acceptance: ${{ steps.filter.outputs.acceptance }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -85,20 +92,34 @@ jobs:
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
               - '.github/workflows/ci.yml'
+              - '.github/workflows/deploy-installer-pages.yml'
             readiness:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'crates/**'
               - 'services/**'
               - 'migrations/**'
-              - 'apps/**'
+              - 'apps/web/**'
+              - 'apps/content/**'
               - 'packages/**'
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
-              - 'install.sh'
-              - 'scripts/**'
+              - 'scripts/first-server-smoke.sh'
+              - 'scripts/first-server-content-acceptance.mjs'
+              - 'scripts/test-native-cms-runtime.sh'
+              - 'scripts/test-media-runtime.sh'
+              - 'scripts/test-forms-runtime.sh'
+              - 'scripts/update-first-test.sh'
+              - 'scripts/recover-interrupted-update.sh'
               - 'deploy/**'
+              - '.github/workflows/ci.yml'
+            acceptance:
+              - 'install.sh'
+              - 'scripts/first-server-**'
+              - 'scripts/reset-first-test.sh'
+              - 'scripts/test-first-server-**'
+              - 'scripts/test-reset-first-test.sh'
               - '.github/workflows/ci.yml'
 
   rust:
@@ -111,12 +132,15 @@ jobs:
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --locked
       - run: cargo fmt --all -- --check
+      - run: cargo test --workspace --locked
 
-  web:
+  javascript:
     needs: changes
-    if: needs.changes.outputs.web == 'true'
+    if: >-
+      needs.changes.outputs.web == 'true' ||
+      needs.changes.outputs.content == 'true' ||
+      needs.changes.outputs.installer == 'true'
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
@@ -126,48 +150,61 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @argus/web exec tsc --noEmit
+      - if: needs.changes.outputs.web == 'true'
+        run: pnpm --filter @argus/web exec tsc --noEmit
+      - if: needs.changes.outputs.content == 'true'
+        run: pnpm --filter @argus/content run typecheck
+      - if: needs.changes.outputs.content == 'true'
+        run: pnpm --filter @argus/content run test:cms-contract
+      - if: needs.changes.outputs.installer == 'true'
+        run: pnpm --filter @argus/installer test
+      - if: needs.changes.outputs.installer == 'true'
+        run: pnpm --filter @argus/installer build
+      - name: Upload tested installer site
+        if: needs.changes.outputs.installer == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-site
+          path: apps/installer/dist
+          if-no-files-found: error
+          retention-days: 1
 
-  content:
+  acceptance-tooling:
     needs: changes
-    if: needs.changes.outputs.content == 'true'
+    if: needs.changes.outputs.acceptance == 'true'
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @argus/content run typecheck
-      - run: pnpm --filter @argus/content run test:cms-contract
-
-  installer:
-    needs: changes
-    if: needs.changes.outputs.installer == 'true'
-    runs-on: [self-hosted, linux, x64]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @argus/installer test
-      - run: pnpm --filter @argus/installer build
+      - name: Validate acceptance scripts
+        run: |
+          set -euo pipefail
+          bash -n scripts/first-server-acceptance.sh
+          bash -n scripts/first-server-product-acceptance.sh
+          bash -n scripts/first-server-restore-acceptance.sh
+          bash -n scripts/first-server-reset-reinstall-acceptance.sh
+          bash -n scripts/reset-first-test.sh
+          bash -n scripts/test-first-server-acceptance.sh
+          bash -n scripts/test-first-server-restore-acceptance.sh
+          bash -n scripts/test-first-server-reset-reinstall-acceptance.sh
+          bash -n scripts/test-reset-first-test.sh
+          node --check scripts/first-server-content-acceptance.mjs
+      - name: Test acceptance helpers
+        run: |
+          bash scripts/test-first-server-acceptance.sh
+          bash scripts/test-first-server-restore-acceptance.sh
+          bash scripts/test-first-server-reset-reinstall-acceptance.sh
+          bash scripts/test-reset-first-test.sh
+          node --test scripts/first-server-content-acceptance.test.mjs
 
   server-test-readiness:
     needs:
       - changes
       - rust
-      - web
-      - content
-      - installer
+      - javascript
+      - acceptance-tooling
     if: >-
       always() &&
       needs.changes.outputs.readiness == 'true' &&
@@ -195,15 +232,7 @@ jobs:
       - name: Validate deployment lifecycle scripts
         run: |
           set -euo pipefail
-          bash -n install.sh
-          bash -n scripts/reset-first-test.sh
           bash -n scripts/first-server-smoke.sh
-          bash -n scripts/first-server-product-acceptance.sh
-          bash -n scripts/first-server-restore-acceptance.sh
-          bash -n scripts/test-first-server-restore-acceptance.sh
-          bash -n scripts/first-server-reset-reinstall-acceptance.sh
-          bash -n scripts/test-first-server-reset-reinstall-acceptance.sh
-          bash -n scripts/test-reset-first-test.sh
           bash -n scripts/test-native-cms-runtime.sh
           bash -n scripts/test-media-runtime.sh
           bash -n scripts/test-forms-runtime.sh
