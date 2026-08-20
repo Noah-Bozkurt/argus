@@ -1,0 +1,85 @@
+.feature-stack > section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 18px;
+  overflow: hidden;
+}
+
+.feature-stack > section > h2 {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: -.01em;
+}
+
+.feature-stack > section > h2 + p {
+  margin: 6px 0 18px;
+  max-width: 900px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.feature-stack > section > h3 {
+  margin: 20px 0 9px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.feature-stack > section > h3:first-of-type {
+  margin-top: 8px;
+}
+
+.feature-stack > section > p,
+.feature-stack > section > article > p {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.feature-stack > section > article {
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #0e1117;
+}
+
+.feature-stack > section > article + article {
+  margin-top: 9px;
+}
+
+.feature-stack > section > article > div,
+.feature-stack > section > div:not(.empty-state) {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.feature-stack > section > article > div > form,
+.feature-stack > section > div > form {
+  display: inline-flex;
+}
+
+.feature-stack > section form + form {
+  margin-top: 6px;
+}
+
+.feature-stack > section form button {
+  width: fit-content;
+}
+
+.feature-stack > section ul {
+  margin: 10px 0;
+  padding-left: 20px;
+  color: var(--text-soft);
+}
+
+.feature-stack > section li {
+  margin: 5px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
