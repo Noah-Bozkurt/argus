@@ -1,4 +1,3 @@
-import Link from 'next/link'
 import { getJobsAdminView } from '../../lib/jobs-admin-api'
 import { retryDeadJobAction } from './actions'
 
@@ -12,81 +11,83 @@ function formatInterval(seconds: number): string {
   return `${seconds}s`
 }
 
+function statusClass(status: string): string {
+  if (status === 'SUCCEEDED') return 'success'
+  if (status === 'DEAD') return 'danger'
+  if (status === 'RUNNING') return 'info'
+  if (status === 'QUEUED') return 'warning'
+  return ''
+}
+
 export default async function JobsPage() {
   const view = await getJobsAdminView()
 
   return (
     <main>
-      <p><Link href="/">← Dashboard</Link></p>
-      <h1>Background Jobs</h1>
-      <p>
-        Queue and schedule visibility for Argus background work. Schedule configuration remains in
-        the feature that owns it; this page does not edit typed payloads or bypass feature validation.
-      </p>
+      <div className="page-header">
+        <div>
+          <span className="eyebrow">Operations</span>
+          <h1>Background jobs</h1>
+          <p>Queue health, schedules and recent background work across the Argus control plane.</p>
+        </div>
+      </div>
 
-      <h2>Queue</h2>
-      <p>
-        Queued: <strong>{view.queued_count}</strong>
-        {' — '}Running: <strong>{view.running_count}</strong>
-        {' — '}Dead: <strong>{view.dead_count}</strong>
-      </p>
+      <div className="stats-grid">
+        <div className="stat-card"><div className="stat-label"><span>Queued</span><span className="badge warning">Pending</span></div><div className="stat-value">{view.queued_count}</div><div className="stat-meta">Waiting for a worker</div></div>
+        <div className="stat-card"><div className="stat-label"><span>Running</span><span className="badge info">Live</span></div><div className="stat-value">{view.running_count}</div><div className="stat-meta">Currently executing</div></div>
+        <div className="stat-card"><div className="stat-label"><span>Dead</span><span className={`status-dot ${view.dead_count ? 'danger' : 'online'}`} /></div><div className="stat-value">{view.dead_count}</div><div className="stat-meta">Requires operator attention</div></div>
+        <div className="stat-card"><div className="stat-label"><span>Schedules</span><span className="badge">Configured</span></div><div className="stat-value">{view.schedules.length}</div><div className="stat-meta">{view.schedules.filter((schedule) => schedule.enabled).length} enabled</div></div>
+      </div>
 
-      <h2>Schedules</h2>
-      {view.schedules.length === 0 ? <p>No schedules configured.</p> : (
-        <ul>
-          {view.schedules.map((schedule) => (
-            <li key={schedule.id}>
-              <p>
-                <strong>{schedule.job_kind}</strong>
-                {' — '}{schedule.project_name ?? 'Workspace'}
-                {' — '}{schedule.enabled ? 'Enabled' : 'Disabled'}
-                {' — '}every {formatInterval(schedule.interval_seconds)}
-              </p>
-              <p>
-                Resource: <code>{schedule.resource_key || 'default'}</code>
-                {' — '}Next: {formatDate(schedule.next_run_at)}
-                {' — '}Last queued: {formatDate(schedule.last_enqueued_at)}
-              </p>
-            </li>
-          ))}
-        </ul>
-      )}
+      <section className="panel" style={{ marginBottom: 16 }}>
+        <div className="panel-header"><div><h2>Schedules</h2><p>Recurring work configured by its owning feature</p></div></div>
+        {view.schedules.length === 0 ? <div className="empty-state"><strong>No schedules configured</strong>Feature-owned schedules will appear here.</div> : (
+          <div className="table-wrap" style={{ border: 0, borderRadius: 0 }}>
+            <table>
+              <thead><tr><th>Job</th><th>Scope</th><th>Resource</th><th>Interval</th><th>Status</th><th>Next run</th></tr></thead>
+              <tbody>
+                {view.schedules.map((schedule) => (
+                  <tr key={schedule.id}>
+                    <td><strong>{schedule.job_kind}</strong></td>
+                    <td>{schedule.project_name ?? 'Workspace'}</td>
+                    <td><code>{schedule.resource_key || 'default'}</code></td>
+                    <td>{formatInterval(schedule.interval_seconds)}</td>
+                    <td><span className={`badge ${schedule.enabled ? 'success' : ''}`}>{schedule.enabled ? 'Enabled' : 'Disabled'}</span></td>
+                    <td>{formatDate(schedule.next_run_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
-      <h2>Recent jobs</h2>
-      <p>Showing the latest {view.jobs.length} jobs. Job payloads are intentionally not rendered.</p>
-      {view.jobs.length === 0 ? <p>No background jobs yet.</p> : (
-        <ul>
-          {view.jobs.map((job) => (
-            <li key={job.id}>
-              <p>
-                <strong>{job.job_kind}</strong>
-                {' — '}{job.project_name ?? 'Workspace'}
-                {' — '}{job.status}
-                {' — '}attempt {job.attempts}/{job.max_attempts}
-              </p>
-              <p>
-                Resource: <code>{job.resource_key || 'default'}</code>
-                {' — '}Run at: {formatDate(job.run_at)}
-                {' — '}Created: {formatDate(job.created_at)}
-              </p>
-              {job.status === 'RUNNING' ? (
-                <p>Lease: {job.lease_owner ?? 'unknown'} until {formatDate(job.lease_expires_at)}</p>
-              ) : null}
-              {job.last_error_code || job.last_error_message ? (
-                <p>
-                  Error: {job.last_error_code ?? 'EXECUTION_FAILED'}
-                  {job.last_error_message ? ` — ${job.last_error_message}` : ''}
-                </p>
-              ) : null}
-              {job.status === 'DEAD' ? (
-                <form action={async () => { 'use server'; await retryDeadJobAction(job.id) }}>
-                  <button type="submit">Retry dead job</button>
-                </form>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      )}
+      <section className="panel">
+        <div className="panel-header"><div><h2>Recent jobs</h2><p>Latest {view.jobs.length} executions; payloads stay hidden by design</p></div></div>
+        {view.jobs.length === 0 ? <div className="empty-state"><strong>No background jobs yet</strong>Executions will appear here when work is queued.</div> : (
+          <div className="table-wrap" style={{ border: 0, borderRadius: 0 }}>
+            <table>
+              <thead><tr><th>Job</th><th>Project</th><th>Resource</th><th>Status</th><th>Attempts</th><th>Run at</th><th>Action</th></tr></thead>
+              <tbody>
+                {view.jobs.map((job) => (
+                  <tr key={job.id}>
+                    <td>
+                      <strong>{job.job_kind}</strong>
+                      {job.last_error_message ? <div className="text-danger" style={{ marginTop: 4 }}>{job.last_error_code ?? 'EXECUTION_FAILED'} · {job.last_error_message}</div> : null}
+                    </td>
+                    <td>{job.project_name ?? 'Workspace'}</td>
+                    <td><code>{job.resource_key || 'default'}</code></td>
+                    <td><span className={`badge ${statusClass(job.status)}`}>{job.status}</span></td>
+                    <td>{job.attempts}/{job.max_attempts}</td>
+                    <td>{formatDate(job.run_at)}</td>
+                    <td>{job.status === 'DEAD' ? <form action={async () => { 'use server'; await retryDeadJobAction(job.id) }}><button className="small" type="submit">Retry</button></form> : <span className="muted">—</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </main>
   )
 }
