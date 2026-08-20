@@ -28,12 +28,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @argus/installer test
       - run: pnpm --filter @argus/installer build
-      - uses: cloudflare/wrangler-action@v3
+      - name: Deploy to Cloudflare Pages
         if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
-        with:
-          apiToken: ${{ env.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/installer/dist --project-name=argus-installer --branch=main
+        run: >-
+          pnpm dlx wrangler@3.90.0 pages deploy apps/installer/dist
+          --project-name=argus-installer --branch=main
       - name: Report missing deployment configuration
         if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
         run: echo "Installer site built successfully; add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets to deploy it."
