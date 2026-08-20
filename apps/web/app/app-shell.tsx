@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import type { ReactNode } from 'react'
+import type { SessionUser } from '../lib/auth'
 
 type IconName = 'overview' | 'projects' | 'servers' | 'jobs' | 'notifications' | 'settings' | 'logout'
 
@@ -38,7 +39,12 @@ function titleFromPath(pathname: string): string {
   return parts.at(-1)?.replaceAll('-', ' ').replace(/^./, (value) => value.toUpperCase()) ?? 'Argus'
 }
 
-export default function AppShell({ children }: { children: ReactNode }) {
+function userInitial(user: SessionUser | null): string {
+  const source = user?.displayName?.trim() || user?.email || 'A'
+  return source.charAt(0).toUpperCase()
+}
+
+export default function AppShell({ children, user }: { children: ReactNode; user: SessionUser | null }) {
   const pathname = usePathname()
   const publicPage = pathname.startsWith('/status/') || pathname === '/healthz' || pathname === '/login'
 
@@ -69,6 +75,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="sidebar-footer">
+          {user ? (
+            <div className="signed-in-user">
+              <strong>{user.displayName || user.email}</strong>
+              <small>{user.role}</small>
+            </div>
+          ) : null}
           <div className="nav-link muted"><Icon name="settings" /><span>Settings</span></div>
           <form action="/auth/logout" method="post">
             <button className="nav-link logout-button" type="submit"><Icon name="logout" /><span>Sign out</span></button>
@@ -86,7 +98,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <div className="topbar-actions">
             <span className="control-status"><span className="status-dot online" />Control plane</span>
             <Link className="icon-button" href="/notifications" aria-label="Notifications"><Icon name="notifications" /></Link>
-            <div className="avatar" title="Operator">A</div>
+            <div className="avatar" title={user?.email ?? 'Argus account'}>{userInitial(user)}</div>
           </div>
         </header>
         <div className="page-frame">{children}</div>
