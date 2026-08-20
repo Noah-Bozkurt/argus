@@ -110,9 +110,17 @@ The Project workspace links to an Argus-native Content screen. Operators can cre
 
 Every saved record has an operator preview inside the protected Argus Web interface. The preview renders stored values as text/structured data through React rather than injecting stored HTML, so draft content cannot introduce executable markup. Published records on public content types also link to their real public read endpoint; drafts never receive a public link.
 
+Content schemas have an explicit role:
+
+- `collection` stores repeatable standalone entries;
+- `component` defines a reusable block schema and cannot create standalone records or be public by itself;
+- `page` stores page fields plus an ordered layout of explicitly allowed component schemas.
+
+The native page editor can add, edit, reorder and remove typed blocks. Every block has a stable UUID, component slug and values validated against the current component schema. Page schemas can only allow active component schemas from the same Project, layouts are bounded to 100 blocks, and unknown/disallowed blocks fail the write. The protected preview renders draft page fields and blocks; published public page responses include the same validated layout without exposing Payload relationship IDs or model internals.
+
 The Web server talks to Payload through `/internal/argus/cms/projects/:projectId`. This route is not a public browser API. It requires the high-entropy internal content token plus Argus organization and user headers, and resolves the mirrored Project by both Argus Project UUID and organization before every query or mutation. Payload access checks are bypassed only after that explicit server-to-server scope check; normal Payload user endpoints retain their existing membership rules.
 
-The initial native editor supports scalar fields (text, long text, number, boolean, date/date-time and JSON). Relationships remain managed through the underlying App Data model until the native relationship picker and safe public expansion are implemented.
+The native editor supports scalar fields (text, long text, number, boolean, date/date-time and JSON) in collection records, page fields and component blocks. Relationships remain managed through the underlying App Data model until the native relationship picker and safe public expansion are implemented.
 
 ## Production migrations
 
@@ -128,15 +136,15 @@ During CMS upgrade:
 - existing records are marked published when `_status` is introduced so previously visible app-data does not disappear;
 - the versions table and public-content fields are added.
 
+The page/component migration is additive: existing content models default to `collection`, existing current/versioned records receive an empty layout, and the page allowlist uses a Payload-managed self-relationship table.
+
 Migration validation covers a fresh PostgreSQL 16 database, schema isolation, repeated/idempotent production startup and a production Payload build.
 
 ## What CMS V1 is not
 
-CMS V1 now includes a basic Argus-native model, draft and publication workflow, but it is not yet a visual page-building experience. It does not include:
+CMS V1 now includes a basic Argus-native model, draft/publication workflow and typed block editor. It does not yet include:
 
-- page/component layout schemas;
-- visual page builder;
-- site-template-aware live preview (the current preview is a safe generic record preview);
+- rich drag-and-drop or site-template-aware visual design (the current editor uses explicit add/move/remove controls and a safe generic preview);
 - media library/uploads/variants;
 - forms/submissions;
 - client approvals/portal;

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 
-import { createContentModel, saveContentRecord, type ContentField } from '../../../../lib/content-api'
+import { createContentModel, saveContentRecord, type ContentBlock, type ContentField, type ContentModel } from '../../../../lib/content-api'
 
 function text(formData: FormData, name: string): string {
   return String(formData.get(name) ?? '').trim()
@@ -25,6 +25,8 @@ export async function createContentModelAction(projectId: string, formData: Form
     slug: text(formData, 'slug').toLowerCase(),
     description: text(formData, 'description'),
     public_read: formData.get('public_read') === 'on',
+    content_role: text(formData, 'content_role') as ContentModel['content_role'],
+    allowed_component_ids: formData.getAll('allowed_component_ids').map(String),
     fields,
   })
   revalidatePath(`/projects/${projectId}/content`)
@@ -42,10 +44,18 @@ function fieldValue(formData: FormData, field: ContentField): unknown {
 }
 
 export async function saveContentRecordAction(projectId: string, fields: ContentField[], formData: FormData) {
+  let layout: ContentBlock[] = []
+  try {
+    const parsed = JSON.parse(text(formData, 'layout') || '[]')
+    if (Array.isArray(parsed)) layout = parsed
+  } catch {
+    throw new Error('Page layout is not valid JSON')
+  }
   await saveContentRecord(projectId, {
     model_id: text(formData, 'model_id'),
     record_id: text(formData, 'record_id') || undefined,
     values: Object.fromEntries(fields.map((field) => [field.key, fieldValue(formData, field)])),
+    layout,
     publish: text(formData, 'intent') === 'publish',
   })
   revalidatePath(`/projects/${projectId}/content`)

@@ -11,6 +11,7 @@ export type CmsFieldInput = {
   type: (typeof FIELD_TYPES)[number]
   required: boolean
 }
+export type ContentRole = 'collection' | 'page' | 'component'
 
 export type ArgusCmsIdentity = {
   organizationId: string
@@ -33,6 +34,8 @@ export function normalizeModelInput(input: unknown): {
   slug: string
   description: string
   publicRead: boolean
+  contentRole: ContentRole
+  allowedComponentIds: string[]
   fields: CmsFieldInput[]
 } | null {
   if (!input || typeof input !== 'object') return null
@@ -41,6 +44,9 @@ export function normalizeModelInput(input: unknown): {
   const slug = typeof raw.slug === 'string' ? raw.slug.trim().toLowerCase() : ''
   const description = typeof raw.description === 'string' ? raw.description.trim() : ''
   if (!name || name.length > 160 || !MODEL_SLUG_PATTERN.test(slug) || description.length > 4000) return null
+  const contentRole = ['collection', 'page', 'component'].includes(String(raw.content_role)) ? raw.content_role as ContentRole : 'collection'
+  const allowedComponentIds = Array.isArray(raw.allowed_component_ids) ? raw.allowed_component_ids.filter((id): id is string => typeof id === 'string' && UUID_PATTERN.test(id)) : []
+  if (allowedComponentIds.length !== (Array.isArray(raw.allowed_component_ids) ? raw.allowed_component_ids.length : 0) || new Set(allowedComponentIds).size !== allowedComponentIds.length) return null
   if (!Array.isArray(raw.fields) || raw.fields.length < 1 || raw.fields.length > 50) return null
 
   const seen = new Set<string>()
@@ -55,7 +61,7 @@ export function normalizeModelInput(input: unknown): {
     seen.add(key)
     fields.push({ key, label, type: type as CmsFieldInput['type'], required: field.required === true })
   }
-  return { name, slug, description, publicRead: raw.public_read === true, fields }
+  return { name, slug, description, publicRead: contentRole !== 'component' && raw.public_read === true, contentRole, allowedComponentIds: contentRole === 'page' ? allowedComponentIds : [], fields }
 }
 
 export function validateValues(fields: CmsFieldInput[], input: unknown): Record<string, unknown> | null {

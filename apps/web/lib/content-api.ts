@@ -11,6 +11,8 @@ export type ContentModel = {
   slug: string
   description: string
   public_read: boolean
+  content_role: 'collection' | 'page' | 'component'
+  allowed_component_ids: string[]
   schema_version: number
   status: string
   fields: ContentField[]
@@ -20,10 +22,17 @@ export type ContentRecord = {
   id: string
   model_id: string
   values: Record<string, unknown>
+  layout: ContentBlock[]
   editorial_status: 'draft' | 'published'
   lifecycle_status: string
   published_at: string | null
   updated_at: string | null
+}
+
+export type ContentBlock = {
+  id: string
+  component: string
+  values: Record<string, unknown>
 }
 
 export type ContentWorkspace = {
@@ -59,6 +68,8 @@ export async function createContentModel(projectId: string, model: {
   slug: string
   description: string
   public_read: boolean
+  content_role: ContentModel['content_role']
+  allowed_component_ids: string[]
   fields: ContentField[]
 }): Promise<void> {
   await request(projectId, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'create_model', model }) })
@@ -68,6 +79,7 @@ export async function saveContentRecord(projectId: string, input: {
   model_id: string
   record_id?: string
   values: Record<string, unknown>
+  layout: ContentBlock[]
   publish: boolean
 }): Promise<void> {
   await request(projectId, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'save_record', ...input }) })

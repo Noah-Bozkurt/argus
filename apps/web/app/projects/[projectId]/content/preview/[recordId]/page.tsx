@@ -45,6 +45,18 @@ export default async function ContentPreviewPage({ params }: { params: { project
             <PreviewValue field={field} value={record.values[field.key]} />
           </section>
         ))}
+        {model.content_role === 'page' ? record.layout.map((block) => {
+          const component = workspace.models.find((candidate) => candidate.content_role === 'component' && candidate.slug === block.component)
+          return <section key={block.id}>
+            <h2>{component?.name ?? block.component}</h2>
+            {component ? component.fields.map((field) => (
+              <section key={field.key}>
+                <h3>{field.label}</h3>
+                <PreviewValue field={field} value={block.values[field.key]} />
+              </section>
+            )) : <p>This component schema is unavailable.</p>}
+          </section>
+        }) : null}
       </article>
     </main>
   )

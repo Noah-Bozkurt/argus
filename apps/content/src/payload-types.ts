@@ -225,6 +225,11 @@ export interface DataModel {
    * Expose only published active records through the read-only public CMS API.
    */
   publicRead?: boolean | null;
+  /**
+   * Immutable content shape. Page records can contain blocks defined by component schemas.
+   */
+  contentRole: 'collection' | 'page' | 'component';
+  allowedComponents?: (string | DataModel)[] | null;
   schemaVersion: number;
   status: 'active' | 'archived';
   fields: {
@@ -274,6 +279,18 @@ export interface DataRecord {
    * Scalar values validated against the selected model. Relationships are stored separately.
    */
   values:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  /**
+   * Validated component blocks for page content. Empty for normal collection records.
+   */
+  layout:
     | {
         [k: string]: unknown;
       }
@@ -468,6 +485,8 @@ export interface DataModelsSelect<T extends boolean = true> {
   description?: T;
   kind?: T;
   publicRead?: T;
+  contentRole?: T;
+  allowedComponents?: T;
   schemaVersion?: T;
   status?: T;
   fields?:
@@ -496,6 +515,7 @@ export interface DataRecordsSelect<T extends boolean = true> {
   model?: T;
   schemaVersion?: T;
   values?: T;
+  layout?: T;
   status?: T;
   publishedAt?: T;
   createdBy?: T;
