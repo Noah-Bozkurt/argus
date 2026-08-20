@@ -77,3 +77,15 @@ test('normalizes relationships separately from scalar values', () => {
   assert.deepEqual(validateValues(model?.fields ?? [], { title: 'Hello' }), { title: 'Hello' })
   assert.equal(normalizeModelInput({ name: 'Bad', slug: 'bad', fields: [{ key: 'author', label: 'Author', type: 'relationship' }] }), null)
 })
+
+test('normalizes bounded media fields and validates UUID references', () => {
+  const asset = '00000000-0000-4000-8000-000000000020'
+  const model = normalizeModelInput({ name: 'Articles', slug: 'articles', fields: [
+    { key: 'gallery', label: 'Gallery', type: 'media', required: true, has_many: true },
+  ] })
+  assert.equal(model?.fields[0].type, 'media')
+  assert.equal(model?.fields[0].hasMany, true)
+  assert.deepEqual(validateValues(model?.fields ?? [], { gallery: [asset] }), { gallery: [asset] })
+  assert.equal(validateValues(model?.fields ?? [], { gallery: [] }), null)
+  assert.equal(validateValues(model?.fields ?? [], { gallery: ['not-an-id'] }), null)
+})

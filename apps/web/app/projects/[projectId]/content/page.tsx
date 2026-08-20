@@ -5,12 +5,19 @@ import { createContentModelAction, deleteMediaAction, saveContentRecordAction, u
 import { PageLayoutEditor } from './page-layout-editor'
 import { FormsSection } from './forms-section'
 
-function FieldInput({ field, value, records = [], selected = [] }: { field: ContentField; value?: unknown; records?: Awaited<ReturnType<typeof getContentWorkspace>>['records']; selected?: string[] }) {
+function FieldInput({ field, value, records = [], selected = [], media = [] }: { field: ContentField; value?: unknown; records?: Awaited<ReturnType<typeof getContentWorkspace>>['records']; selected?: string[]; media?: Awaited<ReturnType<typeof getMediaLibrary>> }) {
   const name = `value_${field.key}`
   if (field.type === 'relationship') return <select name={`relation_${field.key}`} multiple={field.has_many} required={field.required} defaultValue={selected}>
     {!field.required && !field.has_many ? <option value="">None</option> : null}
     {records.filter((record) => record.model_id === field.target_model_id).map((record) => <option key={record.id} value={record.id}>{String(record.values.title ?? record.values.name ?? record.values.slug ?? record.id)}</option>)}
   </select>
+  if (field.type === 'media') {
+    const mediaSelected = Array.isArray(value) ? value.map(String) : value ? [String(value)] : []
+    return <select name={name} multiple={field.has_many} required={field.required} defaultValue={mediaSelected}>
+      {!field.required && !field.has_many ? <option value="">None</option> : null}
+      {media.map((asset) => <option key={asset.id} value={asset.id}>{asset.alt} — {asset.filename}{asset.public_read ? ' — public' : ' — private'}</option>)}
+    </select>
+  }
   if (field.type === 'textarea' || field.type === 'json') {
     return <textarea name={name} required={field.required} defaultValue={field.type === 'json' && value !== undefined ? JSON.stringify(value, null, 2) : String(value ?? '')} />
   }
@@ -19,12 +26,13 @@ function FieldInput({ field, value, records = [], selected = [] }: { field: Cont
   return <input name={name} type={type} required={field.required} defaultValue={String(value ?? '')} />
 }
 
-function RecordForm({ projectId, model, record, components, workspace }: {
+function RecordForm({ projectId, model, record, components, workspace, media }: {
   projectId: string
   model: Awaited<ReturnType<typeof getContentWorkspace>>['models'][number]
   record?: Awaited<ReturnType<typeof getContentWorkspace>>['records'][number]
   components: Awaited<ReturnType<typeof getContentWorkspace>>['models']
   workspace: Awaited<ReturnType<typeof getContentWorkspace>>
+  media: Awaited<ReturnType<typeof getMediaLibrary>>
 }) {
   return (
     <form action={async (formData) => { 'use server'; await saveContentRecordAction(projectId, model.fields, formData) }}>
@@ -33,11 +41,11 @@ function RecordForm({ projectId, model, record, components, workspace }: {
       {model.fields.map((field) => (
         <label key={field.key}>
           {field.label}{field.required ? ' *' : ''}
-          <FieldInput field={field} value={record?.values[field.key]} records={workspace.records}
+          <FieldInput field={field} value={record?.values[field.key]} records={workspace.records} media={media}
             selected={record ? workspace.relations.filter((relation) => relation.source_record_id === record.id && relation.field_key === field.key).map((relation) => relation.target_record_id) : []} />
         </label>
       ))}
-      {model.content_role === 'page' ? <PageLayoutEditor components={components} initialLayout={record?.layout ?? []} /> : <input type="hidden" name="layout" value="[]" />}
+      {model.content_role === 'page' ? <PageLayoutEditor components={components} initialLayout={record?.layout ?? []} media={media} /> : <input type="hidden" name="layout" value="[]" />}
       <button type="submit" name="intent" value="draft">Save draft</button>
       <button type="submit" name="intent" value="publish">Publish</button>
     </form>
@@ -109,10 +117,11 @@ export default async function ProjectContentPage({ params, searchParams }: { par
                 <option value="text">Short text</option><option value="textarea">Long text</option><option value="number">Number</option>
                 <option value="boolean">Yes / no</option><option value="date">Date</option><option value="datetime">Date and time</option><option value="json">Structured JSON</option>
                 <option value="relationship">Relationship</option>
+                <option value="media">Media image</option>
               </select>
               <label><input type="checkbox" name={`field_${index}_required`} defaultChecked={index === 0} /> Required</label>
               <label>Relationship target<select name={`field_${index}_target_model_id`} defaultValue=""><option value="">Not applicable</option>{workspace.models.filter((candidate) => candidate.content_role !== 'component').map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select></label>
-              <label><input type="checkbox" name={`field_${index}_has_many`} /> Allow multiple related records</label>
+              <label><input type="checkbox" name={`field_${index}_has_many`} /> Allow multiple selections (relationships or media)</label>
             </div>
           ))}
         </fieldset>
@@ -127,13 +136,13 @@ export default async function ProjectContentPage({ params, searchParams }: { par
             <p>{model.description || 'No description.'} — {model.content_role} — slug <code>{model.slug}</code> — schema v{model.schema_version} — {model.public_read ? 'public when published' : 'private'}</p>
             {model.content_role === 'component' ? <p>This schema is available as a block in page types that allow it.</p> : <>
             <h3>New record</h3>
-            <RecordForm projectId={params.projectId} model={model} components={componentModels.filter((component) => model.allowed_component_ids.includes(component.id))} workspace={workspace} />
+            <RecordForm projectId={params.projectId} model={model} components={componentModels.filter((component) => model.allowed_component_ids.includes(component.id))} workspace={workspace} media={media} />
             <h3>Existing records</h3>
             {records.length === 0 ? <p>No records yet.</p> : records.map((record) => (
               <article key={record.id}>
                 <p><strong>{record.editorial_status === 'published' ? 'Published' : 'Draft'}</strong>{record.published_at ? ` — ${new Date(record.published_at).toLocaleString()}` : ''}</p>
                 <p><Link href={`/projects/${params.projectId}/content/preview/${record.id}`}>Preview</Link></p>
-                <RecordForm projectId={params.projectId} model={model} record={record} components={componentModels.filter((component) => model.allowed_component_ids.includes(component.id))} workspace={workspace} />
+                <RecordForm projectId={params.projectId} model={model} record={record} components={componentModels.filter((component) => model.allowed_component_ids.includes(component.id))} workspace={workspace} media={media} />
               </article>
             ))}</>}
           </section>

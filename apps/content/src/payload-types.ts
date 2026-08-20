@@ -241,7 +241,7 @@ export interface DataModel {
   fields: {
     key: string;
     label: string;
-    type: 'text' | 'textarea' | 'number' | 'boolean' | 'date' | 'datetime' | 'json' | 'relationship';
+    type: 'text' | 'textarea' | 'number' | 'boolean' | 'date' | 'datetime' | 'json' | 'relationship' | 'media';
     required?: boolean | null;
     hasMany?: boolean | null;
     targetModel?: (string | null) | DataModel;

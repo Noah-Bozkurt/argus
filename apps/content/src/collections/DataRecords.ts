@@ -1,4 +1,4 @@
-import type { CollectionBeforeValidateHook, CollectionConfig } from 'payload'
+import type { CollectionBeforeValidateHook, CollectionConfig, PayloadRequest } from 'payload'
 import {
   createProjectDocument,
   editProjectDocuments,
@@ -12,6 +12,7 @@ type ModelField = {
   key?: string
   type?: string
   required?: boolean
+  hasMany?: boolean
 }
 
 type PageBlock = { id?: unknown; component?: unknown; values?: unknown }
@@ -42,10 +43,12 @@ function validScalar(type: string, value: unknown): boolean {
 
 function validateScalarValues(fields: ModelField[], values: unknown): Record<string, unknown> {
   if (!isPlainObject(values)) throw new Error('Record values must be a JSON object')
-  const scalarFields = new Map(fields.filter((field) => field.type !== 'relationship' && field.key).map((field) => [field.key as string, field]))
+  const scalarFields = new Map(fields.filter((field) => !['relationship', 'media'].includes(String(field.type)) && field.key).map((field) => [field.key as string, field]))
+  const mediaFields = new Map(fields.filter((field) => field.type === 'media' && field.key).map((field) => [field.key as string, field]))
   const relationshipKeys = new Set(fields.filter((field) => field.type === 'relationship' && field.key).map((field) => field.key as string))
   for (const key of Object.keys(values)) {
     if (relationshipKeys.has(key)) throw new Error(`Relationship field '${key}' must be stored in data-relations`)
+    if (mediaFields.has(key)) continue
     const field = scalarFields.get(key)
     if (!field) throw new Error(`Unknown field '${key}' for this model`)
     if (values[key] !== null && !validScalar(String(field.type), values[key])) throw new Error(`Field '${key}' does not match type '${field.type}'`)
@@ -54,6 +57,25 @@ function validateScalarValues(fields: ModelField[], values: unknown): Record<str
     if (field.required && (values[key] === undefined || values[key] === null || values[key] === '')) throw new Error(`Required field '${key}' is missing`)
   }
   return values
+}
+
+async function validateMediaValues(req: PayloadRequest, projectID: string | number, fields: ModelField[], values: Record<string, unknown>) {
+  let totalReferences = 0
+  for (const field of fields.filter((candidate) => candidate.type === 'media' && candidate.key)) {
+    const key = field.key as string
+    const value = values[key]
+    if (field.required && (value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0))) throw new Error(`Required field '${key}' is missing`)
+    if (value === undefined || value === null || value === '') continue
+    const ids = field.hasMany ? (Array.isArray(value) ? value : []) : [value]
+    if (ids.length === 0 || ids.length > 50 || ids.some((id) => typeof id !== 'string' || !UUID_PATTERN.test(id)) || new Set(ids).size !== ids.length) throw new Error(`Field '${key}' does not contain valid media references`)
+    totalReferences += ids.length
+    if (totalReferences > 100) throw new Error('A record or component block can reference at most 100 media assets')
+    for (const id of ids as string[]) {
+      const media = await req.payload.find({ collection: 'media', depth: 0, limit: 1, overrideAccess: true, pagination: false,
+        where: { and: [{ id: { equals: id } }, { project: { equals: projectID } }] } })
+      if (media.docs.length !== 1) throw new Error(`Media reference '${key}' must belong to the same project`)
+    }
+  }
 }
 
 const validateRecord: CollectionBeforeValidateHook = async ({ data, operation, originalDoc, req }) => {
@@ -96,7 +118,8 @@ const validateRecord: CollectionBeforeValidateHook = async ({ data, operation, o
 
   const values = data.values ?? originalDoc?.values ?? {}
   const fields = model.fields ?? []
-  validateScalarValues(fields, values)
+  const validatedValues = validateScalarValues(fields, values)
+  await validateMediaValues(req, scope.projectID, fields, validatedValues)
 
   const layout = data.layout ?? originalDoc?.layout ?? []
   if (model.contentRole === 'page') {
@@ -104,12 +127,14 @@ const validateRecord: CollectionBeforeValidateHook = async ({ data, operation, o
     const componentIDs = (model.allowedComponents ?? []).map(relationshipID).filter((id): id is string | number => id !== null)
     const components = await Promise.all(componentIDs.map((id) => req.payload.findByID({ collection: 'data-models', id, depth: 0, overrideAccess: true }))) as Array<{ slug?: string; status?: string; kind?: string; contentRole?: string; project?: unknown; fields?: ModelField[] }>
     const bySlug = new Map(components.filter((component) => component.status !== 'archived' && component.kind === 'content' && component.contentRole === 'component' && relationshipID(component.project) === scope.projectID && component.slug).map((component) => [component.slug as string, component]))
-    data.layout = (layout as PageBlock[]).map((block) => {
+    data.layout = await Promise.all((layout as PageBlock[]).map(async (block) => {
       if (!isPlainObject(block) || typeof block.id !== 'string' || !UUID_PATTERN.test(block.id) || typeof block.component !== 'string') throw new Error('Page block identity is invalid')
       const component = bySlug.get(block.component)
       if (!component) throw new Error(`Component '${block.component}' is not allowed by this page schema`)
-      return { id: block.id, component: block.component, values: validateScalarValues(component.fields ?? [], block.values ?? {}) }
-    })
+      const blockValues = validateScalarValues(component.fields ?? [], block.values ?? {})
+      await validateMediaValues(req, scope.projectID, component.fields ?? [], blockValues)
+      return { id: block.id, component: block.component, values: blockValues }
+    }))
   } else {
     data.layout = []
   }

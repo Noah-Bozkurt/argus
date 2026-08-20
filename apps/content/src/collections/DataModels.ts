@@ -78,7 +78,7 @@ const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation
       }
     } else {
       rawField.targetModel = null
-      rawField.hasMany = false
+      if (type !== 'media') rawField.hasMany = false
     }
   }
 
@@ -227,6 +227,7 @@ export const DataModels: CollectionConfig = {
             { label: 'Date & time', value: 'datetime' },
             { label: 'JSON', value: 'json' },
             { label: 'Relationship', value: 'relationship' },
+            { label: 'Media', value: 'media' },
           ],
         },
         { name: 'required', type: 'checkbox', defaultValue: false },
@@ -234,7 +235,7 @@ export const DataModels: CollectionConfig = {
           name: 'hasMany',
           type: 'checkbox',
           defaultValue: false,
-          admin: { condition: (_, siblingData) => siblingData?.type === 'relationship' },
+          admin: { condition: (_, siblingData) => ['relationship', 'media'].includes(siblingData?.type) },
         },
         {
           name: 'targetModel',

@@ -35,6 +35,10 @@ export async function createContentModelAction(projectId: string, formData: Form
 }
 
 function fieldValue(formData: FormData, field: ContentField): unknown {
+  if (field.type === 'media') {
+    const selected = formData.getAll(`value_${field.key}`).map(String).filter(Boolean)
+    return field.has_many ? selected : (selected[0] ?? '')
+  }
   if (field.type === 'boolean') return formData.get(`value_${field.key}`) === 'on'
   const value = text(formData, `value_${field.key}`)
   if (!value) return value

@@ -122,13 +122,15 @@ The native page editor can add, edit, reorder and remove typed blocks. Every blo
 
 The Web server talks to Payload through `/internal/argus/cms/projects/:projectId`. This route is not a public browser API. It requires the high-entropy internal content token plus Argus organization and user headers, and resolves the mirrored Project by both Argus Project UUID and organization before every query or mutation. Payload access checks are bypassed only after that explicit server-to-server scope check; normal Payload user endpoints retain their existing membership rules.
 
-The native editor supports scalar fields (text, long text, number, boolean, date/date-time and JSON) in collection records, page fields and component blocks. Collection/page schemas can also declare single- or multi-value relationships and authors select targets from active records in the same Project. Component-block relationship fields remain a future richer-editor extension.
+The native editor supports scalar fields (text, long text, number, boolean, date/date-time and JSON) plus single/multiple media pickers in collection records, page fields and component blocks. Collection/page schemas can also declare single- or multi-value relationships and authors select targets from active records in the same Project. Component-block relationship fields remain a future richer-editor extension.
 
 ## Media library
 
 Each Project has an Argus-native image library backed by Payload uploads. Operators can upload JPEG, PNG, WebP and AVIF images up to 10 MiB with required alternative text and an optional caption. Payload records the original dimensions and generates bounded 320 px thumbnail, 960 px medium and 1920 px large variants without enlarging the source.
 
 Media ownership is immutable and scoped to the mirrored Project and organization. The internal list/upload/update/delete API repeats that scope check before using privileged Payload local operations. Anonymous file delivery is denied unless the individual asset has `publicRead=true` and its Project is active; changing either condition revokes delivery immediately. Private and public assets can coexist in the same Project. Caddy exposes only Payload's checked `/api/media/file/*` delivery handler on the public content hostname, not the Payload admin or generic collection API.
+
+Content and component schemas can declare single- or multi-image media fields. The native editors select from the current Project's library, and record validation resolves every UUID against that same Project before saving. Public content never returns stored references directly: it emits metadata and variant descriptors only for assets currently marked public, while private, deleted or cross-Project assets become `null` or are omitted from multi-value results. The same sanitization applies inside component blocks and explicitly expanded related records.
 
 Production Compose stores originals and generated variants in the named `content_media` volume mounted at `/app/media`, so replacing the immutable content container does not discard uploads. Deleting an asset removes its original and generated files as well as its metadata. This persistence is not yet a media backup: full volume backup/restore remains part of the broader disaster-recovery roadmap.
 
