@@ -56,6 +56,39 @@ export type MediaAsset = {
   updated_at: string | null
 }
 
+export type FormField = {
+  key: string
+  label: string
+  type: 'text' | 'email' | 'textarea' | 'number' | 'boolean' | 'select'
+  required: boolean
+  options: string[]
+}
+
+export type ProjectForm = {
+  id: string
+  name: string
+  slug: string
+  description: string
+  success_message: string
+  status: 'draft' | 'published' | 'archived'
+  fields: FormField[]
+  updated_at: string | null
+}
+
+export type FormSubmission = {
+  id: string
+  form_id: string
+  values: Record<string, unknown>
+  status: 'new' | 'reviewed' | 'spam' | 'archived'
+  submitted_at: string | null
+}
+
+export type FormsWorkspace = {
+  forms: ProjectForm[]
+  submissions: FormSubmission[]
+  submission_pagination: { page: number; total_pages: number; total_docs: number; has_next_page: boolean; has_prev_page: boolean }
+}
+
 const contentApi = process.env.ARGUS_CONTENT_URL ?? 'http://content:3000'
 
 function headers(): Record<string, string> {
@@ -126,4 +159,40 @@ export async function deleteMedia(projectId: string, mediaId: string): Promise<v
 
 export async function updateMedia(projectId: string, input: { media_id: string; alt: string; caption: string; public_read: boolean }): Promise<void> {
   await mediaRequest(projectId, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) })
+}
+
+async function formsRequest<T>(projectId: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${contentApi}/internal/argus/forms/projects/${projectId}`, {
+    ...init, cache: 'no-store', headers: { ...headers(), ...(init.headers ?? {}) },
+  })
+  if (!response.ok) throw new Error(`Content service ${response.status}: ${await response.text()}`)
+  if (response.status === 204) return undefined as T
+  return response.json()
+}
+
+export const getFormsWorkspace = (projectId: string, submissionPage = 1): Promise<FormsWorkspace> => {
+  return fetch(`${contentApi}/internal/argus/forms/projects/${projectId}?submission_page=${encodeURIComponent(String(submissionPage))}`, {
+    cache: 'no-store', headers: headers(),
+  }).then(async (response) => {
+    if (!response.ok) throw new Error(`Content service ${response.status}: ${await response.text()}`)
+    return response.json() as Promise<FormsWorkspace>
+  })
+}
+
+export async function createProjectForm(projectId: string, form: {
+  name: string; slug: string; description: string; success_message: string; published: boolean; fields: FormField[]
+}): Promise<void> {
+  await formsRequest(projectId, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'create_form', form }) })
+}
+
+export async function updateProjectFormStatus(projectId: string, formId: string, status: ProjectForm['status']): Promise<void> {
+  await formsRequest(projectId, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'update_form_status', form_id: formId, status }) })
+}
+
+export async function updateFormSubmissionStatus(projectId: string, submissionId: string, status: FormSubmission['status']): Promise<void> {
+  await formsRequest(projectId, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'update_submission_status', submission_id: submissionId, status }) })
+}
+
+export async function deleteFormSubmission(projectId: string, submissionId: string): Promise<void> {
+  await formsRequest(projectId, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'delete_submission', submission_id: submissionId }) })
 }

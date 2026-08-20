@@ -9,6 +9,8 @@ import { DataModels } from './collections/DataModels'
 import { DataRecords } from './collections/DataRecords'
 import { DataRelations } from './collections/DataRelations'
 import { Media } from './collections/Media'
+import { FormDefinitions } from './collections/FormDefinitions'
+import { FormSubmissions } from './collections/FormSubmissions'
 import { ProjectMemberships } from './collections/ProjectMemberships'
 import { ProjectSpaces } from './collections/ProjectSpaces'
 import { WorkspaceUsers } from './collections/WorkspaceUsers'
@@ -45,6 +47,8 @@ export default buildConfig({
     DataRecords,
     DataRelations,
     Media,
+    FormDefinitions,
+    FormSubmissions,
   ],
   db: postgresAdapter({
     idType: 'uuid',

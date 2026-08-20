@@ -74,6 +74,8 @@ export interface Config {
     'data-records': DataRecord;
     'data-relations': DataRelation;
     media: Media;
+    'form-definitions': FormDefinition;
+    'form-submissions': FormSubmission;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -88,6 +90,8 @@ export interface Config {
     'data-records': DataRecordsSelect<false> | DataRecordsSelect<true>;
     'data-relations': DataRelationsSelect<false> | DataRelationsSelect<true>;
     media: MediaSelect<false> | MediaSelect<true>;
+    'form-definitions': FormDefinitionsSelect<false> | FormDefinitionsSelect<true>;
+    'form-submissions': FormSubmissionsSelect<false> | FormSubmissionsSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -393,6 +397,69 @@ export interface Media {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "form-definitions".
+ */
+export interface FormDefinition {
+  id: string;
+  organizationId: string;
+  argusProjectId: string;
+  /**
+   * Immutable project ownership.
+   */
+  project: string | ProjectSpace;
+  name: string;
+  /**
+   * Immutable public form identifier.
+   */
+  slug: string;
+  description?: string | null;
+  successMessage: string;
+  status: 'draft' | 'published' | 'archived';
+  fields: {
+    key: string;
+    label: string;
+    type: 'text' | 'email' | 'textarea' | 'number' | 'boolean' | 'select';
+    required?: boolean | null;
+    options?:
+      | {
+          value: string;
+          id?: string | null;
+        }[]
+      | null;
+    id?: string | null;
+  }[];
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "form-submissions".
+ */
+export interface FormSubmission {
+  id: string;
+  organizationId: string;
+  argusProjectId: string;
+  project: string | ProjectSpace;
+  form: string | FormDefinition;
+  values:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  status: 'new' | 'reviewed' | 'spam' | 'archived';
+  sourceHash: string;
+  rateWindow: string;
+  rateKey: string;
+  submittedAt: string;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv".
  */
 export interface PayloadKv {
@@ -442,6 +509,14 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'media';
         value: string | Media;
+      } | null)
+    | ({
+        relationTo: 'form-definitions';
+        value: string | FormDefinition;
+      } | null)
+    | ({
+        relationTo: 'form-submissions';
+        value: string | FormSubmission;
       } | null);
   globalSlug?: string | null;
   user: {
@@ -659,6 +734,55 @@ export interface MediaSelect<T extends boolean = true> {
               filename?: T;
             };
       };
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "form-definitions_select".
+ */
+export interface FormDefinitionsSelect<T extends boolean = true> {
+  organizationId?: T;
+  argusProjectId?: T;
+  project?: T;
+  name?: T;
+  slug?: T;
+  description?: T;
+  successMessage?: T;
+  status?: T;
+  fields?:
+    | T
+    | {
+        key?: T;
+        label?: T;
+        type?: T;
+        required?: T;
+        options?:
+          | T
+          | {
+              value?: T;
+              id?: T;
+            };
+        id?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "form-submissions_select".
+ */
+export interface FormSubmissionsSelect<T extends boolean = true> {
+  organizationId?: T;
+  argusProjectId?: T;
+  project?: T;
+  form?: T;
+  values?: T;
+  status?: T;
+  sourceHash?: T;
+  rateWindow?: T;
+  rateKey?: T;
+  submittedAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

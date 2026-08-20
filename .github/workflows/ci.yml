@@ -63,6 +63,7 @@ jobs:
           bash -n scripts/first-server-product-acceptance.sh
           bash -n scripts/test-native-cms-runtime.sh
           bash -n scripts/test-media-runtime.sh
+          bash -n scripts/test-forms-runtime.sh
           bash -n scripts/update-first-test.sh
           bash -n scripts/recover-interrupted-update.sh
           grep -Fq 'org.opencontainers.image.revision' install.sh
@@ -316,6 +317,7 @@ jobs:
             if curl -fsS http://127.0.0.1:3000/healthz >/dev/null 2>&1; then
               bash scripts/test-native-cms-runtime.sh
               bash scripts/test-media-runtime.sh
+              bash scripts/test-forms-runtime.sh
               exit 0
             fi
             if ! kill -0 "$pid" >/dev/null 2>&1; then
