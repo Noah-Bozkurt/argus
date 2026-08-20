@@ -1,8 +1,9 @@
 import Link from 'next/link'
 
-import { getContentWorkspace, getMediaLibrary, type ContentField } from '../../../../lib/content-api'
+import { getContentWorkspace, getFormsWorkspace, getMediaLibrary, type ContentField } from '../../../../lib/content-api'
 import { createContentModelAction, deleteMediaAction, saveContentRecordAction, updateMediaAction, uploadMediaAction } from './actions'
 import { PageLayoutEditor } from './page-layout-editor'
+import { FormsSection } from './forms-section'
 
 function FieldInput({ field, value }: { field: ContentField; value?: unknown }) {
   const name = `value_${field.key}`
@@ -37,8 +38,10 @@ function RecordForm({ projectId, model, record, components }: {
   )
 }
 
-export default async function ProjectContentPage({ params }: { params: { projectId: string } }) {
-  const [workspace, media] = await Promise.all([getContentWorkspace(params.projectId), getMediaLibrary(params.projectId)])
+export default async function ProjectContentPage({ params, searchParams }: { params: { projectId: string }; searchParams: { submission_page?: string } }) {
+  const parsedPage = Number.parseInt(searchParams.submission_page ?? '1', 10)
+  const submissionPage = Number.isFinite(parsedPage) ? Math.max(1, parsedPage) : 1
+  const [workspace, media, forms] = await Promise.all([getContentWorkspace(params.projectId), getMediaLibrary(params.projectId), getFormsWorkspace(params.projectId, submissionPage)])
   const componentModels = workspace.models.filter((model) => model.content_role === 'component')
   const publicBase = process.env.ARGUS_CONTENT_PUBLIC_URL?.replace(/\/$/, '')
   return (
@@ -70,6 +73,8 @@ export default async function ProjectContentPage({ params }: { params: { project
           <button type="submit">Delete media</button>
         </form>
       </li>)}</ul>}
+
+      <FormsSection projectId={params.projectId} workspace={forms} publicBase={publicBase} />
 
       <h2>New content type</h2>
       <form action={async (formData) => { 'use server'; await createContentModelAction(params.projectId, formData) }}>

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 
-import { createContentModel, deleteMedia, saveContentRecord, updateMedia, uploadMedia, type ContentBlock, type ContentField, type ContentModel } from '../../../../lib/content-api'
+import { createContentModel, createProjectForm, deleteFormSubmission, deleteMedia, saveContentRecord, updateFormSubmissionStatus, updateMedia, updateProjectFormStatus, uploadMedia, type ContentBlock, type ContentField, type ContentModel, type FormField, type FormSubmission, type ProjectForm } from '../../../../lib/content-api'
 
 function text(formData: FormData, name: string): string {
   return String(formData.get(name) ?? '').trim()
@@ -79,5 +79,41 @@ export async function updateMediaAction(projectId: string, mediaId: string, form
     media_id: mediaId, alt: text(formData, 'alt'), caption: text(formData, 'caption'),
     public_read: formData.get('public_read') === 'on',
   })
+  revalidatePath(`/projects/${projectId}/content`)
+}
+
+export async function createProjectFormAction(projectId: string, formData: FormData) {
+  const fields: FormField[] = []
+  for (let index = 0; index < 30; index += 1) {
+    const key = text(formData, `form_field_${index}_key`).toLowerCase()
+    if (!key) continue
+    fields.push({
+      key, label: text(formData, `form_field_${index}_label`),
+      type: text(formData, `form_field_${index}_type`) as FormField['type'],
+      required: formData.get(`form_field_${index}_required`) === 'on',
+      options: text(formData, `form_field_${index}_options`).split(',').map((value) => value.trim()).filter(Boolean),
+    })
+  }
+  await createProjectForm(projectId, {
+    name: text(formData, 'form_name'), slug: text(formData, 'form_slug').toLowerCase(),
+    description: text(formData, 'form_description'), success_message: text(formData, 'form_success_message'),
+    published: formData.get('form_published') === 'on', fields,
+  })
+  revalidatePath(`/projects/${projectId}/content`)
+}
+
+export async function updateProjectFormStatusAction(projectId: string, formId: string, status: ProjectForm['status']) {
+  await updateProjectFormStatus(projectId, formId, status)
+  revalidatePath(`/projects/${projectId}/content`)
+}
+
+export async function updateFormSubmissionStatusAction(projectId: string, submissionId: string, status: FormSubmission['status']) {
+  await updateFormSubmissionStatus(projectId, submissionId, status)
+  revalidatePath(`/projects/${projectId}/content`)
+}
+
+export async function deleteFormSubmissionAction(projectId: string, submissionId: string, formData: FormData) {
+  if (formData.get('confirm_delete') !== 'on') throw new Error('Confirm submission deletion')
+  await deleteFormSubmission(projectId, submissionId)
   revalidatePath(`/projects/${projectId}/content`)
 }

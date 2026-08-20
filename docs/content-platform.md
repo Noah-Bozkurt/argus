@@ -130,6 +130,19 @@ Media ownership is immutable and scoped to the mirrored Project and organization
 
 Production Compose stores originals and generated variants in the named `content_media` volume mounted at `/app/media`, so replacing the immutable content container does not discard uploads. Deleting an asset removes its original and generated files as well as its metadata. This persistence is not yet a media backup: full volume backup/restore remains part of the broader disaster-recovery roadmap.
 
+## Forms and submissions
+
+Forms are Project-owned Payload definitions with a stable public slug, draft/published/archived lifecycle, success message and up to 30 typed fields. Supported fields are short text, email, long text, number, boolean/consent and bounded select choices. The Argus-native Content workspace creates and publishes forms, shows their public endpoint, paginates private submissions and lets operators triage submissions as new, reviewed, spam or archived. An explicitly confirmed scoped deletion permanently removes a submission when retention is no longer appropriate.
+
+```text
+GET  /public/projects/:argusProjectId/forms/:formSlug
+POST /public/projects/:argusProjectId/forms/:formSlug
+```
+
+Only active Projects and published forms resolve publicly. The GET response exposes the renderable schema without Payload IDs. POST accepts a JSON object containing `values`; unknown keys, missing required values, invalid email/type/choice values and bodies above 64 KiB are rejected. CORS allows credential-free use from a separately hosted Project site. The optional `_company` honeypot receives a non-distinguishing accepted response without creating a submission.
+
+Submission values are never exposed by a public read endpoint. Argus derives an HMAC source fingerprint from the proxy-provided address and Payload secret; raw source addresses are not stored. A PostgreSQL-backed fixed ten-minute window permits ten submissions per form/source. Unique durable rate slots prevent concurrent requests from racing past the cap, and rate state therefore survives application restarts. Operational database failures return a retryable service-unavailable response rather than being mislabeled as throttling.
+
 ## Production migrations
 
 Payload schema changes are committed as migrations under `apps/content/src/migrations/`.
@@ -148,6 +161,8 @@ The page/component migration is additive: existing content models default to `co
 
 The media migration adds a separate project-scoped upload collection and Payload lock relationship. Media bytes remain outside PostgreSQL in the persistent media volume.
 
+The forms migration adds definitions, normalized field/options rows and private submission records. Its unique rate-key index is part of the abuse-control correctness boundary.
+
 Migration validation covers a fresh PostgreSQL 16 database, schema isolation, repeated/idempotent production startup and a production Payload build.
 
 ## What CMS V1 is not
@@ -155,7 +170,6 @@ Migration validation covers a fresh PostgreSQL 16 database, schema isolation, re
 CMS V1 now includes a basic Argus-native model, draft/publication workflow and typed block editor. It does not yet include:
 
 - rich drag-and-drop or site-template-aware visual design (the current editor uses explicit add/move/remove controls and a safe generic preview);
-- forms/submissions;
 - client approvals/portal;
 - public relationship graph expansion.
 
