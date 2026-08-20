@@ -223,13 +223,15 @@ jobs:
           printf 'ROLLBACK_FAILED\n' >"$failed/result"
 
           RETRY_FAILED=0
-          if find_recovery_transaction >/tmp/argus-failed-recovery.out 2>/tmp/argus-failed-recovery.err; then
+          failed_recovery_out="$RUNNER_TEMP/argus-failed-recovery.out"
+          failed_recovery_err="$RUNNER_TEMP/argus-failed-recovery.err"
+          if find_recovery_transaction >"$failed_recovery_out" 2>"$failed_recovery_err"; then
             blocked_status=0
           else
             blocked_status=$?
           fi
           [[ "$blocked_status" -eq 2 ]]
-          grep -Fq 'unresolved failed update rollback blocks automatic startup' /tmp/argus-failed-recovery.err
+          grep -Fq 'unresolved failed update rollback blocks automatic startup' "$failed_recovery_err"
 
           RETRY_FAILED=1
           retry_candidate="$(find_recovery_transaction)"
@@ -238,7 +240,8 @@ jobs:
       - name: Validate Compose configuration
         run: |
           cp deploy/compose/Caddyfile.template deploy/compose/Caddyfile
-          cat > /tmp/argus-test.env <<'EOF'
+          compose_env="$RUNNER_TEMP/argus-test.env"
+          cat > "$compose_env" <<'EOF'
           ARGUS_REGISTRY=ghcr.io/noah-bozkurt
           ARGUS_VERSION=test
           ARGUS_DOMAIN=argus.example.test
@@ -255,14 +258,14 @@ jobs:
           EOF
           docker compose \
             --project-directory deploy/compose \
-            --env-file /tmp/argus-test.env \
+            --env-file "$compose_env" \
             -f deploy/compose/compose.yaml \
             config >/dev/null
 
       - name: Validate Caddy routing configuration
         run: |
           set -euo pipefail
-          caddyfile=/tmp/argus-Caddyfile
+          caddyfile="$RUNNER_TEMP/argus-Caddyfile"
           hash="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext test-password)"
           cp deploy/compose/Caddyfile.template "$caddyfile"
           sed -i \
@@ -289,7 +292,8 @@ jobs:
           RUST_LOG: info
         run: |
           set -euo pipefail
-          cargo run --locked -p control-api >/tmp/argus-control-api.log 2>&1 &
+          control_log="$RUNNER_TEMP/argus-control-api.log"
+          cargo run --locked -p control-api >"$control_log" 2>&1 &
           pid=$!
           trap 'kill "$pid" >/dev/null 2>&1 || true' EXIT
           for _ in $(seq 1 300); do
@@ -297,13 +301,13 @@ jobs:
               exit 0
             fi
             if ! kill -0 "$pid" >/dev/null 2>&1; then
-              cat /tmp/argus-control-api.log
+              cat "$control_log"
               exit 1
             fi
             sleep 1
           done
           echo "Control API did not become healthy within 5 minutes" >&2
-          cat /tmp/argus-control-api.log
+          cat "$control_log"
           exit 1
 
       - uses: pnpm/action-setup@v4
@@ -322,12 +326,13 @@ jobs:
           PAYLOAD_SECRET: payload-runtime-secret-0000000000
           PAYLOAD_PUBLIC_URL: http://127.0.0.1:3000
           ARGUS_CONTENT_SYNC_TOKEN: content-sync-runtime-000000000000
-          ARGUS_MEDIA_DIR: /tmp/argus-content-media
+          ARGUS_MEDIA_DIR: ${{ runner.temp }}/argus-content-media
           PAYLOAD_DB_PUSH: "false"
         run: |
           set -euo pipefail
           pnpm --filter @argus/content exec payload migrate
-          pnpm --filter @argus/content dev >/tmp/argus-content.log 2>&1 &
+          content_log="$RUNNER_TEMP/argus-content.log"
+          pnpm --filter @argus/content dev >"$content_log" 2>&1 &
           pid=$!
           trap 'kill "$pid" >/dev/null 2>&1 || true' EXIT
           for _ in $(seq 1 180); do
@@ -342,13 +347,13 @@ jobs:
               exit 0
             fi
             if ! kill -0 "$pid" >/dev/null 2>&1; then
-              cat /tmp/argus-content.log
+              cat "$content_log"
               exit 1
             fi
             sleep 1
           done
           echo "Payload did not become healthy within 3 minutes" >&2
-          cat /tmp/argus-content.log
+          cat "$content_log"
           exit 1
 
       - name: Build Web standalone artifact
