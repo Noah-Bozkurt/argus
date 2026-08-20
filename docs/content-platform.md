@@ -104,6 +104,14 @@ The endpoint also requires an active mirrored Project and active/published recor
 
 Pagination is bounded. Public CORS/cache headers are intentional because only explicitly public content reaches this route.
 
+## Argus-native content workflow
+
+The Project workspace links to an Argus-native Content screen. Operators can create project-scoped content types with typed scalar fields, create and edit records, save drafts, and publish without navigating Payload collections or copying internal IDs. Public visibility remains an explicit content-type setting; draft records are never returned by the public endpoint.
+
+The Web server talks to Payload through `/internal/argus/cms/projects/:projectId`. This route is not a public browser API. It requires the high-entropy internal content token plus Argus organization and user headers, and resolves the mirrored Project by both Argus Project UUID and organization before every query or mutation. Payload access checks are bypassed only after that explicit server-to-server scope check; normal Payload user endpoints retain their existing membership rules.
+
+The initial native editor supports scalar fields (text, long text, number, boolean, date/date-time and JSON). Relationships remain managed through the underlying App Data model until the native relationship picker and safe public expansion are implemented.
+
 ## Production migrations
 
 Payload schema changes are committed as migrations under `apps/content/src/migrations/`.
@@ -122,7 +130,7 @@ Migration validation covers a fresh PostgreSQL 16 database, schema isolation, re
 
 ## What CMS V1 is not
 
-CMS V1 is the editorial/storage boundary, not the final editor experience. It does not yet include:
+CMS V1 now includes a basic Argus-native model, draft and publication workflow, but it is not yet a visual page-building experience. It does not include:
 
 - page/component layout schemas;
 - visual page builder;

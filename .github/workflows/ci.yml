@@ -29,6 +29,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @argus/web exec tsc --noEmit
       - run: pnpm --filter @argus/content run typecheck
+      - run: pnpm --filter @argus/content run test:cms-contract
 
   server-test-readiness:
     needs:
@@ -60,6 +61,7 @@ jobs:
           bash -n scripts/reset-first-test.sh
           bash -n scripts/first-server-smoke.sh
           bash -n scripts/first-server-product-acceptance.sh
+          bash -n scripts/test-native-cms-runtime.sh
           bash -n scripts/update-first-test.sh
           bash -n scripts/recover-interrupted-update.sh
           grep -Fq 'org.opencontainers.image.revision' install.sh
@@ -292,6 +294,35 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+
+      - name: Exercise native CMS draft and publication workflow
+        env:
+          DATABASE_URL: postgresql://argus:argus-test-password@127.0.0.1:5432/argus
+          ARGUS_CONTENT_DB_SCHEMA: argus_content
+          PAYLOAD_SECRET: payload-runtime-secret-0000000000
+          PAYLOAD_PUBLIC_URL: http://127.0.0.1:3000
+          ARGUS_CONTENT_SYNC_TOKEN: content-sync-runtime-000000000000
+          PAYLOAD_DB_PUSH: "false"
+        run: |
+          set -euo pipefail
+          pnpm --filter @argus/content exec payload migrate
+          pnpm --filter @argus/content dev >/tmp/argus-content.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 180); do
+            if curl -fsS http://127.0.0.1:3000/healthz >/dev/null 2>&1; then
+              bash scripts/test-native-cms-runtime.sh
+              exit 0
+            fi
+            if ! kill -0 "$pid" >/dev/null 2>&1; then
+              cat /tmp/argus-content.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "Payload did not become healthy within 3 minutes" >&2
+          cat /tmp/argus-content.log
+          exit 1
 
       - name: Build Web standalone artifact
         run: pnpm --filter @argus/web run build
