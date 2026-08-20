@@ -1,0 +1,59 @@
+.resource-editor {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.resource-editor > summary {
+  width: fit-content;
+  list-style: none;
+}
+.resource-editor > summary::-webkit-details-marker { display: none; }
+.resource-editor-body {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #090c11;
+}
+.resource-editor-body > form + form {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.resource-editor-body small { display: block; line-height: 1.5; }
+
+.feature-stack > section > .create-drawer {
+  margin: 0 17px 16px;
+  background: var(--surface-inset);
+}
+.feature-stack > section > .create-drawer > summary { margin: 0; }
+.feature-stack > section > .callout { margin: 0 17px 16px; }
+.feature-stack > section > article .info-grid { border-color: #202633; }
+.feature-stack > section > article .action-row { margin-top: 10px; }
+.feature-stack > section > article .resource-card-head > .action-row { margin-top: 0; justify-content: flex-end; }
+
+.public-status-page .overall-status.warning {
+  border-color: rgba(231,179,90,.28);
+  background: rgba(231,179,90,.08);
+  color: #f2cb88;
+}
+.public-status-page .overall-status.danger {
+  border-color: rgba(239,109,114,.28);
+  background: rgba(239,109,114,.08);
+  color: #ff9fa4;
+}
+.public-status-page .overall-status.info {
+  border-color: rgba(91,124,255,.28);
+  background: rgba(91,124,255,.08);
+  color: #aebcff;
+}
+
+@media (max-width: 760px) {
+  .feature-stack > section > .create-drawer,
+  .feature-stack > section > .callout { margin-left: 12px; margin-right: 12px; }
+  .resource-editor-body { padding: 12px; }
+  .resource-editor > summary { width: 100%; }
+  .resource-editor > summary.button { width: 100%; }
+}
