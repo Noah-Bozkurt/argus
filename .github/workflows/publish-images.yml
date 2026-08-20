@@ -18,65 +18,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  changes:
+  publish-immutable-images:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main'
     runs-on: [self-hosted, linux, x64]
-    outputs:
-      any: ${{ steps.images.outputs.any }}
-      matrix: ${{ steps.images.outputs.matrix }}
-      images: ${{ steps.images.outputs.images }}
-    steps:
-      - name: Check out tested revision
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          fetch-depth: 2
-      - name: Select affected images
-        id: images
-        shell: bash
-        run: |
-          set -euo pipefail
-          include=''
-          images=''
-          add_image() {
-            local image="$1" dockerfile="$2"
-            [[ -z "$include" ]] || include+=','
-            include+="{\"image\":\"${image}\",\"dockerfile\":\"${dockerfile}\"}"
-            [[ -z "$images" ]] || images+=','
-            images+="$image"
-          }
-          changed() { ! git diff --quiet HEAD^ HEAD -- "$@"; }
-
-          changed apps/web packages package.json pnpm-lock.yaml pnpm-workspace.yaml deploy/docker/web.Dockerfile \
-            && add_image argus-web deploy/docker/web.Dockerfile
-          changed apps/content packages package.json pnpm-lock.yaml pnpm-workspace.yaml deploy/docker/content.Dockerfile \
-            && add_image argus-content deploy/docker/content.Dockerfile
-          changed services/control-api crates migrations Cargo.toml Cargo.lock deploy/docker/control-api.Dockerfile \
-            && add_image argus-control-api deploy/docker/control-api.Dockerfile
-          changed services/worker crates/common crates/protocol migrations Cargo.toml Cargo.lock deploy/docker/worker.Dockerfile \
-            && add_image argus-worker deploy/docker/worker.Dockerfile
-          changed crates install.sh scripts deploy/compose deploy/systemd deploy/docker/host-tools.Dockerfile Cargo.toml Cargo.lock \
-            && add_image argus-host-tools deploy/docker/host-tools.Dockerfile
-
-          if [[ -n "$include" ]]; then
-            echo 'any=true' >>"$GITHUB_OUTPUT"
-          else
-            echo 'any=false' >>"$GITHUB_OUTPUT"
-          fi
-          echo "matrix={\"include\":[${include}]}" >>"$GITHUB_OUTPUT"
-          echo "images=${images}" >>"$GITHUB_OUTPUT"
-
-  publish:
-    needs: changes
-    if: >-
-      needs.changes.outputs.any == 'true'
-    runs-on: [self-hosted, linux, x64]
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
+      matrix:
+        include:
+          - image: argus-web
+            dockerfile: deploy/docker/web.Dockerfile
+          - image: argus-content
+            dockerfile: deploy/docker/content.Dockerfile
+          - image: argus-control-api
+            dockerfile: deploy/docker/control-api.Dockerfile
+          - image: argus-worker
+            dockerfile: deploy/docker/worker.Dockerfile
+          - image: argus-host-tools
+            dockerfile: deploy/docker/host-tools.Dockerfile
     steps:
       - name: Check out tested revision
         uses: actions/checkout@v4
@@ -93,7 +54,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and publish
+      - name: Build and publish immutable image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -102,9 +63,7 @@ jobs:
           platforms: linux/amd64
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
-          tags: |
-            ghcr.io/noah-bozkurt/${{ matrix.image }}:main
-            ghcr.io/noah-bozkurt/${{ matrix.image }}:${{ github.event.workflow_run.head_sha }}
+          tags: ghcr.io/noah-bozkurt/${{ matrix.image }}:${{ github.event.workflow_run.head_sha }}
           labels: |
             org.opencontainers.image.title=${{ matrix.image }}
             org.opencontainers.image.source=${{ github.event.workflow_run.repository.html_url }}
@@ -112,10 +71,8 @@ jobs:
             org.opencontainers.image.version=${{ github.event.workflow_run.head_sha }}
 
   verify-published-artifacts:
-    name: Verify published artifacts
-    needs:
-      - changes
-      - publish
+    name: Verify immutable release
+    needs: publish-immutable-images
     runs-on: [self-hosted, linux, x64]
     steps:
       - name: Set up Docker Buildx
@@ -128,20 +85,60 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify SHA and main tags exist remotely
+      - name: Verify complete SHA-tagged release
         env:
           TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
-          CHANGED_IMAGES: ${{ needs.changes.outputs.images }}
         run: |
           set -euo pipefail
-          IFS=',' read -ra images <<<"$CHANGED_IMAGES"
-          for image in "${images[@]}"
+          for image in argus-web argus-content argus-control-api argus-worker argus-host-tools
           do
             echo "Verifying ${image}:${TESTED_SHA}"
             docker buildx imagetools inspect \
               "ghcr.io/noah-bozkurt/${image}:${TESTED_SHA}" >/dev/null
+          done
 
-            echo "Verifying ${image}:main"
+  promote-release:
+    name: Promote verified release
+    needs: verify-published-artifacts
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Sign in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote application images
+        env:
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          for image in argus-web argus-content argus-control-api argus-worker
+          do
+            echo "Promoting ${image}:${TESTED_SHA} to main"
+            docker buildx imagetools create \
+              --tag "ghcr.io/noah-bozkurt/${image}:main" \
+              "ghcr.io/noah-bozkurt/${image}:${TESTED_SHA}"
+          done
+
+      - name: Promote host-tools release pointer last
+        env:
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --tag ghcr.io/noah-bozkurt/argus-host-tools:main \
+            "ghcr.io/noah-bozkurt/argus-host-tools:${TESTED_SHA}"
+
+      - name: Verify promoted release tags
+        run: |
+          set -euo pipefail
+          for image in argus-web argus-content argus-control-api argus-worker argus-host-tools
+          do
             docker buildx imagetools inspect \
               "ghcr.io/noah-bozkurt/${image}:main" >/dev/null
           done
