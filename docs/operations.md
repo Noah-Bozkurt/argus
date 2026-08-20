@@ -136,6 +136,8 @@ The same phase markers are used after a hard reboot. A format-2 transaction with
 
 Transaction snapshots are stored under `/var/lib/argus/update-backups/` with root-only permissions. To prevent normal successful updates from filling a small VPS indefinitely, Argus automatically keeps the **three newest terminal snapshots** whose result is `SUCCEEDED` or `ROLLED_BACK`. Pruning recognizes only Argus-generated transaction directory names with complete metadata/file snapshots. Incomplete transactions, `ROLLBACK_FAILED` transactions and unrelated/manual directories are never automatically removed. Pruning runs before a new update and again after a successful update.
 
+The disposable-host acceptance runner can deliberately exercise the most sensitive automatic rollback branch with `first-server-acceptance.sh update-rollback`. The updater recognizes the injection only when both exact root-process environment values select `after-target-start-armed` and confirm `ROLLBACK-TEST-ONLY`; partial or unknown values fail before update preflight/mutation. The injected non-zero status occurs immediately after the durable target-start marker and therefore drives the normal sealed file/database rollback path. This hook is not a general fault-injection or production update option.
+
 V1 deliberately does **not** expose a generic manual rollback-to-old-snapshot command after a successful update: restoring an old database later would discard legitimate changes made since the update. The retained snapshots exist for the bounded automatic recovery path and operator investigation; a future operator-driven point-in-time rollback still needs a stronger data-loss confirmation model.
 
 ### Control-plane self-protection

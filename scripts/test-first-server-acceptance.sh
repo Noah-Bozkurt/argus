@@ -70,7 +70,8 @@ write_checkpoint baseline \
 successful="$ARGUS_STATE_DIR/update-backups/20260819T140000Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb"
 failed="$ARGUS_STATE_DIR/update-backups/20260819T140100Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb"
 unrelated="$ARGUS_STATE_DIR/update-backups/20260819T140200Z-bbbbbbbbbbbb-to-cccccccccccc"
-mkdir -p "$successful" "$failed" "$unrelated"
+rolled_back="$ARGUS_STATE_DIR/update-backups/20260819T140150Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb"
+mkdir -p "$successful" "$failed" "$unrelated" "$rolled_back"
 cat >"$successful/metadata.env" <<EOF
 FROM_REVISION=$FROM_REVISION
 TO_REVISION=$TO_REVISION
@@ -86,9 +87,15 @@ FROM_REVISION=$TO_REVISION
 TO_REVISION=cccccccccccccccccccccccccccccccccccccccc
 EOF
 printf 'SUCCEEDED\n' >"$unrelated/result"
+cat >"$rolled_back/metadata.env" <<EOF
+FROM_REVISION=$FROM_REVISION
+TO_REVISION=$TO_REVISION
+EOF
+printf 'ROLLED_BACK\n' >"$rolled_back/result"
 
 selected="$(find_successful_update_transaction "$FROM_REVISION" "$TO_REVISION")"
 [[ "$selected" == "$successful" ]]
+[[ "$(find_rolled_back_update_transaction "$FROM_REVISION")" == "$rolled_back" ]]
 
 rm -rf "$successful"
 if find_successful_update_transaction "$FROM_REVISION" "$TO_REVISION" >/dev/null; then
@@ -145,6 +152,7 @@ write_checkpoint baseline REVISION "$FROM_REVISION" BOOT_ID 00000000-0000-4000-8
 write_checkpoint post-reboot COMPLETED_AT 2026-08-20T00:00:00Z REVISION "$FROM_REVISION" BOOT_ID 00000000-0000-4000-8000-000000000002
 write_checkpoint installer-rerun REVISION "$FROM_REVISION"
 write_checkpoint post-update FROM_REVISION "$FROM_REVISION" TO_REVISION "$TO_REVISION" TRANSACTION "$successful"
+write_checkpoint rollback-test FROM_REVISION "$FROM_REVISION" FAILED_TARGET_REVISION "$TO_REVISION" TRANSACTION "$rolled_back" RESULT ROLLED_BACK
 write_checkpoint content PROJECT_ID "$product_project" MODEL_ID 00000000-0000-4000-8000-000000000025 RECORD_ID 00000000-0000-4000-8000-000000000026 MODEL_SLUG acceptance_test DATA_MODEL_ID 00000000-0000-4000-8000-000000000027 DATA_RECORD_ID 00000000-0000-4000-8000-000000000028 DATA_RELATION_TARGET_ID 00000000-0000-4000-8000-000000000029
 mkdir -p "$successful"
 printf 'FROM_REVISION=%s\nTO_REVISION=%s\n' "$FROM_REVISION" "$TO_REVISION" >"$successful/metadata.env"
@@ -157,5 +165,7 @@ grep -Fq "cms_model: 00000000-0000-4000-8000-000000000025" "$REPORT_FILE"
 grep -Fq "cms_draft_publication_public_read_verified: yes" "$REPORT_FILE"
 grep -Fq "app_data_model: 00000000-0000-4000-8000-000000000027" "$REPORT_FILE"
 grep -Fq "app_data_immediate_write_and_relation_verified: yes" "$REPORT_FILE"
+grep -Fq "automatic_rollback_transaction: $rolled_back" "$REPORT_FILE"
+grep -Fq "safe_target_start_failure_rolled_back: yes" "$REPORT_FILE"
 
 printf 'first-server acceptance helper tests passed\n'

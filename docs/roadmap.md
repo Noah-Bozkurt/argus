@@ -76,6 +76,7 @@ sudo -E ./scripts/first-server-acceptance.sh product
 sudo -E ./scripts/first-server-acceptance.sh content
 sudo -E ./scripts/first-server-acceptance.sh rerun-installer
 # after a newer green main revision has been published:
+sudo -E ./scripts/first-server-acceptance.sh update-rollback
 sudo -E ./scripts/first-server-acceptance.sh update
 sudo ./scripts/first-server-acceptance.sh report
 ```
@@ -108,7 +109,7 @@ This only covers the reproducible host lifecycle subset. It does **not** mark pr
 20. exercise the explicit first-test reset path and perform one second clean install;
 21. record every manual workaround as an installer/product bug rather than adding undocumented setup knowledge.
 
-The lifecycle acceptance runner directly records evidence for checklist items 2-5, 7-15, restore preflight from 16, 17 and 18. The `product` stage creates a new personal Project through the authenticated Control API, requires its `client_id` to remain null, creates environment/service/site structures through supported APIs, verifies persisted audit/domain events and Payload synchronization, proves scheduler execution after the recorded reboot, runs a scheduled monitor, exercises a safe typed Agent action, and proves a protected control-plane container rejects a normal managed Docker action. It creates and verifies a system-config backup and runs typed non-mutating restore preflight. The `content` stage uses that synchronized personal Project to prove immediate-write App Data models/records/relations plus CMS model creation, draft privacy, publication and sanitized public reads through installed Argus-native Payload APIs. SQL is used only to verify persisted effects. Transactional restore apply and the other remaining items stay separate acceptance work and must not be inferred from a lifecycle `PASS` report.
+The lifecycle acceptance runner directly records evidence for checklist items 2-5, 7-15, restore preflight from 16, and 17-19. The `product` stage creates a new personal Project through the authenticated Control API, requires its `client_id` to remain null, creates environment/service/site structures through supported APIs, verifies persisted audit/domain events and Payload synchronization, proves scheduler execution after the recorded reboot, runs a scheduled monitor, exercises a safe typed Agent action, and proves a protected control-plane container rejects a normal managed Docker action. It creates and verifies a system-config backup and runs typed non-mutating restore preflight. The `content` stage uses that synchronized personal Project to prove immediate-write App Data models/records/relations plus CMS model creation, draft privacy, publication and sanitized public reads through installed Argus-native Payload APIs. `update-rollback` requires a newer immutable target, deliberately fails only after target start has been durably armed, and accepts the checkpoint only when automatic rollback restores the original revision and smoke health; `update` then installs that same target successfully. SQL is used only to verify persisted effects. Transactional restore apply and the other remaining items stay separate acceptance work and must not be inferred from a lifecycle `PASS` report.
 
 ### What is intentionally not required yet
 

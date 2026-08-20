@@ -10,6 +10,7 @@ ENV_FILE="$INSTALL_DIR/.env"
 ACCEPTANCE_DIR="${ARGUS_ACCEPTANCE_DIR:-$STATE_DIR/acceptance/first-server}"
 REPORT_FILE="$ACCEPTANCE_DIR/report.txt"
 UPDATE_VERSION="${ARGUS_ACCEPTANCE_UPDATE_VERSION:-main}"
+FAILURE_UPDATE_VERSION="${ARGUS_ACCEPTANCE_FAILURE_UPDATE_VERSION:-$UPDATE_VERSION}"
 
 log() { printf '[argus-acceptance] %s\n' "$*"; }
 die() { printf '[argus-acceptance] error: %s\n' "$*" >&2; exit 1; }
@@ -24,6 +25,8 @@ Commands:
   rerun-installer  Rerun install.sh and prove IDs/secrets/revision are preserved.
   update           Update to ARGUS_ACCEPTANCE_UPDATE_VERSION (default: main), smoke,
                    require a different immutable revision, and verify SUCCEEDED state.
+  update-rollback  Deliberately fail after a newer target is durably armed, require
+                   automatic rollback to the current revision, then pass smoke.
   product          Exercise a new personal Project and supported product APIs on the
                    installed server, including Agent and Docker protection checks.
   content          Exercise CMS model, draft, publish and public-read workflows for
@@ -171,6 +174,28 @@ find_successful_update_transaction() {
   return 1
 }
 
+find_rolled_back_update_transaction() {
+  local from_revision="$1" not_before="${2:-}" root="$STATE_DIR/update-backups"
+  [[ -d "$root" ]] || return 1
+  local entry dir result from started_at
+  while IFS= read -r entry; do
+    dir="${entry#* }"
+    [[ -f "$dir/metadata.env" && -f "$dir/result" ]] || continue
+    result="$(tr -d '[:space:]' <"$dir/result")"
+    [[ "$result" == "ROLLED_BACK" ]] || continue
+    from="$(awk -F= '$1 == "FROM_REVISION" { print $2; exit }' "$dir/metadata.env")"
+    started_at="$(awk -F= '$1 == "STARTED_AT" { print $2; exit }' "$dir/metadata.env")"
+    if [[ -n "$not_before" && ( -z "$started_at" || "$started_at" < "$not_before" ) ]]; then
+      continue
+    fi
+    if [[ "$from" == "$from_revision" ]]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr)
+  return 1
+}
+
 stage_install() {
   require_root
   if [[ -e "$(checkpoint_path baseline)" && "${ARGUS_ACCEPTANCE_RESTART:-0}" != "1" ]]; then
@@ -253,6 +278,7 @@ stage_rerun_installer() {
 stage_update() {
   require_root
   require_checkpoint installer-rerun
+  require_checkpoint rollback-test
 
   local before after transaction
   before="$(installed_revision)"
@@ -275,6 +301,32 @@ stage_update() {
     TRANSACTION "$transaction" \
     SMOKE_PASSED yes
   log "transactional update accepted: $before -> $after"
+}
+
+stage_update_rollback() {
+  require_root
+  require_checkpoint installer-rerun
+  local before after transaction target started_at
+  before="$(installed_revision)"
+  started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  log "deliberately failing the update target '$FAILURE_UPDATE_VERSION' after target-start arming"
+  if ARGUS_UPDATE_ACCEPTANCE_FAILURE=after-target-start-armed \
+    ARGUS_UPDATE_ACCEPTANCE_CONFIRM_FAILURE=ROLLBACK-TEST-ONLY \
+    ARGUS_REGISTRY_USERNAME="${ARGUS_REGISTRY_USERNAME:-}" \
+    ARGUS_REGISTRY_TOKEN="${ARGUS_REGISTRY_TOKEN:-}" \
+      /usr/local/bin/argusctl update --version "$FAILURE_UPDATE_VERSION"; then
+    die "failure-injected update unexpectedly succeeded; ensure the discovery target is a newer immutable revision"
+  fi
+  after="$(installed_revision)"
+  [[ "$after" == "$before" ]] || die "automatic rollback did not restore revision $before"
+  transaction="$(find_rolled_back_update_transaction "$before" "$started_at")" \
+    || die "could not find a durable ROLLED_BACK transaction from $before"
+  target="$(awk -F= '$1 == "TO_REVISION" { print $2; exit }' "$transaction/metadata.env")"
+  is_revision "$target" && [[ "$target" != "$before" ]] || die "rollback transaction target is invalid"
+  run_smoke
+  write_checkpoint rollback-test COMPLETED_AT "$(date -u +%Y-%m-%dT%H:%M:%SZ)" FROM_REVISION "$before" \
+    FAILED_TARGET_REVISION "$target" TRANSACTION "$transaction" RESULT ROLLED_BACK SMOKE_PASSED yes
+  log "confirmed automatic rollback from failed target $target to $before"
 }
 
 stage_product() {
@@ -313,7 +365,7 @@ stage_content() {
 stage_status() {
   ensure_acceptance_dir
   local name
-  for name in baseline post-reboot installer-rerun post-update product content; do
+  for name in baseline post-reboot installer-rerun rollback-test post-update product content; do
     if [[ "$name" == product && -f "$ACCEPTANCE_DIR/product.env" ]] ||
        [[ "$name" != product && -f "$(checkpoint_path "$name")" ]]; then
       printf '%-18s %s\n' "$name" complete
@@ -326,7 +378,7 @@ stage_status() {
 stage_report() {
   require_root
   local name
-  for name in baseline post-reboot installer-rerun post-update; do
+  for name in baseline post-reboot installer-rerun rollback-test post-update; do
     require_checkpoint "$name"
   done
   [[ -f "$ACCEPTANCE_DIR/product.env" ]] || die "run acceptance stage 'product' first"
@@ -335,12 +387,17 @@ stage_report() {
   local initial_revision reboot_revision rerun_revision from_revision to_revision transaction product_project_id
   local monitor_job_id backup_name backup_command_id verify_command_id preflight_command_id
   local content_project_id content_model_id content_record_id content_model_slug data_model_id data_record_id data_relation_target_id
+  local rollback_from rollback_target rollback_transaction rollback_result
   initial_revision="$(checkpoint_value baseline REVISION)"
   reboot_revision="$(checkpoint_value post-reboot REVISION)"
   rerun_revision="$(checkpoint_value installer-rerun REVISION)"
   from_revision="$(checkpoint_value post-update FROM_REVISION)"
   to_revision="$(checkpoint_value post-update TO_REVISION)"
   transaction="$(checkpoint_value post-update TRANSACTION)"
+  rollback_from="$(checkpoint_value rollback-test FROM_REVISION)"
+  rollback_target="$(checkpoint_value rollback-test FAILED_TARGET_REVISION)"
+  rollback_transaction="$(checkpoint_value rollback-test TRANSACTION)"
+  rollback_result="$(checkpoint_value rollback-test RESULT)"
   product_project_id="$(
     set +u
     # Root-owned checkpoint emitted by first-server-product-acceptance.sh.
@@ -374,6 +431,8 @@ stage_report() {
     || die "checkpoint revisions are inconsistent"
   [[ "$from_revision" == "$initial_revision" ]] \
     || die "update did not start from the accepted initial revision"
+  [[ "$rollback_from" == "$initial_revision" && "$rollback_target" == "$to_revision" && "$rollback_result" == "ROLLED_BACK" ]] \
+    || die "rollback acceptance and successful update revisions are inconsistent"
   is_revision "$to_revision" || die "post-update revision is invalid"
 
   ensure_acceptance_dir
@@ -394,6 +453,9 @@ post_reboot_smoke: yes
 post_rerun_smoke: yes
 post_update_smoke: yes
 successful_update_transaction: $transaction
+automatic_rollback_transaction: $rollback_transaction
+safe_target_start_failure_rolled_back: yes
+post_rollback_smoke: yes
 personal_project_without_client: $product_project_id
 product_api_structures_verified: yes
 typed_agent_action_verified: yes
@@ -432,6 +494,7 @@ main() {
     post-reboot) stage_post_reboot ;;
     rerun-installer) stage_rerun_installer ;;
     update) stage_update ;;
+    update-rollback) stage_update_rollback ;;
     product) stage_product ;;
     content) stage_content ;;
     report) stage_report ;;

@@ -135,6 +135,16 @@ jobs:
           # shellcheck disable=SC1091
           source scripts/update-first-test.sh --internal-test-library
 
+          ARGUS_UPDATE_ACCEPTANCE_FAILURE=after-target-start-armed
+          ARGUS_UPDATE_ACCEPTANCE_CONFIRM_FAILURE=wrong
+          if (validate_acceptance_failure_hook); then
+            echo 'incomplete acceptance failure confirmation unexpectedly accepted' >&2
+            exit 1
+          fi
+          ARGUS_UPDATE_ACCEPTANCE_CONFIRM_FAILURE=ROLLBACK-TEST-ONLY
+          validate_acceptance_failure_hook
+          unset ARGUS_UPDATE_ACCEPTANCE_FAILURE ARGUS_UPDATE_ACCEPTANCE_CONFIRM_FAILURE
+
           TRANSACTION_DIR="$BACKUP_ROOT/20260819T130000Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb"
           TARGET_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
           mkdir -p "$TRANSACTION_DIR"
