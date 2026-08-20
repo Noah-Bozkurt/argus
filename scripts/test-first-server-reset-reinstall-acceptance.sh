@@ -48,8 +48,7 @@ grep -Fq 'reset_installation_absence_verified: yes' "$FINAL_REPORT"
 grep -Fq 'second_clean_install_new_identity: yes' "$FINAL_REPORT"
 [[ "$(checkpoint_value LIFECYCLE_REPORT_SHA256)" == "$report_sha" ]]
 [[ "$(checkpoint_value FINAL_REPORT_SHA256)" == "$final_report_sha" ]]
-ARGUS_CONFIRM_RESET_REINSTALL=RESET-AND-REINSTALL-DISPOSABLE-HOST
-main >/dev/null
+print_completed_report >/dev/null
 
 ARCHIVE_DIR="$ARGUS_STATE_DIR/archive"
 if (validate_archive_location); then

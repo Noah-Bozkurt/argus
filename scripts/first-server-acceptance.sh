@@ -414,8 +414,7 @@ stage_status() {
   printf '%-18s %s\n' reset-reinstall "${phase:-pending}"
 }
 
-stage_report() {
-  require_root
+render_report() {
   local name
   for name in baseline post-reboot installer-rerun rollback-test post-update; do
     require_checkpoint "$name"
@@ -541,6 +540,11 @@ EOF
   mv "$tmp" "$REPORT_FILE"
   sync -f "$ACCEPTANCE_DIR"
   cat "$REPORT_FILE"
+}
+
+stage_report() {
+  require_root
+  render_report
 }
 
 main() {

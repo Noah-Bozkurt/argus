@@ -12,6 +12,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
       - run: cargo fmt --all -- --check
@@ -45,7 +47,7 @@ jobs:
           POSTGRES_PASSWORD: argus-test-password
           POSTGRES_DB: argus
         ports:
-          - 5432:5432
+          - 5432/tcp
         options: >-
           --health-cmd "pg_isready -U argus -d argus"
           --health-interval 5s
@@ -280,7 +282,7 @@ jobs:
 
       - name: Boot Control API from an empty PostgreSQL database
         env:
-          DATABASE_URL: postgresql://argus:argus-test-password@127.0.0.1:5432/argus
+          DATABASE_URL: postgresql://argus:argus-test-password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/argus
           ARGUS_CONTROL_API_BIND: 127.0.0.1:8080
           ARGUS_WEB_API_TOKEN: 0123456789abcdef0123456789abcdef
           ARGUS_WORKER_TOKEN: abcdef0123456789abcdef0123456789
@@ -315,7 +317,7 @@ jobs:
 
       - name: Exercise native CMS draft and publication workflow
         env:
-          DATABASE_URL: postgresql://argus:argus-test-password@127.0.0.1:5432/argus
+          DATABASE_URL: postgresql://argus:argus-test-password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/argus
           ARGUS_CONTENT_DB_SCHEMA: argus_content
           PAYLOAD_SECRET: payload-runtime-secret-0000000000
           PAYLOAD_PUBLIC_URL: http://127.0.0.1:3000

@@ -98,6 +98,15 @@ checkpoint_value() {
   )
 }
 
+print_completed_report() {
+  local final_report_sha
+  final_report_sha="$(checkpoint_value FINAL_REPORT_SHA256)"
+  [[ "$final_report_sha" =~ ^[0-9a-f]{64}$ && -f "$FINAL_REPORT" && \
+     "$(sha256sum "$FINAL_REPORT" | awk '{ print $1 }')" == "$final_report_sha" ]] \
+    || die "terminal acceptance final report is missing or its checksum changed"
+  cat "$FINAL_REPORT"
+}
+
 assert_reset_absent() {
   [[ ! -e "$INSTALL_DIR" ]] || die "reset left installation directory behind"
   [[ ! -e "$CONFIG_DIR" ]] || die "reset left configuration directory behind"
@@ -171,12 +180,7 @@ main() {
     [[ -f "$ARCHIVED_REPORT" && "$(sha256sum "$ARCHIVED_REPORT" | awk '{ print $1 }')" == "$report_sha" ]] \
       || die "archived lifecycle report is missing or its checksum changed"
     if [[ "$phase" == COMPLETE ]]; then
-      local final_report_sha
-      final_report_sha="$(checkpoint_value FINAL_REPORT_SHA256)"
-      [[ "$final_report_sha" =~ ^[0-9a-f]{64}$ && -f "$FINAL_REPORT" && \
-         "$(sha256sum "$FINAL_REPORT" | awk '{ print $1 }')" == "$final_report_sha" ]] \
-        || die "terminal acceptance final report is missing or its checksum changed"
-      cat "$FINAL_REPORT"
+      print_completed_report
       return 0
     fi
     [[ "$phase" == PREPARED || "$phase" == RESET_VERIFIED ]] \

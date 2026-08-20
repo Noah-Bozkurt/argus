@@ -27,7 +27,7 @@ mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR"
 touch "$INSTALL_DIR/compose.yaml" "$INSTALL_DIR/.env"
 ARGUS_CONFIRM_RESET=DELETE-ARGUS-FIRST-TEST-DATA
 docker() { return 1; }
-if (main); then
+if (perform_reset); then
   echo "reset unexpectedly continued after Compose teardown failure" >&2
   exit 1
 fi

@@ -17,8 +17,7 @@ validate_removal_target() {
     || die "refusing unsafe $name removal target: $normalized"
 }
 
-main() {
-  [[ "${EUID}" -eq 0 ]] || die "run as root"
+perform_reset() {
   validate_removal_target ARGUS_INSTALL_DIR "$INSTALL_DIR"
   validate_removal_target ARGUS_CONFIG_DIR "$CONFIG_DIR"
   validate_removal_target ARGUS_STATE_DIR "$STATE_DIR"
@@ -57,6 +56,11 @@ EOF
   fi
 
   echo "Argus first-test installation and data removed. Docker itself was left installed."
+}
+
+main() {
+  [[ "${EUID}" -eq 0 ]] || die "run as root"
+  perform_reset
 }
 
 if [[ "${1:-}" != "--internal-test-library" ]]; then

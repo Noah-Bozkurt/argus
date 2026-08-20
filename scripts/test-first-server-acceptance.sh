@@ -159,7 +159,7 @@ write_checkpoint restore BACKUP_NAME "$backup_command.tar.gz" RESTORE_COMMAND_ID
 mkdir -p "$successful"
 printf 'FROM_REVISION=%s\nTO_REVISION=%s\n' "$FROM_REVISION" "$TO_REVISION" >"$successful/metadata.env"
 printf 'SUCCEEDED\n' >"$successful/result"
-stage_report >/dev/null
+render_report >/dev/null
 grep -Fq "scheduled_site_monitor_job: $monitor_job" "$REPORT_FILE"
 grep -Fq "verified_system_config_backup: $backup_command.tar.gz" "$REPORT_FILE"
 grep -Fq "restore_preflight_command: $preflight_command" "$REPORT_FILE"
