@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { normalizeFormInput, readBoundedJson, submissionSourceHash, validateSubmission } from './argusFormsContract.ts'
+import { csvCell, formSubmissionsCsv, normalizeFormInput, readBoundedJson, submissionSourceHash, validateSubmission } from './argusFormsContract.ts'
 
 const form = normalizeFormInput({
   name: 'Contact', slug: 'Contact', success_message: 'Thanks', published: true,
@@ -39,4 +39,12 @@ test('source hashes are scoped, stable and do not retain source addresses', () =
 test('bounded JSON reader accepts normal bodies and rejects oversized declarations', async () => {
   assert.deepEqual(await readBoundedJson(new Request('http://test', { method: 'POST', body: '{"ok":true}' })), { ok: true })
   assert.equal(await readBoundedJson(new Request('http://test', { method: 'POST', headers: { 'content-length': '70000' }, body: '{}' })), null)
+})
+
+test('CSV export is stable and neutralizes spreadsheet formulas', () => {
+  assert.equal(csvCell('  =cmd()'), '"\'  =cmd()"')
+  assert.equal(csvCell('say "hello"'), '"say ""hello"""')
+  const csv = formSubmissionsCsv(form!.fields, [{ id: 'one', status: 'new', submittedAt: '2026-08-20T00:00:00Z', values: { email: '+malicious', topic: 'Support' } }])
+  assert.match(csv, /^\uFEFF"submission_id","status","submitted_at","email","topic","message"\r\n/)
+  assert.match(csv, /"'\+malicious"/)
 })

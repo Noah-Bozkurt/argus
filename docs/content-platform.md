@@ -145,6 +145,8 @@ Only active Projects and published forms resolve publicly. The GET response expo
 
 Submission values are never exposed by a public read endpoint. Argus derives an HMAC source fingerprint from the proxy-provided address and Payload secret; raw source addresses are not stored. A PostgreSQL-backed fixed ten-minute window permits ten submissions per form/source. Unique durable rate slots prevent concurrent requests from racing past the cap, and rate state therefore survives application restarts. Operational database failures return a retryable service-unavailable response rather than being mislabeled as throttling.
 
+Operators can download a private CSV for one form through the Argus Web surface. The Web route keeps the Content integration credential server-side, while Content revalidates Organization, Project and form ownership. Exports use the form's stable field order, are capped at 10,000 submissions, disable caching/sniffing, and prefix spreadsheet-formula-like cells before RFC-style CSV quoting. Source/rate fingerprints are never included.
+
 ## Production migrations
 
 Payload schema changes are committed as migrations under `apps/content/src/migrations/`.

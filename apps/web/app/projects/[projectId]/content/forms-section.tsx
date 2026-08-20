@@ -25,6 +25,7 @@ export function FormsSection({ projectId, workspace, publicBase }: { projectId: 
         <p>{form.description || 'No description.'} — {form.status} — slug <code>{form.slug}</code></p>
         {endpoint ? <p>Public endpoint: <a href={endpoint} target="_blank" rel="noreferrer">{endpoint}</a></p> : null}
         <p>Fields: {form.fields.map((field) => `${field.label} (${field.type}${field.required ? ', required' : ''})`).join(', ')}</p>
+        <p><a href={`/projects/${encodeURIComponent(projectId)}/content/forms/${encodeURIComponent(form.id)}/submissions.csv`}>Download submissions CSV</a></p>
         {(['draft', 'published', 'archived'] as const).filter((status) => status !== form.status).map((status) => <form key={status} action={async () => { 'use server'; await updateProjectFormStatusAction(projectId, form.id, status) }}><button type="submit">Set {status}</button></form>)}
         <h4>Submissions</h4>
         {submissions.length === 0 ? <p>No submissions.</p> : submissions.map((submission) => <section key={submission.id}>
