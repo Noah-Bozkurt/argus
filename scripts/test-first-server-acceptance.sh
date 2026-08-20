@@ -8,6 +8,7 @@ trap 'rm -rf "$tmp"' EXIT
 export ARGUS_INSTALL_DIR="$tmp/install"
 export ARGUS_STATE_DIR="$tmp/state"
 export ARGUS_ACCEPTANCE_DIR="$tmp/acceptance"
+export ARGUS_ACCEPTANCE_ARCHIVE_DIR="$tmp/archive"
 mkdir -p "$ARGUS_INSTALL_DIR" "$ARGUS_STATE_DIR/update-backups"
 
 # shellcheck disable=SC1091
@@ -158,7 +159,7 @@ write_checkpoint restore BACKUP_NAME "$backup_command.tar.gz" RESTORE_COMMAND_ID
 mkdir -p "$successful"
 printf 'FROM_REVISION=%s\nTO_REVISION=%s\n' "$FROM_REVISION" "$TO_REVISION" >"$successful/metadata.env"
 printf 'SUCCEEDED\n' >"$successful/result"
-stage_report >/dev/null
+render_report >/dev/null
 grep -Fq "scheduled_site_monitor_job: $monitor_job" "$REPORT_FILE"
 grep -Fq "verified_system_config_backup: $backup_command.tar.gz" "$REPORT_FILE"
 grep -Fq "restore_preflight_command: $preflight_command" "$REPORT_FILE"
@@ -170,5 +171,10 @@ grep -Fq "automatic_rollback_transaction: $rolled_back" "$REPORT_FILE"
 grep -Fq "safe_target_start_failure_rolled_back: yes" "$REPORT_FILE"
 grep -Fq "transactional_restore_command: 00000000-0000-4000-8000-000000000030" "$REPORT_FILE"
 grep -Fq "restore_timed_rollback_disarmed: yes" "$REPORT_FILE"
+mkdir -p "$ARGUS_ACCEPTANCE_ARCHIVE_DIR"
+printf 'PHASE=COMPLETE\n' >"$ARGUS_ACCEPTANCE_ARCHIVE_DIR/reset-reinstall.env"
+status="$(stage_status)"
+grep -Fq 'reset-reinstall    complete' <<<"$status"
+grep -Fq "final report: $ARGUS_ACCEPTANCE_ARCHIVE_DIR/final-report.txt" <<<"$status"
 
 printf 'first-server acceptance helper tests passed\n'

@@ -6,6 +6,13 @@ This document describes the operational capabilities that currently exist in Arg
 
 The first supported installation target is a clean Ubuntu/Debian-class **amd64** server. It is a test topology, not a claim of production readiness.
 
+Repository workflows target an organization-managed Linux x64 self-hosted GitHub Actions
+runner. The runner must be restricted to trusted private repositories, run as a dedicated
+non-root account, and have Docker access because readiness and image-publication jobs use
+service containers and build images. A connected runner is infrastructure availability, not
+evidence that a workflow passed; installation/release claims still require the recorded jobs
+to execute successfully for the exact commit.
+
 The control plane runs through Docker Compose:
 
 - official PostgreSQL 16 image;
@@ -41,11 +48,26 @@ ARGUS_REGISTRY_TOKEN=<credential able to read the private Argus images>
 
 `ARGUS_VERSION` defaults to `main`, but `main` is only a discovery alias. The installer reads the artifact's `org.opencontainers.image.revision` label, verifies it is a full commit SHA and persists that immutable SHA as the installed `ARGUS_VERSION`. Compose therefore runs commit-addressed Argus images even when installation started from `main`.
 
-Run the installer from an authenticated checkout/download of this private repository:
+For the current private-repository first test, authenticate on the disposable host,
+clone the source, and export a credential that can also read the private GHCR images.
+Avoid putting the credential directly in shell history:
 
 ```bash
+gh auth login
+gh repo clone Noah-Bozkurt/argus
+cd argus
+export ARGUS_REGISTRY_USERNAME=<github-user>
+read -rsp 'GitHub package token: ' ARGUS_REGISTRY_TOKEN && echo
+export ARGUS_REGISTRY_TOKEN
 sudo -E ./install.sh
 ```
+
+The checkout credential needs access to this private repository; the registry credential
+needs read access to the private Argus packages. They may be the same credential when its
+policy permits both. The installer uses a temporary isolated Docker configuration for the
+registry login and does not persist the registry token in `/opt/argus/.env`. A named,
+checksummed release bundle that removes the source-checkout requirement remains deployment
+maturity work; cloning a moving `main` branch is not the intended final production UX.
 
 The installer:
 
@@ -72,6 +94,9 @@ ARGUS_CONFIRM_RESET=DELETE-ARGUS-FIRST-TEST-DATA \
 ```
 
 That removes Argus data/volumes, Agent identity and test backups. It leaves Docker installed.
+If Compose teardown fails, reset stops before deleting the installation files so the operator
+can diagnose and retry. Destructive directory overrides must be canonical absolute paths and
+broad system paths are rejected.
 
 ### First-server smoke verification
 
@@ -151,6 +176,9 @@ On a disposable first-server test host, `sudo -E ./scripts/first-server-acceptan
 After `product`, `sudo -E ./scripts/first-server-acceptance.sh content` uses the installed Payload service's internal Argus APIs for that same personal Project. It requires the Project synchronization to exist, creates immediate-write App Data models/records plus a validated relation, then creates a public content model, proves a draft is absent from anonymous reads, publishes the record and verifies its sanitized public response. The script executes inside the Content container only to reach the private service port; it uses supported HTTP APIs and does not mutate PostgreSQL directly.
 
 Transactional restore apply is an explicit disposable-host checkpoint. Run `ARGUS_CONFIRM_TRANSACTIONAL_RESTORE=RESTORE-DISPOSABLE-HOST sudo -E ./scripts/first-server-acceptance.sh restore` only after `product` and `content`. The stage first proves the high-risk typed command is rejected outside maintenance, opens a bounded maintenance window, applies the already verified system-config backup, waits for the Agent's post-acknowledgement commit to remove the restore transaction and disarm its independent rollback timer, runs full smoke, and ends maintenance even on failure. It restores the host's current captured configuration, but it still exercises live SSH/UFW configuration and must not be used casually on a non-disposable server.
+
+The terminal lifecycle checkpoint is deliberately destructive and must run last. After writing
+the normal `report`, use `ARGUS_CONFIRM_RESET_REINSTALL=RESET-AND-REINSTALL-DISPOSABLE-HOST sudo -E ./scripts/first-server-acceptance.sh reset-reinstall`. It copies the sanitized PASS report to root-only `/var/lib/argus-acceptance/first-server/`, seals it with a checksum, runs the explicit reset, proves installed state/services/protected containers are absent, performs a second clean install with newly generated internal identities and secrets, and runs smoke. Its durable phases allow retry after interruption. The combined final evidence remains outside the deleted Argus state at `/var/lib/argus-acceptance/first-server/final-report.txt`.
 
 A managed server is enrolled with an Argus Agent. Heartbeats provide system identity and snapshots used for online/offline state, CPU/RAM/disk/load/uptime information and capability-specific inventories.
 
