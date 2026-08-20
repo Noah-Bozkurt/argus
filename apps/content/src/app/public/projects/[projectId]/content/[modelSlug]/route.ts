@@ -72,6 +72,7 @@ export async function GET(
   const model = models.docs[0] as {
     id: string | number
     schemaVersion?: number
+    contentRole?: string
   } | undefined
   if (!model) {
     return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404, headers: corsHeaders() })
@@ -104,12 +105,14 @@ export async function GET(
         const doc = record as {
           id: string | number
           values?: unknown
+          layout?: unknown
           publishedAt?: string | null
           updatedAt?: string
         }
         return {
           id: doc.id,
           values: doc.values ?? {},
+          layout: model.contentRole === 'page' && Array.isArray(doc.layout) ? doc.layout : [],
           published_at: doc.publishedAt ?? null,
           updated_at: doc.updatedAt ?? null,
         }

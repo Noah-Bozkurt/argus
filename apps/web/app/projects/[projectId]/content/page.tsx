@@ -2,6 +2,7 @@ import Link from 'next/link'
 
 import { getContentWorkspace, type ContentField } from '../../../../lib/content-api'
 import { createContentModelAction, saveContentRecordAction } from './actions'
+import { PageLayoutEditor } from './page-layout-editor'
 
 function FieldInput({ field, value }: { field: ContentField; value?: unknown }) {
   const name = `value_${field.key}`
@@ -13,10 +14,11 @@ function FieldInput({ field, value }: { field: ContentField; value?: unknown }) 
   return <input name={name} type={type} required={field.required} defaultValue={String(value ?? '')} />
 }
 
-function RecordForm({ projectId, model, record }: {
+function RecordForm({ projectId, model, record, components }: {
   projectId: string
   model: Awaited<ReturnType<typeof getContentWorkspace>>['models'][number]
   record?: Awaited<ReturnType<typeof getContentWorkspace>>['records'][number]
+  components: Awaited<ReturnType<typeof getContentWorkspace>>['models']
 }) {
   return (
     <form action={async (formData) => { 'use server'; await saveContentRecordAction(projectId, model.fields, formData) }}>
@@ -28,6 +30,7 @@ function RecordForm({ projectId, model, record }: {
           <FieldInput field={field} value={record?.values[field.key]} />
         </label>
       ))}
+      {model.content_role === 'page' ? <PageLayoutEditor components={components} initialLayout={record?.layout ?? []} /> : <input type="hidden" name="layout" value="[]" />}
       <button type="submit" name="intent" value="draft">Save draft</button>
       <button type="submit" name="intent" value="publish">Publish</button>
     </form>
@@ -36,6 +39,7 @@ function RecordForm({ projectId, model, record }: {
 
 export default async function ProjectContentPage({ params }: { params: { projectId: string } }) {
   const workspace = await getContentWorkspace(params.projectId)
+  const componentModels = workspace.models.filter((model) => model.content_role === 'component')
   return (
     <main>
       <p><Link href={`/projects/${params.projectId}`}>← Project</Link></p>
@@ -47,7 +51,18 @@ export default async function ProjectContentPage({ params }: { params: { project
         <label>Name<input name="name" required maxLength={160} placeholder="Articles" /></label>
         <label>API slug<input name="slug" required pattern="[a-z][a-z0-9_]*" maxLength={120} placeholder="articles" /></label>
         <label>Description<textarea name="description" maxLength={4000} /></label>
+        <label>Purpose<select name="content_role" defaultValue="collection">
+          <option value="collection">Collection — repeatable standalone entries</option>
+          <option value="page">Page — fields plus a component layout</option>
+          <option value="component">Component — reusable page block schema</option>
+        </select></label>
         <label><input type="checkbox" name="public_read" /> Allow published records to be read publicly</label>
+        <fieldset>
+          <legend>Components allowed in pages</legend>
+          {componentModels.length === 0 ? <p>No component schemas exist yet.</p> : componentModels.map((component) => (
+            <label key={component.id}><input type="checkbox" name="allowed_component_ids" value={component.id} /> {component.name}</label>
+          ))}
+        </fieldset>
         <fieldset>
           <legend>Fields</legend>
           {[0, 1, 2, 3, 4].map((index) => (
@@ -70,17 +85,18 @@ export default async function ProjectContentPage({ params }: { params: { project
         return (
           <section key={model.id}>
             <h2>{model.name}</h2>
-            <p>{model.description || 'No description.'} — slug <code>{model.slug}</code> — schema v{model.schema_version} — {model.public_read ? 'public when published' : 'private'}</p>
+            <p>{model.description || 'No description.'} — {model.content_role} — slug <code>{model.slug}</code> — schema v{model.schema_version} — {model.public_read ? 'public when published' : 'private'}</p>
+            {model.content_role === 'component' ? <p>This schema is available as a block in page types that allow it.</p> : <>
             <h3>New record</h3>
-            <RecordForm projectId={params.projectId} model={model} />
+            <RecordForm projectId={params.projectId} model={model} components={componentModels.filter((component) => model.allowed_component_ids.includes(component.id))} />
             <h3>Existing records</h3>
             {records.length === 0 ? <p>No records yet.</p> : records.map((record) => (
               <article key={record.id}>
                 <p><strong>{record.editorial_status === 'published' ? 'Published' : 'Draft'}</strong>{record.published_at ? ` — ${new Date(record.published_at).toLocaleString()}` : ''}</p>
                 <p><Link href={`/projects/${params.projectId}/content/preview/${record.id}`}>Preview</Link></p>
-                <RecordForm projectId={params.projectId} model={model} record={record} />
+                <RecordForm projectId={params.projectId} model={model} record={record} components={componentModels.filter((component) => model.allowed_component_ids.includes(component.id))} />
               </article>
-            ))}
+            ))}</>}
           </section>
         )
       })}

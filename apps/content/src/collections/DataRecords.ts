@@ -14,6 +14,9 @@ type ModelField = {
   required?: boolean
 }
 
+type PageBlock = { id?: unknown; component?: unknown; values?: unknown }
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
@@ -35,6 +38,22 @@ function validScalar(type: string, value: unknown): boolean {
     default:
       return false
   }
+}
+
+function validateScalarValues(fields: ModelField[], values: unknown): Record<string, unknown> {
+  if (!isPlainObject(values)) throw new Error('Record values must be a JSON object')
+  const scalarFields = new Map(fields.filter((field) => field.type !== 'relationship' && field.key).map((field) => [field.key as string, field]))
+  const relationshipKeys = new Set(fields.filter((field) => field.type === 'relationship' && field.key).map((field) => field.key as string))
+  for (const key of Object.keys(values)) {
+    if (relationshipKeys.has(key)) throw new Error(`Relationship field '${key}' must be stored in data-relations`)
+    const field = scalarFields.get(key)
+    if (!field) throw new Error(`Unknown field '${key}' for this model`)
+    if (values[key] !== null && !validScalar(String(field.type), values[key])) throw new Error(`Field '${key}' does not match type '${field.type}'`)
+  }
+  for (const [key, field] of scalarFields) {
+    if (field.required && (values[key] === undefined || values[key] === null || values[key] === '')) throw new Error(`Required field '${key}' is missing`)
+  }
+  return values
 }
 
 const validateRecord: CollectionBeforeValidateHook = async ({ data, operation, originalDoc, req }) => {
@@ -63,6 +82,8 @@ const validateRecord: CollectionBeforeValidateHook = async ({ data, operation, o
     schemaVersion?: number
     status?: string
     kind?: string
+    contentRole?: string
+    allowedComponents?: unknown[]
     fields?: ModelField[]
   }
   if (relationshipID(model.project) !== scope.projectID) {
@@ -71,35 +92,26 @@ const validateRecord: CollectionBeforeValidateHook = async ({ data, operation, o
   if (model.status === 'archived') {
     throw new Error('Cannot write records for an archived model')
   }
+  if (model.contentRole === 'component') throw new Error('Component schemas are embedded in pages and cannot have standalone records')
 
   const values = data.values ?? originalDoc?.values ?? {}
-  if (!isPlainObject(values)) throw new Error('Record values must be a JSON object')
   const fields = model.fields ?? []
-  const scalarFields = new Map(
-    fields
-      .filter((field) => field.type !== 'relationship' && field.key)
-      .map((field) => [field.key as string, field]),
-  )
-  const relationshipKeys = new Set(
-    fields
-      .filter((field) => field.type === 'relationship' && field.key)
-      .map((field) => field.key as string),
-  )
+  validateScalarValues(fields, values)
 
-  for (const key of Object.keys(values)) {
-    if (relationshipKeys.has(key)) {
-      throw new Error(`Relationship field '${key}' must be stored in data-relations`)
-    }
-    const field = scalarFields.get(key)
-    if (!field) throw new Error(`Unknown field '${key}' for this model`)
-    if (values[key] !== null && !validScalar(String(field.type), values[key])) {
-      throw new Error(`Field '${key}' does not match type '${field.type}'`)
-    }
-  }
-  for (const [key, field] of scalarFields) {
-    if (field.required && (values[key] === undefined || values[key] === null || values[key] === '')) {
-      throw new Error(`Required field '${key}' is missing`)
-    }
+  const layout = data.layout ?? originalDoc?.layout ?? []
+  if (model.contentRole === 'page') {
+    if (!Array.isArray(layout) || layout.length > 100) throw new Error('Page layout must contain at most 100 blocks')
+    const componentIDs = (model.allowedComponents ?? []).map(relationshipID).filter((id): id is string | number => id !== null)
+    const components = await Promise.all(componentIDs.map((id) => req.payload.findByID({ collection: 'data-models', id, depth: 0, overrideAccess: true }))) as Array<{ slug?: string; status?: string; kind?: string; contentRole?: string; project?: unknown; fields?: ModelField[] }>
+    const bySlug = new Map(components.filter((component) => component.status !== 'archived' && component.kind === 'content' && component.contentRole === 'component' && relationshipID(component.project) === scope.projectID && component.slug).map((component) => [component.slug as string, component]))
+    data.layout = (layout as PageBlock[]).map((block) => {
+      if (!isPlainObject(block) || typeof block.id !== 'string' || !UUID_PATTERN.test(block.id) || typeof block.component !== 'string') throw new Error('Page block identity is invalid')
+      const component = bySlug.get(block.component)
+      if (!component) throw new Error(`Component '${block.component}' is not allowed by this page schema`)
+      return { id: block.id, component: block.component, values: validateScalarValues(component.fields ?? [], block.values ?? {}) }
+    })
+  } else {
+    data.layout = []
   }
 
   data.project = scope.projectID
@@ -168,6 +180,13 @@ export const DataRecords: CollectionConfig = {
       admin: {
         description: 'Scalar values validated against the selected model. Relationships are stored separately.',
       },
+    },
+    {
+      name: 'layout',
+      type: 'json',
+      required: true,
+      defaultValue: [],
+      admin: { description: 'Validated component blocks for page content. Empty for normal collection records.' },
     },
     {
       name: 'status',

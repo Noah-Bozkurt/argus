@@ -29,10 +29,31 @@ test('normalizes a bounded content model and rejects duplicate fields', () => {
   })
   assert.equal(valid?.slug, 'articles')
   assert.equal(valid?.publicRead, true)
+  assert.equal(valid?.contentRole, 'collection')
   assert.equal(normalizeModelInput({ name: 'Bad', slug: 'bad', fields: [
     { key: 'title', label: 'One', type: 'text' },
     { key: 'title', label: 'Two', type: 'text' },
   ] }), null)
+})
+
+test('normalizes page component allowlists and keeps component schemas private', () => {
+  const componentId = '00000000-0000-4000-8000-000000000010'
+  const page = normalizeModelInput({
+    name: 'Landing page', slug: 'landing_page', content_role: 'page', public_read: true,
+    allowed_component_ids: [componentId], fields: [{ key: 'title', label: 'Title', type: 'text' }],
+  })
+  assert.deepEqual(page?.allowedComponentIds, [componentId])
+  assert.equal(page?.contentRole, 'page')
+  const component = normalizeModelInput({
+    name: 'Hero', slug: 'hero', content_role: 'component', public_read: true,
+    fields: [{ key: 'heading', label: 'Heading', type: 'text' }],
+  })
+  assert.equal(component?.publicRead, false)
+  assert.deepEqual(component?.allowedComponentIds, [])
+  assert.equal(normalizeModelInput({
+    name: 'Bad page', slug: 'bad_page', content_role: 'page',
+    allowed_component_ids: [componentId, componentId], fields: [{ key: 'title', label: 'Title', type: 'text' }],
+  }), null)
 })
 
 test('validates dynamic scalar values and required fields', () => {

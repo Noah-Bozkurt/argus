@@ -18,6 +18,7 @@ const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation
     data.argusProjectId = originalDoc.argusProjectId
     data.slug = originalDoc.slug
     data.kind = originalDoc.kind
+    data.contentRole = originalDoc.contentRole
   }
 
   const project = data.project ?? originalDoc?.project
@@ -82,12 +83,32 @@ const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation
   }
 
   const kind = String(data.kind ?? originalDoc?.kind ?? 'data')
+  const contentRole = kind === 'content' ? String(data.contentRole ?? originalDoc?.contentRole ?? 'collection') : 'collection'
+  if (!['collection', 'page', 'component'].includes(contentRole)) {
+    throw new Error('Invalid content role')
+  }
+  const allowedComponents = contentRole === 'page' && Array.isArray(data.allowedComponents)
+    ? data.allowedComponents.map(relationshipID).filter((id): id is string | number => id !== null)
+    : []
+  if (new Set(allowedComponents.map(String)).size !== allowedComponents.length) {
+    throw new Error('Allowed component schemas must be unique')
+  }
+  for (const componentID of allowedComponents) {
+    const component = await req.payload.findByID({
+      collection: 'data-models', id: componentID, depth: 0, overrideAccess: true,
+    }) as { project?: unknown; kind?: string; contentRole?: string }
+    if (relationshipID(component.project) !== scope.projectID || component.kind !== 'content' || component.contentRole !== 'component') {
+      throw new Error('Page schemas can only allow component schemas from the same project')
+    }
+  }
   data.project = scope.projectID
   data.organizationId = scope.organizationId
   data.argusProjectId = scope.argusProjectId
   data.slug = slug
   data.fields = fields
-  data.publicRead = kind === 'content' && data.publicRead === true
+  data.contentRole = contentRole
+  data.allowedComponents = allowedComponents
+  data.publicRead = kind === 'content' && contentRole !== 'component' && data.publicRead === true
   data.schemaVersion = operation === 'update'
     ? Number(originalDoc?.schemaVersion ?? 1) + 1
     : 1
@@ -154,6 +175,25 @@ export const DataModels: CollectionConfig = {
         condition: (_, siblingData) => siblingData?.kind === 'content',
         description: 'Expose only published active records through the read-only public CMS API.',
       },
+    },
+    {
+      name: 'contentRole',
+      type: 'select',
+      required: true,
+      defaultValue: 'collection',
+      options: [
+        { label: 'Collection', value: 'collection' },
+        { label: 'Page', value: 'page' },
+        { label: 'Component schema', value: 'component' },
+      ],
+      admin: { description: 'Immutable content shape. Page records can contain blocks defined by component schemas.' },
+    },
+    {
+      name: 'allowedComponents',
+      type: 'relationship',
+      relationTo: 'data-models',
+      hasMany: true,
+      admin: { condition: (_, siblingData) => siblingData?.kind === 'content' && siblingData?.contentRole === 'page' },
     },
     { name: 'schemaVersion', type: 'number', required: true, defaultValue: 1, admin: { readOnly: true } },
     {

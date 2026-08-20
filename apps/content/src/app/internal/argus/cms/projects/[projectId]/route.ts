@@ -2,7 +2,7 @@ import config from '@payload-config'
 import { NextResponse } from 'next/server'
 import { getPayload, type Payload } from 'payload'
 
-import { internalIdentity, normalizeModelInput, type CmsFieldInput, validateValues } from '@/lib/argusCmsContract'
+import { internalIdentity, normalizeModelInput, type CmsFieldInput, type ContentRole, validateValues } from '@/lib/argusCmsContract'
 import { isUUID } from '@/lib/projectScope'
 
 type Project = { id: string; organizationId?: string; status?: string }
@@ -12,6 +12,8 @@ type Model = {
   slug?: string
   description?: string | null
   publicRead?: boolean | null
+  contentRole?: ContentRole | null
+  allowedComponents?: unknown[] | null
   schemaVersion?: number
   status?: string
   fields?: Array<CmsFieldInput & { id?: string | null }>
@@ -38,6 +40,8 @@ function modelView(model: Model) {
   return {
     id: model.id, name: model.name ?? '', slug: model.slug ?? '', description: model.description ?? '',
     public_read: model.publicRead === true, schema_version: model.schemaVersion ?? 1,
+    content_role: model.contentRole ?? 'collection',
+    allowed_component_ids: (model.allowedComponents ?? []).map((value) => typeof value === 'object' && value && 'id' in value ? String(value.id) : String(value)),
     status: model.status ?? 'active',
     fields: (model.fields ?? []).map(({ key, label, type, required }) => ({ key, label, type, required: required === true })),
   }
@@ -56,7 +60,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
     collection: 'data-models', depth: 0, limit: 100, overrideAccess: true, pagination: false,
     sort: 'name', where: { and: [{ project: { equals: project.id } }, { kind: { equals: 'content' } }] },
   })
-  const modelIds = models.docs.map((model) => String(model.id))
+  const modelIds = models.docs.filter((model) => (model as Model).contentRole !== 'component').map((model) => String(model.id))
   const records = modelIds.length === 0 ? { docs: [] } : await payload.find({
     collection: 'data-records', depth: 0, draft: true, limit: 500, overrideAccess: true, pagination: false,
     sort: '-updatedAt', where: { and: [{ project: { equals: project.id } }, { model: { in: modelIds } }] },
@@ -65,9 +69,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
     project_status: project.status ?? 'active',
     models: models.docs.map((model) => modelView(model as Model)),
     records: records.docs.map((record) => {
-      const doc = record as { id: string | number; model?: unknown; values?: unknown; _status?: string; status?: string; publishedAt?: string | null; updatedAt?: string }
+      const doc = record as { id: string | number; model?: unknown; values?: unknown; layout?: unknown; _status?: string; status?: string; publishedAt?: string | null; updatedAt?: string }
       const modelId = typeof doc.model === 'object' && doc.model && 'id' in doc.model ? String(doc.model.id) : String(doc.model ?? '')
-      return { id: doc.id, model_id: modelId, values: doc.values ?? {}, editorial_status: doc._status ?? 'draft', lifecycle_status: doc.status ?? 'active', published_at: doc.publishedAt ?? null, updated_at: doc.updatedAt ?? null }
+      return { id: doc.id, model_id: modelId, values: doc.values ?? {}, layout: Array.isArray(doc.layout) ? doc.layout : [], editorial_status: doc._status ?? 'draft', lifecycle_status: doc.status ?? 'active', published_at: doc.publishedAt ?? null, updated_at: doc.updatedAt ?? null }
     }),
   })
 }
@@ -89,7 +93,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
       if (!normalized) return NextResponse.json({ code: 'INVALID_REQUEST' }, { status: 400 })
       const model = await payload.create({
         collection: 'data-models', depth: 0, draft: false, overrideAccess: true,
-        data: { organizationId: identity.organizationId, argusProjectId: projectId, project: project.id, name: normalized.name, slug: normalized.slug, description: normalized.description, kind: 'content', publicRead: normalized.publicRead, schemaVersion: 1, status: 'active', fields: normalized.fields },
+        data: { organizationId: identity.organizationId, argusProjectId: projectId, project: project.id, name: normalized.name, slug: normalized.slug, description: normalized.description, kind: 'content', contentRole: normalized.contentRole, allowedComponents: normalized.allowedComponentIds, publicRead: normalized.publicRead, schemaVersion: 1, status: 'active', fields: normalized.fields },
       })
       return NextResponse.json({ model: modelView(model as Model) }, { status: 201 })
     }
@@ -102,7 +106,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
       const values = validateValues(fields, body.values)
       if (!values) return NextResponse.json({ code: 'INVALID_RECORD' }, { status: 400 })
       const publish = body.publish === true
-      const data = { organizationId: identity.organizationId, argusProjectId: projectId, project: project.id, model: model.id, schemaVersion: model.schemaVersion ?? 1, values, status: 'active' as const, _status: publish ? 'published' as const : 'draft' as const }
+      const layout = Array.isArray(body.layout) ? body.layout : []
+      const data = { organizationId: identity.organizationId, argusProjectId: projectId, project: project.id, model: model.id, schemaVersion: model.schemaVersion ?? 1, values, layout, status: 'active' as const, _status: publish ? 'published' as const : 'draft' as const }
       const recordId = typeof body.record_id === 'string' ? body.record_id : ''
       if (recordId) {
         if (!isUUID(recordId)) return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
@@ -119,8 +124,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
         : publish
           ? await payload.create({ collection: 'data-records', depth: 0, draft: false, overrideAccess: true, data })
           : await payload.create({ collection: 'data-records', depth: 0, draft: true, overrideAccess: true, data })
-      const record = saved as { id: string; values?: unknown; _status?: string; publishedAt?: string | null; updatedAt?: string }
-      return NextResponse.json({ record: { id: record.id, model_id: model.id, values: record.values ?? {}, editorial_status: record._status ?? (publish ? 'published' : 'draft'), published_at: record.publishedAt ?? null, updated_at: record.updatedAt } }, { status: recordId ? 200 : 201 })
+      const record = saved as { id: string; values?: unknown; layout?: unknown; _status?: string; publishedAt?: string | null; updatedAt?: string }
+      return NextResponse.json({ record: { id: record.id, model_id: model.id, values: record.values ?? {}, layout: Array.isArray(record.layout) ? record.layout : [], editorial_status: record._status ?? (publish ? 'published' : 'draft'), published_at: record.publishedAt ?? null, updated_at: record.updatedAt } }, { status: recordId ? 200 : 201 })
     }
   } catch (error) {
     console.error('Argus CMS operation failed', { operation: body.operation, projectId, userId: identity.userId, error })
