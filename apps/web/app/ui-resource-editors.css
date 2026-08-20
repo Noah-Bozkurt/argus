@@ -81,6 +81,8 @@
 }
 
 @media (max-width: 760px) {
+  .topbar-actions .icon-button { display: none; }
+  .control-status { padding-right: 0; font-size: 10px; }
   .feature-stack > section > .create-drawer,
   .feature-stack > section > .callout { margin-left: 12px; margin-right: 12px; }
   .feature-stack > section > article > .info-grid { grid-template-columns: 1fr; }
@@ -93,5 +95,6 @@
 }
 
 @media (max-width: 390px) {
+  .control-status { display: none; }
   .feature-stack > section > article > .action-row { grid-template-columns: 1fr; }
 }
