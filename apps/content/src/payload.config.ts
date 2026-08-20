@@ -95,7 +95,7 @@ export default buildConfig({
         organizationId,
         argusUserId,
         role: 'owner',
-      },
+      } as any,
     })
     payload.logger.info(`Created initial Argus owner account for ${email}`)
   },
