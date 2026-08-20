@@ -8,6 +8,7 @@ ENV_FILE="$INSTALL_DIR/.env"
 COMPOSE_FILE="$INSTALL_DIR/compose.yaml"
 ACCEPTANCE_DIR="${ARGUS_ACCEPTANCE_DIR:-$STATE_DIR/acceptance/first-server}"
 CHECKPOINT_FILE="$ACCEPTANCE_DIR/product.env"
+POST_REBOOT_CHECKPOINT="$ACCEPTANCE_DIR/post-reboot.env"
 CONTROL_API_URL="${ARGUS_CONTROL_API_URL:-http://127.0.0.1:8080}"
 
 log() { printf '[argus-product-acceptance] %s\n' "$*"; }
@@ -55,8 +56,55 @@ queue_command() {
   api POST /commands "$body"
 }
 
+file_checkpoint_value() {
+  local file="$1" key="$2"
+  [[ -f "$file" ]] || die "required acceptance checkpoint is missing: $file"
+  (
+    set +u
+    # Root-owned acceptance checkpoint written with shell escaping.
+    # shellcheck disable=SC1090
+    . "$file"
+    printf '%s\n' "${!key:-}"
+  )
+}
+
+wait_for_job() {
+  local kind="$1" resource="$2" not_before="${3:-}" attempts="${4:-90}" jobs
+  for _ in $(seq 1 "$attempts"); do
+    jobs="$(api GET /background-jobs)"
+    if jq -e --arg kind "$kind" --arg resource "$resource" --arg not_before "$not_before" '
+      .jobs | any(.job_kind == $kind and .resource_key == $resource and .status == "SUCCEEDED" and
+        ($not_before == "" or (.completed_at != null and .completed_at >= $not_before)))
+    ' <<<"$jobs" >/dev/null; then
+      jq -cer --arg kind "$kind" --arg resource "$resource" --arg not_before "$not_before" '
+        .jobs | map(select(.job_kind == $kind and .resource_key == $resource and .status == "SUCCEEDED" and
+          ($not_before == "" or (.completed_at != null and .completed_at >= $not_before)))) | first
+      ' <<<"$jobs"
+      return 0
+    fi
+    sleep 2
+  done
+  die "scheduled job $kind/$resource did not succeed in time"
+}
+
+wait_for_backup() {
+  local backup="$1" verified="$2" attempts="${3:-60}" servers
+  for _ in $(seq 1 "$attempts"); do
+    servers="$(api GET /servers)"
+    if jq -e --arg server "$ARGUS_SERVER_ID" --arg backup "$backup" --argjson verified "$verified" '
+      .[] | select(.server_id == $server) | .snapshot.backups.artifacts[]? |
+      select(.name == $backup and .profile == "system-config" and .size_bytes > 0 and .sha256 != "" and .verified == $verified)
+    ' <<<"$servers" >/dev/null; then
+      return 0
+    fi
+    sleep 2
+  done
+  die "backup $backup did not reach verified=$verified in Agent inventory"
+}
+
 write_checkpoint() {
   local project_id="$1" environment_id="$2" service_id="$3" site_id="$4" safe_command_id="$5" protected_command_id="$6"
+  local monitor_job_id="$7" backup_name="$8" backup_command_id="$9" verify_command_id="${10}" preflight_command_id="${11}"
   install -d -m 0700 "$ACCEPTANCE_DIR"
   local tmp="$CHECKPOINT_FILE.tmp.$$"
   {
@@ -67,6 +115,11 @@ write_checkpoint() {
     printf 'SITE_ID=%q\n' "$site_id"
     printf 'SAFE_COMMAND_ID=%q\n' "$safe_command_id"
     printf 'PROTECTED_COMMAND_ID=%q\n' "$protected_command_id"
+    printf 'MONITOR_JOB_ID=%q\n' "$monitor_job_id"
+    printf 'BACKUP_NAME=%q\n' "$backup_name"
+    printf 'BACKUP_COMMAND_ID=%q\n' "$backup_command_id"
+    printf 'VERIFY_COMMAND_ID=%q\n' "$verify_command_id"
+    printf 'PREFLIGHT_COMMAND_ID=%q\n' "$preflight_command_id"
   } >"$tmp"
   chmod 0600 "$tmp"
   sync -f "$tmp"
@@ -89,6 +142,7 @@ main() {
   : "${ARGUS_ORG_ID:?missing ARGUS_ORG_ID}"
   : "${ARGUS_USER_ID:?missing ARGUS_USER_ID}"
   : "${ARGUS_SERVER_ID:?missing ARGUS_SERVER_ID}"
+  : "${ARGUS_DOMAIN:?missing ARGUS_DOMAIN}"
 
   local suffix project project_id environment environment_id service service_id site site_id workspace
   suffix="$(date -u +%Y%m%d%H%M%S)-${RANDOM}"
@@ -102,6 +156,17 @@ main() {
   service_id="$(jq -er '.id' <<<"$service")"
   site="$(api POST "/projects/$project_id/sites" "$(jq -nc --arg environment "$environment_id" --arg service "$service_id" '{name:"Acceptance site",description:"Acceptance site",service_id:$service,environment_id:$environment,framework:"other"}')")"
   site_id="$(jq -er '.id' <<<"$site")"
+
+  local reboot_completed jobs monitor_job monitor_job_id
+  reboot_completed="$(file_checkpoint_value "$POST_REBOOT_CHECKPOINT" COMPLETED_AT)"
+  [[ "$reboot_completed" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || die "post-reboot checkpoint time is invalid"
+  log "proving a persisted default schedule executed after the recorded reboot"
+  wait_for_job notifications.materialize default "$reboot_completed" 90 >/dev/null
+
+  api PUT "/projects/$project_id/sites/$site_id/monitor" "$(jq -nc --arg target "https://$ARGUS_DOMAIN/healthz" '{target_url:$target,check_robots:false,check_sitemap:false,timeout_seconds:10}')" >/dev/null
+  api PUT "/projects/$project_id/sites/$site_id/monitor/schedule" '{"enabled":true,"interval_seconds":60}' >/dev/null
+  monitor_job="$(wait_for_job site_monitor.check "$site_id" '' 90)"
+  monitor_job_id="$(jq -er '.id' <<<"$monitor_job")"
 
   workspace="$(api GET "/projects/$project_id")"
   jq -e --arg id "$project_id" '.project.id == $id and .project.client_id == null and ([.activity[].event_type] | index("project.created") != null)' <<<"$workspace" >/dev/null || die "Project workspace does not expose its creation event"
@@ -134,7 +199,25 @@ main() {
   jq -e '.error_code == "PERMISSION_DENIED" and (.error_message | contains("protected"))' <<<"$protected_result" >/dev/null || die "protected control-plane Docker action failed without the expected protection error"
   [[ "$(docker inspect -f '{{.State.Running}}' "$protected_container")" == true ]] || die "protected control-api container is no longer running"
 
-  write_checkpoint "$project_id" "$environment_id" "$service_id" "$site_id" "$command_id" "$protected_id"
+  local backup_create backup_command_id backup_name backup_verify verify_command_id preflight preflight_command_id
+  log "creating and verifying a system-config backup through typed Agent commands"
+  backup_create="$(queue_command '{"kind":"backup.create","profile":"system-config"}' MEDIUM)"
+  backup_command_id="$(jq -er '.id' <<<"$backup_create")"
+  wait_for_command "$backup_command_id" SUCCEEDED 120 >/dev/null
+  backup_name="$backup_command_id.tar.gz"
+  wait_for_backup "$backup_name" false 60
+
+  backup_verify="$(queue_command "$(jq -nc --arg backup "$backup_name" '{kind:"backup.verify",backup:$backup}')" LOW)"
+  verify_command_id="$(jq -er '.id' <<<"$backup_verify")"
+  wait_for_command "$verify_command_id" SUCCEEDED 120 >/dev/null
+  wait_for_backup "$backup_name" true 60
+
+  log "running non-mutating restore preflight for the verified backup"
+  preflight="$(queue_command "$(jq -nc --arg backup "$backup_name" '{kind:"backup.restore.preflight",backup:$backup}')" LOW)"
+  preflight_command_id="$(jq -er '.id' <<<"$preflight")"
+  wait_for_command "$preflight_command_id" SUCCEEDED 120 >/dev/null
+
+  write_checkpoint "$project_id" "$environment_id" "$service_id" "$site_id" "$command_id" "$protected_id" "$monitor_job_id" "$backup_name" "$backup_command_id" "$verify_command_id" "$preflight_command_id"
   log "product acceptance passed for personal Project $project_id"
 }
 
