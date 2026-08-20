@@ -66,6 +66,7 @@ export const ProjectMemberships: CollectionConfig = {
   admin: {
     group: 'App Data',
     defaultColumns: ['project', 'user', 'role'],
+    hidden: ({ user }) => (user as { role?: string } | null)?.role === 'client',
   },
   access: {
     create: createProjectDocument('manager'),
