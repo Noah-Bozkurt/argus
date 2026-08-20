@@ -9,16 +9,26 @@ function safeNext(value: FormDataEntryValue | null): string {
   return value
 }
 
+function resolveEmail(identifier: string): string {
+  const normalized = identifier.trim().toLowerCase()
+  if (normalized.includes('@')) return normalized
+  const alias = (process.env.ARGUS_LEGACY_LOGIN_ALIAS ?? 'argus').trim().toLowerCase()
+  if (normalized === alias) {
+    return (process.env.ARGUS_OPERATOR_EMAIL ?? 'operator@argus.local').trim().toLowerCase()
+  }
+  return normalized
+}
+
 export async function loginAction(formData: FormData): Promise<never> {
-  const emailValue = formData.get('email')
+  const identifierValue = formData.get('identifier')
   const passwordValue = formData.get('password')
-  const email = typeof emailValue === 'string' ? emailValue.trim().toLowerCase() : ''
+  const identifier = typeof identifierValue === 'string' ? identifierValue : ''
   const password = typeof passwordValue === 'string' ? passwordValue : ''
   const next = safeNext(formData.get('next'))
 
-  if (!email || !password) redirect('/login?error=invalid')
+  if (!identifier.trim() || !password) redirect('/login?error=invalid')
 
-  const session = await loginWorkspace(email, password)
+  const session = await loginWorkspace(resolveEmail(identifier), password)
   if (!session) redirect('/login?error=invalid')
 
   writeSessionCookie(session.token, session.exp)
