@@ -68,9 +68,20 @@ function MetricGauge({ label, value }: { label: string; value: number | undefine
   )
 }
 
-function statusBadge(value: boolean | null | undefined, enabled = 'Enabled', disabled = 'Disabled') {
+function statusBadge(
+  value: boolean | null | undefined,
+  positiveWhenTrue = true,
+  enabled = 'Enabled',
+  disabled = 'Disabled',
+) {
   if (value === null || value === undefined) return <span className="badge">Unknown</span>
-  return <span className={`badge ${value ? 'success' : 'warning'}`}>{value ? enabled : disabled}</span>
+  const positive = positiveWhenTrue ? value : !value
+  return <span className={`badge ${positive ? 'success' : 'warning'}`}>{value ? enabled : disabled}</span>
+}
+
+function firewallStatusClass(status: string): string {
+  const value = status.trim().toLowerCase()
+  return value === 'active' || value.endsWith(': active') ? 'success' : 'warning'
 }
 
 export default async function ServerPage({ params }: { params: { serverId: string } }) {
@@ -189,8 +200,8 @@ export default async function ServerPage({ params }: { params: { serverId: strin
             {!snapshot?.security.available ? <div className="empty-state"><strong>Security inspection unavailable</strong>The agent did not report security data.</div> : (
               <>
                 <div className="status-grid">
-                  <div className="status-item"><span className="info-label">Firewall</span><span className="info-value"><span className={`badge ${snapshot.security.firewall_status.toLowerCase().includes('active') ? 'success' : 'warning'}`}>{snapshot.security.firewall_status}</span></span></div>
-                  <div className="status-item"><span className="info-label">SSH password</span><span className="info-value">{statusBadge(snapshot.security.ssh_password_auth, 'Enabled', 'Disabled')}</span></div>
+                  <div className="status-item"><span className="info-label">Firewall</span><span className="info-value"><span className={`badge ${firewallStatusClass(snapshot.security.firewall_status)}`}>{snapshot.security.firewall_status}</span></span></div>
+                  <div className="status-item"><span className="info-label">SSH password</span><span className="info-value">{statusBadge(snapshot.security.ssh_password_auth, false)}</span></div>
                   <div className="status-item"><span className="info-label">SSH root login</span><span className="info-value"><span className={`badge ${snapshot.security.ssh_root_login === 'no' ? 'success' : 'warning'}`}>{snapshot.security.ssh_root_login}</span></span></div>
                   <div className="status-item"><span className="info-label">Security updates</span><span className="info-value">{statusBadge(snapshot.security.automatic_security_updates)}</span></div>
                 </div>
