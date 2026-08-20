@@ -26,6 +26,8 @@ Commands:
                    require a different immutable revision, and verify SUCCEEDED state.
   product          Exercise a new personal Project and supported product APIs on the
                    installed server, including Agent and Docker protection checks.
+  content          Exercise CMS model, draft, publish and public-read workflows for
+                   the personal Project created by the product stage.
   report           Write/print the sanitized lifecycle acceptance report.
   status           Show which lifecycle checkpoints have completed.
 
@@ -281,10 +283,31 @@ stage_product() {
   "$REPO_ROOT/scripts/first-server-product-acceptance.sh"
 }
 
+stage_content() {
+  require_root
+  [[ -f "$ACCEPTANCE_DIR/product.env" ]] || die "run acceptance stage 'product' first"
+  local project_id organization_id user_id result model_id record_id model_slug
+  project_id="$(checkpoint_value product PROJECT_ID)"
+  organization_id="$(read_installed_value ARGUS_ORG_ID)"
+  user_id="$(read_installed_value ARGUS_USER_ID)"
+  log "exercising draft and publication through the installed Content API"
+  result="$(docker compose --project-directory "$INSTALL_DIR" --env-file "$ENV_FILE" -f "$INSTALL_DIR/compose.yaml" exec -T \
+    -e ARGUS_TEST_PROJECT_ID="$project_id" -e ARGUS_TEST_ORG_ID="$organization_id" -e ARGUS_TEST_USER_ID="$user_id" \
+    content node --input-type=module - <"$REPO_ROOT/scripts/first-server-content-acceptance.mjs")"
+  model_id="$(jq -er .model_id <<<"$result")"
+  record_id="$(jq -er .record_id <<<"$result")"
+  model_slug="$(jq -er .model_slug <<<"$result")"
+  [[ "$model_id" =~ ^[0-9a-f-]{36}$ && "$record_id" =~ ^[0-9a-f-]{36}$ && "$model_slug" =~ ^acceptance_[a-z0-9_]+$ ]] \
+    || die "Content acceptance returned invalid evidence"
+  write_checkpoint content COMPLETED_AT "$(date -u +%Y-%m-%dT%H:%M:%SZ)" PROJECT_ID "$project_id" \
+    MODEL_ID "$model_id" RECORD_ID "$record_id" MODEL_SLUG "$model_slug"
+  log "Content acceptance passed for model $model_id and record $record_id"
+}
+
 stage_status() {
   ensure_acceptance_dir
   local name
-  for name in baseline post-reboot installer-rerun post-update product; do
+  for name in baseline post-reboot installer-rerun post-update product content; do
     if [[ "$name" == product && -f "$ACCEPTANCE_DIR/product.env" ]] ||
        [[ "$name" != product && -f "$(checkpoint_path "$name")" ]]; then
       printf '%-18s %s\n' "$name" complete
@@ -301,9 +324,11 @@ stage_report() {
     require_checkpoint "$name"
   done
   [[ -f "$ACCEPTANCE_DIR/product.env" ]] || die "run acceptance stage 'product' first"
+  require_checkpoint content
 
   local initial_revision reboot_revision rerun_revision from_revision to_revision transaction product_project_id
   local monitor_job_id backup_name backup_command_id verify_command_id preflight_command_id
+  local content_project_id content_model_id content_record_id content_model_slug
   initial_revision="$(checkpoint_value baseline REVISION)"
   reboot_revision="$(checkpoint_value post-reboot REVISION)"
   rerun_revision="$(checkpoint_value installer-rerun REVISION)"
@@ -322,10 +347,17 @@ stage_report() {
   backup_command_id="$(checkpoint_value product BACKUP_COMMAND_ID)"
   verify_command_id="$(checkpoint_value product VERIFY_COMMAND_ID)"
   preflight_command_id="$(checkpoint_value product PREFLIGHT_COMMAND_ID)"
+  content_project_id="$(checkpoint_value content PROJECT_ID)"
+  content_model_id="$(checkpoint_value content MODEL_ID)"
+  content_record_id="$(checkpoint_value content RECORD_ID)"
+  content_model_slug="$(checkpoint_value content MODEL_SLUG)"
   [[ "$product_project_id" =~ ^[0-9a-f-]{36}$ ]] || die "product acceptance Project ID is invalid"
   [[ "$monitor_job_id" =~ ^[0-9a-f-]{36}$ ]] || die "product acceptance monitor job ID is invalid"
   [[ "$backup_command_id" =~ ^[0-9a-f-]{36}$ && "$backup_name" == "$backup_command_id.tar.gz" ]] || die "product acceptance backup evidence is inconsistent"
   [[ "$verify_command_id" =~ ^[0-9a-f-]{36}$ && "$preflight_command_id" =~ ^[0-9a-f-]{36}$ ]] || die "product acceptance backup command evidence is invalid"
+  [[ "$content_project_id" == "$product_project_id" ]] || die "Content acceptance used a different Project"
+  [[ "$content_model_id" =~ ^[0-9a-f-]{36}$ && "$content_record_id" =~ ^[0-9a-f-]{36}$ && "$content_model_slug" =~ ^acceptance_[a-z0-9_]+$ ]] \
+    || die "Content acceptance evidence is invalid"
 
   [[ "$initial_revision" == "$reboot_revision" && "$initial_revision" == "$rerun_revision" ]] \
     || die "checkpoint revisions are inconsistent"
@@ -362,10 +394,14 @@ verified_system_config_backup: $backup_name
 backup_create_command: $backup_command_id
 backup_verify_command: $verify_command_id
 restore_preflight_command: $preflight_command_id
+cms_model: $content_model_id
+cms_published_record: $content_record_id
+cms_public_model_slug: $content_model_slug
+cms_draft_publication_public_read_verified: yes
 
 This report intentionally contains no registry credential or plaintext Argus secret.
-It proves the recorded lifecycle and product checkpoints only. Transactional restore apply,
-CMS/App Data workflows, reset/reinstall and manual-failure acceptance remain separate work.
+It proves the recorded lifecycle, product and CMS checkpoints only. Transactional restore
+apply, general App Data workflows, reset/reinstall and manual-failure acceptance remain separate work.
 EOF
   chmod 0600 "$tmp"
   sync -f "$tmp"
@@ -382,6 +418,7 @@ main() {
     rerun-installer) stage_rerun_installer ;;
     update) stage_update ;;
     product) stage_product ;;
+    content) stage_content ;;
     report) stage_report ;;
     status) stage_status ;;
     -h|--help|help|'') usage ;;
