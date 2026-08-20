@@ -60,6 +60,15 @@ validate_revision() {
     || die "image is missing a valid immutable org.opencontainers.image.revision label"
 }
 
+validate_acceptance_failure_hook() {
+  local phase="${ARGUS_UPDATE_ACCEPTANCE_FAILURE:-}" confirmation="${ARGUS_UPDATE_ACCEPTANCE_CONFIRM_FAILURE:-}"
+  if [[ -z "$phase" && -z "$confirmation" ]]; then
+    return 0
+  fi
+  [[ "$phase" == "after-target-start-armed" && "$confirmation" == "ROLLBACK-TEST-ONLY" ]] \
+    || die "invalid acceptance failure hook; both exact rollback-test values are required"
+}
+
 compose() {
   docker compose --project-directory "$INSTALL_DIR" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
 }
@@ -628,6 +637,7 @@ trap 'on_signal SIGTERM' TERM
 
 main() {
   require_root
+  validate_acceptance_failure_hook
   require_file "$ENV_FILE"
   require_file "$COMPOSE_FILE"
   require_file "$CADDY_FILE"
@@ -692,6 +702,10 @@ EOF
 
   install_target_files
   arm_target_start
+  if [[ "${ARGUS_UPDATE_ACCEPTANCE_FAILURE:-}" == "after-target-start-armed" ]]; then
+    warn "injecting confirmed acceptance failure after target start was durably armed"
+    false
+  fi
   start_target
 
   ROLLBACK_READY=0
