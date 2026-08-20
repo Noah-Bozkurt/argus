@@ -34,10 +34,11 @@ export default async function SiteMonitoringSection({ projectId }: { projectId: 
             const monitor = monitorBySite.get(site.id)
             const config = monitor?.config ?? null
             const latest = monitor?.checks[0] ?? null
+            const target = config?.target_url ?? defaultTarget(site, inventory.domains)
             return (
               <article className="resource-card" key={site.id}>
                 <div className="resource-card-head">
-                  <div><h4>{site.name}</h4><div className="resource-meta">{config?.target_url ?? defaultTarget(site, inventory.domains) || 'No target configured'}</div></div>
+                  <div><h4>{site.name}</h4><div className="resource-meta">{target || 'No target configured'}</div></div>
                   <span className={`badge ${statusClass(latest?.overall_status ?? site.health_status)}`}>{latest?.overall_status ?? site.health_status}</span>
                 </div>
 
@@ -57,7 +58,7 @@ export default async function SiteMonitoringSection({ projectId }: { projectId: 
                     <div className="resource-editor-body">
                       <form action={async (formData) => { 'use server'; await saveSiteMonitorAction(projectId, site.id, formData) }}>
                         <div className="form-grid">
-                          <label className="full">Target URL<input name="target_url" type="url" required maxLength={2048} defaultValue={config?.target_url ?? defaultTarget(site, inventory.domains)} placeholder="https://example.com/" /></label>
+                          <label className="full">Target URL<input name="target_url" type="url" required maxLength={2048} defaultValue={target} placeholder="https://example.com/" /></label>
                           <label>Timeout<select name="timeout_seconds" defaultValue={String(config?.timeout_seconds ?? 10)}><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="15">15 seconds</option><option value="30">30 seconds</option></select></label>
                           <label style={{ display: 'flex', gridTemplateColumns: 'auto 1fr', alignItems: 'center' }}><input name="check_robots" type="checkbox" defaultChecked={config?.check_robots ?? true} /> Check /robots.txt</label>
                           <label style={{ display: 'flex', gridTemplateColumns: 'auto 1fr', alignItems: 'center' }}><input name="check_sitemap" type="checkbox" defaultChecked={config?.check_sitemap ?? true} /> Check /sitemap.xml</label>
