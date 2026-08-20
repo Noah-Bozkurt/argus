@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 
-import { createContentModel, saveContentRecord, type ContentBlock, type ContentField, type ContentModel } from '../../../../lib/content-api'
+import { createContentModel, deleteMedia, saveContentRecord, updateMedia, uploadMedia, type ContentBlock, type ContentField, type ContentModel } from '../../../../lib/content-api'
 
 function text(formData: FormData, name: string): string {
   return String(formData.get(name) ?? '').trim()
@@ -57,6 +57,27 @@ export async function saveContentRecordAction(projectId: string, fields: Content
     values: Object.fromEntries(fields.map((field) => [field.key, fieldValue(formData, field)])),
     layout,
     publish: text(formData, 'intent') === 'publish',
+  })
+  revalidatePath(`/projects/${projectId}/content`)
+}
+
+export async function uploadMediaAction(projectId: string, formData: FormData) {
+  const file = formData.get('file')
+  if (!(file instanceof File) || file.size === 0 || file.size > 10 * 1024 * 1024) throw new Error('Choose an image no larger than 10 MiB')
+  await uploadMedia(projectId, formData)
+  revalidatePath(`/projects/${projectId}/content`)
+}
+
+export async function deleteMediaAction(projectId: string, mediaId: string, formData: FormData) {
+  if (formData.get('confirm_delete') !== 'on') throw new Error('Confirm media deletion')
+  await deleteMedia(projectId, mediaId)
+  revalidatePath(`/projects/${projectId}/content`)
+}
+
+export async function updateMediaAction(projectId: string, mediaId: string, formData: FormData) {
+  await updateMedia(projectId, {
+    media_id: mediaId, alt: text(formData, 'alt'), caption: text(formData, 'caption'),
+    public_read: formData.get('public_read') === 'on',
   })
   revalidatePath(`/projects/${projectId}/content`)
 }

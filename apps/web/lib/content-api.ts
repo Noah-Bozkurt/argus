@@ -41,6 +41,21 @@ export type ContentWorkspace = {
   records: ContentRecord[]
 }
 
+export type MediaAsset = {
+  id: string
+  filename: string
+  mime_type: string
+  filesize: number
+  width: number | null
+  height: number | null
+  alt: string
+  caption: string
+  public_read: boolean
+  url: string | null
+  sizes: Record<string, unknown>
+  updated_at: string | null
+}
+
 const contentApi = process.env.ARGUS_CONTENT_URL ?? 'http://content:3000'
 
 function headers(): Record<string, string> {
@@ -83,4 +98,32 @@ export async function saveContentRecord(projectId: string, input: {
   publish: boolean
 }): Promise<void> {
   await request(projectId, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'save_record', ...input }) })
+}
+
+async function mediaRequest<T>(projectId: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${contentApi}/internal/argus/media/projects/${projectId}`, {
+    ...init, cache: 'no-store', headers: { ...headers(), ...(init.headers ?? {}) },
+  })
+  if (!response.ok) throw new Error(`Content service ${response.status}: ${await response.text()}`)
+  if (response.status === 204) return undefined as T
+  return response.json()
+}
+
+export async function getMediaLibrary(projectId: string): Promise<MediaAsset[]> {
+  return (await mediaRequest<{ media: MediaAsset[] }>(projectId)).media
+}
+
+export async function uploadMedia(projectId: string, formData: FormData): Promise<void> {
+  await mediaRequest(projectId, { method: 'POST', body: formData })
+}
+
+export async function deleteMedia(projectId: string, mediaId: string): Promise<void> {
+  const response = await fetch(`${contentApi}/internal/argus/media/projects/${projectId}?media_id=${encodeURIComponent(mediaId)}`, {
+    method: 'DELETE', cache: 'no-store', headers: headers(),
+  })
+  if (!response.ok) throw new Error(`Content service ${response.status}: ${await response.text()}`)
+}
+
+export async function updateMedia(projectId: string, input: { media_id: string; alt: string; caption: string; public_read: boolean }): Promise<void> {
+  await mediaRequest(projectId, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) })
 }

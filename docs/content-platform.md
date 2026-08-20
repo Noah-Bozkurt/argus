@@ -122,6 +122,14 @@ The Web server talks to Payload through `/internal/argus/cms/projects/:projectId
 
 The native editor supports scalar fields (text, long text, number, boolean, date/date-time and JSON) in collection records, page fields and component blocks. Relationships remain managed through the underlying App Data model until the native relationship picker and safe public expansion are implemented.
 
+## Media library
+
+Each Project has an Argus-native image library backed by Payload uploads. Operators can upload JPEG, PNG, WebP and AVIF images up to 10 MiB with required alternative text and an optional caption. Payload records the original dimensions and generates bounded 320 px thumbnail, 960 px medium and 1920 px large variants without enlarging the source.
+
+Media ownership is immutable and scoped to the mirrored Project and organization. The internal list/upload/update/delete API repeats that scope check before using privileged Payload local operations. Anonymous file delivery is denied unless the individual asset has `publicRead=true` and its Project is active; changing either condition revokes delivery immediately. Private and public assets can coexist in the same Project. Caddy exposes only Payload's checked `/api/media/file/*` delivery handler on the public content hostname, not the Payload admin or generic collection API.
+
+Production Compose stores originals and generated variants in the named `content_media` volume mounted at `/app/media`, so replacing the immutable content container does not discard uploads. Deleting an asset removes its original and generated files as well as its metadata. This persistence is not yet a media backup: full volume backup/restore remains part of the broader disaster-recovery roadmap.
+
 ## Production migrations
 
 Payload schema changes are committed as migrations under `apps/content/src/migrations/`.
@@ -138,6 +146,8 @@ During CMS upgrade:
 
 The page/component migration is additive: existing content models default to `collection`, existing current/versioned records receive an empty layout, and the page allowlist uses a Payload-managed self-relationship table.
 
+The media migration adds a separate project-scoped upload collection and Payload lock relationship. Media bytes remain outside PostgreSQL in the persistent media volume.
+
 Migration validation covers a fresh PostgreSQL 16 database, schema isolation, repeated/idempotent production startup and a production Payload build.
 
 ## What CMS V1 is not
@@ -145,7 +155,6 @@ Migration validation covers a fresh PostgreSQL 16 database, schema isolation, re
 CMS V1 now includes a basic Argus-native model, draft/publication workflow and typed block editor. It does not yet include:
 
 - rich drag-and-drop or site-template-aware visual design (the current editor uses explicit add/move/remove controls and a safe generic preview);
-- media library/uploads/variants;
 - forms/submissions;
 - client approvals/portal;
 - public relationship graph expansion.

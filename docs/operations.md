@@ -26,7 +26,7 @@ For the direct-DNS first test, create DNS records for two hostnames pointing at 
 
 Inbound TCP 80/443 must reach Caddy. UDP 443 is also exposed for HTTP/3 but is not required for basic HTTPS operation. PostgreSQL, Web and Payload are not published directly. Control API port 8080 is bound only to host loopback so the native local Agent can use it.
 
-The primary hostname routes only `/agent/*`, `/enrollment/complete` and the explicit public status API directly to the Control API. Other operator traffic goes to Web and is protected by temporary first-test Caddy basic authentication. The content hostname exposes only `/public/*` without that outer authentication; Payload admin/private routes remain protected.
+The primary hostname routes only `/agent/*`, `/enrollment/complete` and the explicit public status API directly to the Control API. Other operator traffic goes to Web and is protected by temporary first-test Caddy basic authentication. The content hostname exposes only `/public/*` and Payload's access-checked `/api/media/file/*` handler without that outer authentication; Payload admin/private routes remain protected. Each media asset still requires its explicit public-delivery flag.
 
 ### Installer inputs
 
