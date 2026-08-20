@@ -5,7 +5,7 @@
   padding: 24px;
   background:
     radial-gradient(circle at 50% -20%, rgba(91, 124, 255, .16), transparent 38%),
-    var(--background);
+    var(--bg);
 }
 
 .login-card {
@@ -23,7 +23,7 @@
   display: grid;
   place-items: center;
   border-radius: 9px;
-  background: var(--accent);
+  background: var(--primary);
   color: white;
   font-weight: 800;
   letter-spacing: -.04em;
@@ -53,7 +53,7 @@
   display: grid;
   gap: 7px;
   font-size: 12px;
-  color: var(--muted-strong);
+  color: var(--text-soft);
 }
 
 .login-form input {
