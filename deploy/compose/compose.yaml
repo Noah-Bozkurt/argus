@@ -78,6 +78,7 @@ services:
     environment:
       ARGUS_CONTROL_API_URL: http://control-api:8080
       ARGUS_CONTENT_URL: http://content:3000
+      ARGUS_CONTENT_PUBLIC_URL: https://${ARGUS_CONTENT_DOMAIN:?ARGUS_CONTENT_DOMAIN is required}
       ARGUS_CONTENT_SYNC_TOKEN: ${ARGUS_CONTENT_SYNC_TOKEN:?ARGUS_CONTENT_SYNC_TOKEN is required}
       ARGUS_WEB_API_TOKEN: ${ARGUS_WEB_API_TOKEN:?ARGUS_WEB_API_TOKEN is required}
       ARGUS_ORG_ID: ${ARGUS_ORG_ID:?ARGUS_ORG_ID is required}

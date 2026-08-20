@@ -25,6 +25,7 @@ The repository already contains substantial working slices for:
 - committed Payload production migrations;
 - CMS content models, drafts/version history, publication and explicit public content reads;
 - an Argus-native project Content workflow for scalar content types, drafts and publication;
+- protected generic draft preview with explicit links to published public content;
 - a first-test hybrid deployment path using Docker Compose for the control plane and native Agent/Helper services;
 - private custom images for Argus Web, Control API, Worker, Payload and host-tool artifacts;
 - an Ubuntu/Debian amd64 first-test installer with bootstrap, local Agent enrollment, health verification and disposable reset;

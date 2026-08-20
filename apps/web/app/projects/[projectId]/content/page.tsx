@@ -77,6 +77,7 @@ export default async function ProjectContentPage({ params }: { params: { project
             {records.length === 0 ? <p>No records yet.</p> : records.map((record) => (
               <article key={record.id}>
                 <p><strong>{record.editorial_status === 'published' ? 'Published' : 'Draft'}</strong>{record.published_at ? ` — ${new Date(record.published_at).toLocaleString()}` : ''}</p>
+                <p><Link href={`/projects/${params.projectId}/content/preview/${record.id}`}>Preview</Link></p>
                 <RecordForm projectId={params.projectId} model={model} record={record} />
               </article>
             ))}
