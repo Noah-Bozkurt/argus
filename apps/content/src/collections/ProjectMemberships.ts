@@ -1,4 +1,4 @@
-import type { CollectionBeforeValidateHook, CollectionConfig } from 'payload'
+import type { CollectionBeforeValidateHook, CollectionConfig, Where } from 'payload'
 import {
   createProjectDocument,
   manageProjectDocuments,
@@ -69,7 +69,13 @@ export const ProjectMemberships: CollectionConfig = {
   },
   access: {
     create: createProjectDocument('manager'),
-    read: readProjectDocuments,
+    read: async (args) => {
+      const user = args.req.user as { id?: string | number; role?: string } | null
+      if (user?.role === 'client' && user.id) {
+        return { user: { equals: user.id } } as Where
+      }
+      return readProjectDocuments(args)
+    },
     update: manageProjectDocuments,
     delete: manageProjectDocuments,
   },
