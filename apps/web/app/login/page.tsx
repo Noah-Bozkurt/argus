@@ -1,7 +1,7 @@
 import { loginAction } from './actions'
 
 const errors: Record<string, string> = {
-  invalid: 'The email address or password is incorrect.',
+  invalid: 'The username, email address or password is incorrect.',
   operator_access: 'This account does not have control-panel access.',
   cms_unavailable: 'The CMS is not available right now.',
 }
@@ -28,10 +28,10 @@ export default function LoginPage({
         <form className="login-form" action={loginAction}>
           <input type="hidden" name="next" value={searchParams.next ?? '/'} />
           <label>
-            Email
+            Email or username
             <input
-              name="email"
-              type="email"
+              name="identifier"
+              type="text"
               autoComplete="username"
               autoCapitalize="none"
               spellCheck={false}
