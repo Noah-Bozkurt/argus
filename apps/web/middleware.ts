@@ -5,7 +5,7 @@ const contentApi = process.env.ARGUS_CONTENT_URL ?? 'http://content:3000'
 const contentPublicUrl = process.env.ARGUS_CONTENT_PUBLIC_URL ?? ''
 
 type WorkspaceRole = 'owner' | 'admin' | 'member' | 'client'
-type SessionUser = { role?: WorkspaceRole }
+type SessionUser = { role?: WorkspaceRole; argusUserId?: string | null }
 
 function publicPath(pathname: string): boolean {
   return pathname === '/healthz' || pathname.startsWith('/status/') || pathname === '/login'
@@ -25,10 +25,11 @@ async function userForToken(token: string): Promise<SessionUser | null> {
   }
 }
 
-function loginRedirect(request: NextRequest) {
+function loginRedirect(request: NextRequest, error?: string) {
   const login = new URL('/login', request.url)
   const next = `${request.nextUrl.pathname}${request.nextUrl.search}`
   if (next !== '/') login.searchParams.set('next', next)
+  if (error) login.searchParams.set('error', error)
   return NextResponse.redirect(login)
 }
 
@@ -58,6 +59,12 @@ export async function middleware(request: NextRequest) {
       return new NextResponse('Client CMS access is not configured', { status: 503 })
     }
     return NextResponse.next()
+  }
+
+  if (!user.argusUserId) {
+    const response = loginRedirect(request, 'operator_access')
+    response.cookies.delete(SESSION_COOKIE)
+    return response
   }
 
   if (pathname === '/login') return NextResponse.redirect(new URL('/', request.url))
