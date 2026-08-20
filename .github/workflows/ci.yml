@@ -2,12 +2,108 @@ name: CI
 
 on:
   pull_request:
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+      - services/**
+      - migrations/**
+      - apps/**
+      - packages/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - install.sh
+      - scripts/**
+      - deploy/**
+      - .github/workflows/ci.yml
+      - .github/workflows/publish-images.yml
   push:
     branches:
       - main
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+      - services/**
+      - migrations/**
+      - apps/**
+      - packages/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - install.sh
+      - scripts/**
+      - deploy/**
+      - .github/workflows/ci.yml
+      - .github/workflows/publish-images.yml
+
+permissions:
+  contents: read
+  pull-requests: read
 
 jobs:
+  changes:
+    runs-on: [self-hosted, linux, x64]
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      web: ${{ steps.filter.outputs.web }}
+      content: ${{ steps.filter.outputs.content }}
+      installer: ${{ steps.filter.outputs.installer }}
+      readiness: ${{ steps.filter.outputs.readiness }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'crates/**'
+              - 'services/**'
+              - 'migrations/**'
+              - '.github/workflows/ci.yml'
+            web:
+              - 'apps/web/**'
+              - 'packages/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - '.github/workflows/ci.yml'
+            content:
+              - 'apps/content/**'
+              - 'packages/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - '.github/workflows/ci.yml'
+            installer:
+              - 'install.sh'
+              - 'apps/installer/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - '.github/workflows/ci.yml'
+            readiness:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'crates/**'
+              - 'services/**'
+              - 'migrations/**'
+              - 'apps/**'
+              - 'packages/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'install.sh'
+              - 'scripts/**'
+              - 'deploy/**'
+              - '.github/workflows/ci.yml'
+
   rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
@@ -19,6 +115,8 @@ jobs:
       - run: cargo fmt --all -- --check
 
   web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
@@ -30,15 +128,51 @@ jobs:
           node-version: 22
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @argus/web exec tsc --noEmit
+
+  content:
+    needs: changes
+    if: needs.changes.outputs.content == 'true'
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @argus/content run typecheck
       - run: pnpm --filter @argus/content run test:cms-contract
+
+  installer:
+    needs: changes
+    if: needs.changes.outputs.installer == 'true'
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @argus/installer test
       - run: pnpm --filter @argus/installer build
 
   server-test-readiness:
     needs:
+      - changes
       - rust
       - web
+      - content
+      - installer
+    if: >-
+      always() &&
+      needs.changes.outputs.readiness == 'true' &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 20
     services:

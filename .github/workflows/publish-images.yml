@@ -18,25 +18,64 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
+  changes:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main'
     runs-on: [self-hosted, linux, x64]
+    outputs:
+      any: ${{ steps.images.outputs.any }}
+      matrix: ${{ steps.images.outputs.matrix }}
+      images: ${{ steps.images.outputs.images }}
+    steps:
+      - name: Check out tested revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+      - name: Select affected images
+        id: images
+        shell: bash
+        run: |
+          set -euo pipefail
+          include=''
+          images=''
+          add_image() {
+            local image="$1" dockerfile="$2"
+            [[ -z "$include" ]] || include+=','
+            include+="{\"image\":\"${image}\",\"dockerfile\":\"${dockerfile}\"}"
+            [[ -z "$images" ]] || images+=','
+            images+="$image"
+          }
+          changed() { ! git diff --quiet HEAD^ HEAD -- "$@"; }
+
+          changed apps/web packages package.json pnpm-lock.yaml pnpm-workspace.yaml deploy/docker/web.Dockerfile \
+            && add_image argus-web deploy/docker/web.Dockerfile
+          changed apps/content packages package.json pnpm-lock.yaml pnpm-workspace.yaml deploy/docker/content.Dockerfile \
+            && add_image argus-content deploy/docker/content.Dockerfile
+          changed services/control-api crates migrations Cargo.toml Cargo.lock deploy/docker/control-api.Dockerfile \
+            && add_image argus-control-api deploy/docker/control-api.Dockerfile
+          changed services/worker crates/common crates/protocol migrations Cargo.toml Cargo.lock deploy/docker/worker.Dockerfile \
+            && add_image argus-worker deploy/docker/worker.Dockerfile
+          changed crates install.sh scripts deploy/compose deploy/systemd deploy/docker/host-tools.Dockerfile Cargo.toml Cargo.lock \
+            && add_image argus-host-tools deploy/docker/host-tools.Dockerfile
+
+          if [[ -n "$include" ]]; then
+            echo 'any=true' >>"$GITHUB_OUTPUT"
+          else
+            echo 'any=false' >>"$GITHUB_OUTPUT"
+          fi
+          echo "matrix={\"include\":[${include}]}" >>"$GITHUB_OUTPUT"
+          echo "images=${images}" >>"$GITHUB_OUTPUT"
+
+  publish:
+    needs: changes
+    if: >-
+      needs.changes.outputs.any == 'true'
+    runs-on: [self-hosted, linux, x64]
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - image: argus-web
-            dockerfile: deploy/docker/web.Dockerfile
-          - image: argus-control-api
-            dockerfile: deploy/docker/control-api.Dockerfile
-          - image: argus-worker
-            dockerfile: deploy/docker/worker.Dockerfile
-          - image: argus-content
-            dockerfile: deploy/docker/content.Dockerfile
-          - image: argus-host-tools
-            dockerfile: deploy/docker/host-tools.Dockerfile
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     steps:
       - name: Check out tested revision
         uses: actions/checkout@v4
@@ -72,6 +111,7 @@ jobs:
   verify-published-artifacts:
     name: Verify published artifacts
     needs:
+      - changes
       - publish
     runs-on: [self-hosted, linux, x64]
     steps:
@@ -88,14 +128,11 @@ jobs:
       - name: Verify SHA and main tags exist remotely
         env:
           TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          CHANGED_IMAGES: ${{ needs.changes.outputs.images }}
         run: |
           set -euo pipefail
-          for image in \
-            argus-web \
-            argus-control-api \
-            argus-worker \
-            argus-content \
-            argus-host-tools
+          IFS=',' read -ra images <<<"$CHANGED_IMAGES"
+          for image in "${images[@]}"
           do
             echo "Verifying ${image}:${TESTED_SHA}"
             docker buildx imagetools inspect \

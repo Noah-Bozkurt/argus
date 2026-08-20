@@ -2,9 +2,23 @@ name: First Server Acceptance Tooling
 
 on:
   pull_request:
+    paths:
+      - install.sh
+      - scripts/first-server-**
+      - scripts/reset-first-test.sh
+      - scripts/test-first-server-**
+      - scripts/test-reset-first-test.sh
+      - .github/workflows/first-server-acceptance-tools.yml
   push:
     branches:
       - main
+    paths:
+      - install.sh
+      - scripts/first-server-**
+      - scripts/reset-first-test.sh
+      - scripts/test-first-server-**
+      - scripts/test-reset-first-test.sh
+      - .github/workflows/first-server-acceptance-tools.yml
 
 jobs:
   acceptance-tooling:
