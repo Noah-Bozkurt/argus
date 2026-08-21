@@ -1,19 +1,50 @@
 # Argus Documentation
 
-This directory contains the canonical documentation for Argus. Older milestone-by-milestone notes have been consolidated so the docs describe the system as it exists now rather than preserving one file for every historical PR.
+This directory is the canonical documentation for the current Argus codebase.
 
-## Documents
+Start with the user-facing guides, then use the deeper documents when working on a specific subsystem.
 
-- [Architecture](architecture.md) — system boundaries, runtime components, data ownership, events and command flow.
-- [Projects & Delivery](projects-and-delivery.md) — projects, repositories, services, environments, deployments, sites, domains and release/readiness concepts.
+## Start here
+
+- [Installation](installation.md) — install a control plane, connect managed servers, verify, update and uninstall.
+- [Using Argus](usage.md) — current control-panel navigation and common project/infrastructure workflows.
+- [Roadmap](roadmap.md) — current state, known limits and near-term priorities.
+
+## Product and system reference
+
+- [Architecture](architecture.md) — runtime components, trust boundaries, data ownership, events and command flow.
+- [Projects & Delivery](projects-and-delivery.md) — projects, repositories, services, environments, deployments, sites and domains.
 - [Operations](operations.md) — server management, Docker/Compose, maintenance, monitoring, jobs, incidents, notifications and status pages.
-- [Security & Recovery](security-and-recovery.md) — trust boundaries, privileged execution, firewall enforcement, desired state, backups and transactional restore.
-- [Content Platform](content-platform.md) — Payload application data, project synchronization, CMS drafts/publication, migrations and public content access.
-- [Development](development.md) — workspace layout, local development, checks, configuration and migration workflow.
-- [Roadmap](roadmap.md) — what is implemented, the first-server-test gate and what remains planned.
+- [Security & Recovery](security-and-recovery.md) — privileged execution, firewall controls, desired state, backups and transactional recovery.
+- [Content Platform](content-platform.md) — Payload-backed application data, CMS workflows, media, forms and public content access.
+- [Development](development.md) — workspace layout, local development, checks, configuration and migrations.
 
-## Documentation rule
+## Current public installer
 
-New functionality should update the relevant canonical document instead of creating another `*-v1.md` milestone file. Add a new document only when a topic is genuinely large enough to remain independently useful.
+The supported installer entry point is:
 
-The root [README](../README.md) is deliberately non-technical and should link here for implementation details.
+```text
+https://install.noahbozkurt.nl
+```
+
+The canonical bootstrap command is:
+
+```bash
+curl -fsSL https://install.noahbozkurt.nl/install | sudo bash
+```
+
+Do not document the underlying Cloudflare Pages hostname as the normal installation URL. `install.noahbozkurt.nl` is the product-facing endpoint.
+
+## Documentation rules
+
+Documentation should describe the repository as it exists now, not preserve old milestone plans as if they were current instructions.
+
+When behavior changes:
+
+1. update the relevant canonical document in the same change;
+2. keep the root README focused on what Argus is and how to get started;
+3. put detailed operator flows in `installation.md` or `usage.md`;
+4. keep architecture/security documents implementation-focused;
+5. remove or rewrite obsolete roadmap items instead of accumulating historical phases.
+
+A feature that only exists on an unmerged branch should not be documented as available on `main`.

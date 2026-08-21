@@ -1,233 +1,250 @@
 # Operations
 
-This document describes the operational capabilities that currently exist in Argus. Security-sensitive details and recovery guarantees are expanded in [Security & Recovery](security-and-recovery.md).
+This document describes the current operational model in Argus. Installation and host lifecycle commands are covered in [Installation](installation.md); security-sensitive mutation and rollback details are covered in [Security & Recovery](security-and-recovery.md).
 
-## First-test server deployment
+## Supported control-plane deployment
 
-The first supported installation target is a clean Ubuntu/Debian-class **amd64** server. It is a test topology, not a claim of production readiness.
+The current supported host target is deliberately narrow:
 
-Repository workflows target an organization-managed Linux x64 self-hosted GitHub Actions
-runner. The runner must be restricted to trusted private repositories, run as a dedicated
-non-root account, and have Docker access because readiness and image-publication jobs use
-service containers and build images. A connected runner is infrastructure availability, not
-evidence that a workflow passed; installation/release claims still require the recorded jobs
-to execute successfully for the exact commit.
+- Ubuntu or Debian;
+- amd64;
+- one control-plane host;
+- Docker Compose for the control plane;
+- native systemd Agent and Helper services;
+- Caddy on ports 80/443;
+- separate main and content DNS names.
 
-The control plane runs through Docker Compose:
+Install through:
 
-- official PostgreSQL 16 image;
-- custom Argus Control API image;
-- custom Argus Worker image;
-- custom standalone Next.js Web image;
-- custom standalone Payload Content image;
-- official Caddy image.
+```bash
+curl -fsSL https://install.noahbozkurt.nl/install | sudo bash
+```
 
-The managed-node Agent and privileged Helper run natively through systemd. `argusctl` is installed as a native diagnostic/lifecycle binary.
+Do not use the underlying Cloudflare Pages hostname as the documented product URL. `install.noahbozkurt.nl` is the stable installer entry point.
 
-### Network layout
+## Runtime layout
 
-For the direct-DNS first test, create DNS records for two hostnames pointing at the server:
+The control plane contains:
 
-- the main Argus hostname, for example `argus.example.com`;
-- the content hostname, for example `content.argus.example.com`.
+- PostgreSQL 16;
+- Argus Control API;
+- Argus Worker;
+- Argus Web;
+- Payload Content;
+- Caddy.
 
-Inbound TCP 80/443 must reach Caddy. UDP 443 is also exposed for HTTP/3 but is not required for basic HTTPS operation. PostgreSQL, Web and Payload are not published directly. Control API port 8080 is bound only to host loopback so the native local Agent can use it.
+These run with Docker Compose. The managed-node Agent and privileged Helper run directly under systemd.
 
-The primary hostname routes only `/agent/*`, `/enrollment/complete` and the explicit public status API directly to the Control API. Other operator traffic goes to Web and is protected by temporary first-test Caddy basic authentication. The content hostname exposes only `/public/*` and Payload's access-checked `/api/media/file/*` handler without that outer authentication; Payload admin/private routes remain protected. Each media asset still requires its explicit public-delivery flag.
-
-### Installer inputs
-
-The root `install.sh` is the supported first-test path. The minimum operator-provided values are:
+Default host paths:
 
 ```text
-ARGUS_DOMAIN=argus.example.com
-ARGUS_CONTENT_DOMAIN=content.argus.example.com   # defaults to content.<main-domain>
-ARGUS_REGISTRY_USERNAME=<private registry user>
-ARGUS_REGISTRY_TOKEN=<credential able to read the private Argus images>
+/opt/argus/       Compose/runtime files
+/etc/argus/       host configuration and registry credentials
+/var/lib/argus/   persistent state and backups
+/var/log/argus/   installer logs
+/usr/local/bin/   argus-agent, argus-helper, argusctl
 ```
 
-`ARGUS_VERSION` defaults to `main`, but `main` is only a discovery alias. The installer reads the artifact's `org.opencontainers.image.revision` label, verifies it is a full commit SHA and persists that immutable SHA as the installed `ARGUS_VERSION`. Compose therefore runs commit-addressed Argus images even when installation started from `main`.
+Only Caddy is publicly exposed. The Control API has a host-loopback path for the local Agent. PostgreSQL and the application containers are not published directly.
 
-For the current private-repository first test, open the Argus installer site and enter the
-two DNS names and GitHub username. The generated command downloads the canonical installer
-and checksum from Cloudflare Pages, verifies it locally, and then prompts for a credential
-that can read the private GHCR images. The credential stays in the VPS terminal; the site
-does not receive it. A source checkout is no longer required for installation.
-Avoid putting the credential directly in shell history:
+## Host lifecycle
+
+### Local status
 
 ```bash
-gh auth login
-gh repo clone Noah-Bozkurt/argus
-cd argus
-export ARGUS_REGISTRY_USERNAME=<github-user>
-read -rsp 'GitHub package token: ' ARGUS_REGISTRY_TOKEN && echo
-export ARGUS_REGISTRY_TOKEN
-sudo -E ./install.sh
+argusctl status
 ```
 
-The registry credential needs read access to the private Argus packages. The installer uses
-a temporary isolated Docker configuration for the
-registry login and does not persist the registry token in `/opt/argus/.env`. A named,
-signed release manifest and short-lived artifact credential remain deployment maturity work;
-the current site intentionally serves the green `main` installer for first-server testing.
+Shows native Agent/Helper service state and the enrolled Agent/Server/control-plane identity.
 
-The installer:
-
-1. validates Ubuntu/Debian + amd64 and detects conflicting existing container setups;
-2. installs/verifies Docker Engine and Compose;
-3. resolves the requested image tag to an immutable tested commit revision;
-4. pulls the matching `argus-host-tools` artifact image and installs Agent/Helper/CLI plus version-matched deployment templates;
-5. creates persistent high-entropy internal credentials and bootstrap IDs;
-6. starts PostgreSQL/Control API/Worker/Web/Payload/Caddy through Compose;
-7. bootstraps an initial organization, operator identity and an `Argus Control Plane` infrastructure Project without any Client requirement;
-8. starts Helper and enrolls the local Agent through the real one-time enrollment API;
-9. removes the enrollment token from persistent Agent configuration after enrollment;
-10. verifies Compose health, systemd services, Control API loopback health and both HTTPS hostnames.
-
-Generated configuration lives primarily under `/opt/argus`, `/etc/argus` and `/var/lib/argus`. The Compose `.env` is root-readable only and contains the first-test credentials required to reproduce/restart the deployment.
-
-Rerunning the installer preserves existing generated IDs/secrets and the installed revision. It is not an update mechanism. If a legacy first-test install still stores a mutable version such as `main`, the rerun recovers the revision from the currently running verified image before proceeding. A different requested version on an existing install is rejected/ignored in favor of the dedicated transactional update path.
-
-The disposable test reset path is intentionally explicit:
+### Local health
 
 ```bash
-ARGUS_CONFIRM_RESET=DELETE-ARGUS-FIRST-TEST-DATA \
-  sudo -E ./scripts/reset-first-test.sh
+argusctl health
 ```
 
-That removes Argus data/volumes, Agent identity and test backups. It leaves Docker installed.
-If Compose teardown fails, reset stops before deleting the installation files so the operator
-can diagnose and retry. Destructive directory overrides must be canonical absolute paths and
-broad system paths are rejected.
+Checks Agent, Helper, Helper socket reachability and local system collection.
 
-### First-server smoke verification
+### Control-plane connectivity
 
-After installation or reboot, run:
+```bash
+argusctl connection
+```
+
+Performs an authenticated Agent identity request against the configured control plane.
+
+### Full installed-system smoke check
 
 ```bash
 sudo argusctl smoke
 ```
 
-The smoke test is embedded into the installed `argusctl` binary. It verifies the version-matched deployment without requiring a source checkout. Checks include:
+Use this after installation, reboot and update. It performs broader installed-system validation than the local health command.
 
-- root-only generated-file permissions;
-- health/running state for the Compose control plane and native Agent/Helper;
-- the Helper Unix-socket permission boundary;
-- Control API loopback-only exposure and absence of a host-exposed PostgreSQL port;
-- authenticated Agent identity and a fresh heartbeat;
-- project-centric bootstrap records with no required Client;
-- default background schedules and successful Payload Project synchronization;
-- authenticated Web/Payload HTTPS health;
-- unauthenticated public-status routing.
-
-`ARGUS_SMOKE_SKIP_PUBLIC_HTTPS=1` skips only the external HTTPS portion for DNS/network diagnosis; internal control-plane checks still run.
-
-### Image publication gate
-
-Custom images are not published by pull-request CI. The image workflow runs only after the repository's normal `CI` workflow completes successfully on `main`, checks out the exact tested commit and publishes the five Argus images to GHCR using both `main` and full-commit-SHA tags.
-
-After all five builds/pushes succeed, a final registry-verification job authenticates to GHCR and remotely inspects both expected tags for every image. The publication workflow is not green until those remote artifacts are resolvable.
-
-PR CI separately proves the source is server-test-ready by checking locked Rust tests, TypeScript, deployment lifecycle script syntax, Compose/Caddy configuration, a Control API boot against an empty PostgreSQL 16 database, and production Web/Payload builds.
-
-### Transactional self-update V1
-
-For the single-server test deployment, `argusctl` exposes a local root-only transactional update path:
+### System snapshot
 
 ```bash
-export ARGUS_REGISTRY_USERNAME=<private registry user>
-export ARGUS_REGISTRY_TOKEN=<read-only package credential>
-sudo -E argusctl update --version main
+argusctl system info
 ```
 
-`main` is again only discovery. The updater resolves it to an immutable full commit SHA and verifies/pulls the same revision for Web, Control API, Worker, Content and host-tools before touching the running installation. An explicit full SHA can be supplied instead when reproducing a known revision.
+Returns a local JSON snapshot including hostname, OS/kernel, architecture, CPU/RAM/disk usage, load and uptime.
 
-Before mutation, the updater verifies that all running custom control-plane services have the same revision label and locally pins those current image IDs under that SHA for rollback. It then prepares the target host-tools bundle before entering downtime.
+### Version
 
-Target images are pre-pulled while the current control plane is still healthy, so a registry or image-space failure happens before downtime. After those pulls and target-bundle extraction, the updater performs a second storage preflight on the filesystem that holds `/var/lib/argus/update-backups/`. It reads the live PostgreSQL database size and requires at least **2× the database size + 1 GiB** of free space before writers are stopped. This intentionally over-reserves relative to the normally compressed custom-format dump so snapshot creation is not allowed to consume the last usable disk space.
+```bash
+argusctl version
+```
 
-New updates use transaction format 2 with explicit durable phase boundaries. The transaction is:
+## Installation behavior
 
-1. copy the current `.env`, Compose/Caddy assets, native binaries and systemd units into the root-only transaction directory;
-2. seal that exact fixed file set with `file-snapshot.sha256` and verify it before any live mutation is armed;
-3. stop Agent/Helper and the control-plane writers;
-4. take a custom-format `pg_dump` of the complete Argus PostgreSQL database, including both control and Payload schemas;
-5. require `pg_restore --list` to accept the dump, then persist and verify `database-snapshot.sha256`;
-6. install the target version-matched assets/binaries and switch `.env` to the target SHA;
-7. durably write `target-start-armed` with that target SHA; only after this marker may target Compose services start and migrations run;
-8. wait for service health, reload validated Caddy configuration, restart Helper/Agent and require `argusctl smoke` before declaring success.
+The installer is rerunnable and preserves generated IDs, secrets, data and the installed immutable revision when an existing installation is detected.
 
-If a normal mutation-stage step fails, rollback first verifies the sealed file snapshot before restoring it. PostgreSQL is recreated from the pre-update dump only when `target-start-armed` already existed. Before that marker, the target control plane was never allowed to start, so a file-installation failure or crash can be recovered without unnecessarily replacing an otherwise untouched database.
+A rerun is not an update request. Use:
 
-The same phase markers are used after a hard reboot. A format-2 transaction with metadata but no sealed file snapshot is treated as `ABORTED_PRE_MUTATION` when the installed revision is still the original revision. A sealed snapshot with no target-start marker restores the files only. A transaction with `target-start-armed` requires the expected target SHA plus a checksum-valid, structurally readable database dump before database rollback is attempted. Existing format-1 transaction snapshots remain supported by the legacy conservative recovery path.
+```bash
+sudo argusctl update --version main
+```
 
-Transaction snapshots are stored under `/var/lib/argus/update-backups/` with root-only permissions. To prevent normal successful updates from filling a small VPS indefinitely, Argus automatically keeps the **three newest terminal snapshots** whose result is `SUCCEEDED` or `ROLLED_BACK`. Pruning recognizes only Argus-generated transaction directory names with complete metadata/file snapshots. Incomplete transactions, `ROLLBACK_FAILED` transactions and unrelated/manual directories are never automatically removed. Pruning runs before a new update and again after a successful update.
+for a normal update.
 
-The disposable-host acceptance runner can deliberately exercise the most sensitive automatic rollback branch with `first-server-acceptance.sh update-rollback`. The updater recognizes the injection only when both exact root-process environment values select `after-target-start-armed` and confirm `ROLLBACK-TEST-ONLY`; partial or unknown values fail before update preflight/mutation. The injected non-zero status occurs immediately after the durable target-start marker and therefore drives the normal sealed file/database rollback path. This hook is not a general fault-injection or production update option.
+The installer stores the validated private-registry login in `/etc/argus/registry.env` with mode `0600`. The token is not written to `/opt/argus/.env`.
 
-V1 deliberately does **not** expose a generic manual rollback-to-old-snapshot command after a successful update: restoring an old database later would discard legitimate changes made since the update. The retained snapshots exist for the bounded automatic recovery path and operator investigation; a future operator-driven point-in-time rollback still needs a stronger data-loss confirmation model.
+To rotate the credential:
 
-### Control-plane self-protection
+```bash
+sudo argusctl registry-login
+```
 
-Every Argus-owned Compose service is labelled `com.argus.protected=true`. The privileged Helper checks this label before container or Compose start/stop/restart operations and returns `PERMISSION_DENIED` for protected control-plane containers. This is enforced below the UI/API boundary.
+## Coordinated image releases
+
+Argus publishes five coordinated custom images:
+
+- `argus-web`;
+- `argus-control-api`;
+- `argus-worker`;
+- `argus-content`;
+- `argus-host-tools`.
+
+Normal CI must succeed on `main` before release publication starts. The release workflow builds/publishes the full SHA-tagged set, verifies that all required immutable artifacts are remotely available and only then promotes the `main` pointers.
+
+`main` is therefore a discovery/update alias. Install/update resolves it to a full Git SHA and persists that SHA as the installed `ARGUS_VERSION`.
+
+## Transactional self-update
+
+The control plane is updated locally with:
+
+```bash
+sudo argusctl update --version main
+```
+
+or a specific published revision:
+
+```bash
+sudo argusctl update --version <40-character-git-sha>
+```
+
+The updater is intentionally not implemented as a normal remote Agent command because it must stop/replace parts of the same control plane that would otherwise coordinate the operation.
+
+At a high level the update flow:
+
+1. validates the currently installed coordinated revision;
+2. resolves and pre-pulls the complete target revision;
+3. prepares the target host-tools/deployment bundle before downtime;
+4. checks snapshot space;
+5. seals the current deployment/native file set for rollback;
+6. stops writers at the transaction boundary;
+7. captures and validates a PostgreSQL backup when required by the update phase;
+8. installs the target files and records the durable target-start boundary;
+9. starts the target services;
+10. requires service health and `argusctl smoke` before success.
+
+If a mutation-stage failure occurs, the updater uses the stored transaction state to restore the previous coordinated revision. Recovery behavior distinguishes failures before target startup from failures after target startup so the database is not unnecessarily replaced.
+
+Interrupted-update recovery is integrated into the native Helper startup path. See [Security & Recovery](security-and-recovery.md) for the exact transaction boundaries and rollback guarantees.
+
+## Uninstall
+
+Interactive:
+
+```bash
+sudo argusctl uninstall
+```
+
+Automation:
+
+```bash
+sudo argusctl uninstall --yes
+```
+
+Persistent state is retained conservatively unless purge is explicitly requested:
+
+```bash
+sudo argusctl uninstall --purge-data
+```
+
+`--purge-data` is destructive and should only be used when the Argus data/backups on that host are intentionally disposable.
 
 ## Managed server model
 
-On a disposable first-server test host, `sudo -E ./scripts/first-server-acceptance.sh product` exercises the installed product through supported APIs. It creates a fresh personal Project without a Client, creates an environment/service/site, verifies audit and domain-event persistence plus Payload project synchronization, proves a persisted default schedule completed after the recorded reboot, runs a scheduled site monitor, executes a read-only typed Agent service action, and confirms the protected Argus control-plane container cannot be restarted through managed Docker actions. It also creates a typed system-config backup, waits for Agent inventory, verifies the checksum/archive, and runs non-mutating restore preflight. The command writes only IDs/artifact names and completion evidence to the root-only acceptance directory.
+A server becomes controllable through an authenticated Argus Agent, not merely by creating a hostname record in the UI.
 
-After `product`, `sudo -E ./scripts/first-server-acceptance.sh content` uses the installed Payload service's internal Argus APIs for that same personal Project. It requires the Project synchronization to exist, creates immediate-write App Data models/records plus a validated relation, then creates a public content model, proves a draft is absent from anonymous reads, publishes the record and verifies its sanitized public response. The script executes inside the Content container only to reach the private service port; it uses supported HTTP APIs and does not mutate PostgreSQL directly.
+Enrollment flow:
 
-Transactional restore apply is an explicit disposable-host checkpoint. Run `ARGUS_CONFIRM_TRANSACTIONAL_RESTORE=RESTORE-DISPOSABLE-HOST sudo -E ./scripts/first-server-acceptance.sh restore` only after `product` and `content`. The stage first proves the high-risk typed command is rejected outside maintenance, opens a bounded maintenance window, applies the already verified system-config backup, waits for the Agent's post-acknowledgement commit to remove the restore transaction and disarm its independent rollback timer, runs full smoke, and ends maintenance even on failure. It restores the host's current captured configuration, but it still exercises live SSH/UFW configuration and must not be used casually on a non-disposable server.
+1. project Infrastructure -> Add server;
+2. generate the 15-minute single-use setup code;
+3. run the public installer on the new server;
+4. choose managed-server mode;
+5. paste the setup code;
+6. let the installer enroll/start Agent and Helper.
 
-The terminal lifecycle checkpoint is deliberately destructive and must run last. After writing
-the normal `report`, use `ARGUS_CONFIRM_RESET_REINSTALL=RESET-AND-REINSTALL-DISPOSABLE-HOST sudo -E ./scripts/first-server-acceptance.sh reset-reinstall`. It copies the sanitized PASS report to root-only `/var/lib/argus-acceptance/first-server/`, seals it with a checksum, runs the explicit reset, proves installed state/services/protected containers are absent, performs a second clean install with newly generated internal identities and secrets, and runs smoke. Its durable phases allow retry after interruption. The combined final evidence remains outside the deleted Argus state at `/var/lib/argus-acceptance/first-server/final-report.txt`.
+The Agent reports heartbeats and snapshots, polls typed commands, calls the local privileged Helper and returns command results.
 
-A managed server is enrolled with an Argus Agent. Heartbeats provide system identity and snapshots used for online/offline state, CPU/RAM/disk/load/uptime information and capability-specific inventories.
+## Agent/Helper trust boundary
 
-The Agent polls the Control API for typed commands and calls the local privileged Helper. A server is not considered controllable merely because a hostname exists in inventory; it must have an authenticated Agent with the required capability.
+The Agent is the network-facing managed-node component. It is not root.
 
-## Services and systemd
+The Helper is root and listens only on a local Unix socket. It supports fixed, validated operation classes. Argus does not construct arbitrary shell commands from operator input for normal infrastructure management.
 
-Managed systemd services support typed start, stop and restart actions. Service names are validated and must be present in the Helper allowlist. The Helper calls `systemctl` directly and does not construct shell command strings.
+Argus-owned control-plane containers are marked with `com.argus.protected=true`. Managed Docker/Compose operations reject stop/restart actions against protected containers so the normal infrastructure surface cannot turn off its own control plane.
 
-Recent journald output can be collected for managed services. Diagnostics also include failed systemd units and listening TCP ports.
+## Systemd services
 
-## Package updates and maintenance
+Managed systemd services support typed start, stop and restart operations. Service names must pass validation and Helper allowlisting.
 
-APT-based hosts expose update inventory and reboot-required state.
+The Agent can also collect relevant service/journald diagnostics. Host-side troubleshooting for Argus itself starts with:
 
-Typed operations include:
+```bash
+systemctl status argus-agent.service
+systemctl status argus-helper.service
+journalctl -u argus-agent.service
+journalctl -u argus-helper.service
+```
 
-- refresh package metadata;
-- install security updates through the host's unattended-upgrades configuration;
-- install available upgrades;
-- request a reboot.
+## Package maintenance
 
-Disruptive update/reboot operations require an active maintenance window at the Control API, not only a disabled/enabled button in the UI. Maintenance windows are persisted with reason and timing and can be ended early.
+APT-based managed hosts expose update/reboot information and support typed maintenance operations such as metadata refresh and supported upgrade flows.
 
-A command being accepted is not by itself proof that a reboot completed; reconnect/uptime correlation is the stronger operational signal.
+Disruptive operations are maintenance-gated where required by Control API policy. UI button state is not the enforcement boundary.
 
-## Docker
+## Docker and Compose
 
-The Agent reports Docker container inventory when Docker is available. Typed container start, stop and restart actions use validated container references and the local Helper.
+When Docker is available, Agents report container inventory and expose typed start/stop/restart actions through the Helper.
 
-Argus does not expose arbitrary `docker` CLI arguments through the command API. Argus control-plane containers carry a protected label and cannot be mutated through these managed actions.
-
-## Compose stacks
-
-Compose projects are represented as first-class stack resources rather than opaque shell commands. Argus discovers/configures stack identity and provides typed start, stop and restart operations.
-
-The Helper resolves known Compose configuration files from Docker's own Compose project inventory before invoking actions. Project names and discovered paths are validated. Arbitrary uploaded Compose execution is not treated as equivalent to an approved stack.
+Compose projects are represented as stack resources. The Helper resolves/validates known Compose project configuration before executing stack actions; the API does not simply accept arbitrary Docker/Compose CLI argument strings.
 
 ## Monitoring
 
-Site monitoring records operational checks such as DNS/HTTP reachability, response latency, TLS state and selected website metadata. Monitoring includes SSRF protections rather than blindly requesting arbitrary internal targets.
+Site monitoring can record operational checks including DNS/HTTP reachability, response latency, TLS state and selected website metadata.
 
-Checks are persisted and scheduled through the Jobs/Worker subsystem. Historical checks drive site state, incident automation and domain TLS lifecycle observations.
+Monitoring requests include SSRF protections instead of blindly requesting arbitrary internal addresses.
 
-## Monitoring schedules and background jobs
+Checks are persisted and feed site state, incident automation and related operational views.
 
-Recurring operations are persisted in PostgreSQL job schedules. Workers claim due jobs, execute typed internal handlers and record attempts/results. This is used for tasks including:
+## Schedules and jobs
+
+Recurring operational work is persisted in PostgreSQL. Workers claim due jobs and record attempts/results.
+
+The same job foundation is used by capabilities such as:
 
 - site monitoring;
 - incident evaluation;
@@ -236,48 +253,44 @@ Recurring operations are persisted in PostgreSQL job schedules. Workers claim du
 - domain lifecycle evaluation;
 - Payload project synchronization.
 
-Jobs have bounded retries and are designed to be idempotent or deduplicated at their mutation boundary. The Jobs administration surface exposes job status rather than hiding recurring work inside long-lived web processes.
+The global Jobs view exposes this background activity instead of hiding it inside long-running web processes.
 
 ## Incidents
 
-Incidents are project-scoped operational records with severity, status, affected resources, timeline and resolution context. Site-monitoring automation can create/evaluate incidents after configured failure conditions rather than treating every individual failed check as a new incident.
+Incidents are project-scoped and carry severity, status, affected resources, timeline and resolution context.
 
-The dependency graph and change-correlation data provide context for understanding what might be affected and what changed near the start of an incident.
+Monitoring automation can evaluate/create incidents after configured failure conditions rather than turning every failed request into a new incident.
 
-## Change correlation
-
-Argus records operational/domain events from deployments and other mutations. Change correlation combines relevant recent changes with incident/operational context so an operator can inspect plausible causes without manually searching every subsystem.
-
-Correlation is evidence/context, not automatic root-cause proof.
+Dependency and change-correlation information can be used as operational context. Correlation is evidence for investigation, not automatic root-cause proof.
 
 ## Notifications
 
-Notification rules match domain events and materialize operator notifications through background jobs. Notifications can be read and acknowledged in Argus.
+Project/domain events can materialize operator notifications through background jobs. The global Notifications view is the current operator-facing notification surface.
 
-Because modules emit normal project-scoped events, features such as domain lifecycle can use the same notification system instead of implementing their own unrelated alert engine.
-
-External channels such as email/chat/webhook/push are future extensions unless explicitly implemented by a provider later.
+External notification providers such as email/chat/webhooks should only be documented as available once a concrete provider implementation exists.
 
 ## Status pages
 
-Projects can expose status-page information from selected operational components and incidents. Status pages are a presentation layer over Argus operational state; they do not bypass incident or monitoring ownership.
+Projects can expose public status information based on selected operational components/incidents. Status pages are a presentation layer over normal Argus operational state and intentionally render outside the authenticated control-panel shell.
 
 ## Desired state and drift
 
-Argus stores desired security state separately from actual Agent observations and reports drift for configured fields.
+Argus stores desired security state separately from authenticated Agent observations.
 
-Current automatic reconciliation is deliberately narrow. Firewall `must be active` is the supported enforcement primitive because it has a rollback-safe implementation. Other observed policy fields remain monitor-only until equivalent preflight/rollback guarantees exist.
+Current automatic enforcement remains deliberately narrow. Firewall `must be active` is the supported reconciliation primitive because it has explicit preflight and rollback behavior. Other observed fields should remain monitor-only until equivalent safety semantics exist.
 
-## Operational non-goals
+## Operational non-goals / current limits
 
 Argus currently does not claim to provide:
 
-- arbitrary remote shell/terminal as its normal management model;
+- arbitrary remote shell as its normal management model;
 - full metrics/time-series observability;
 - generalized configuration management for every Linux setting;
-- automatic provider provisioning;
-- automatic DNS/Cloudflare mutation;
-- completely autonomous remediation for arbitrary incidents;
-- production-grade multi-node/rolling control-plane upgrades or arbitrary point-in-time rollback.
+- automatic cloud/provider provisioning;
+- automatic Cloudflare/DNS mutation;
+- HA/multi-node control-plane operation;
+- arm64 installation support;
+- arbitrary point-in-time database rollback after a successful update;
+- completely autonomous remediation for arbitrary incidents.
 
-The next deployment proof is the first real clean-server install, smoke test and self-update exercise described in [Roadmap](roadmap.md).
+See [Roadmap](roadmap.md) for current priorities rather than historical first-test phases.

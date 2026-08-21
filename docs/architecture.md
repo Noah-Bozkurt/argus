@@ -1,14 +1,15 @@
 # Architecture
 
-Argus is a project-centric control platform with explicit trust and data-ownership boundaries. The architecture is intentionally not client-centric: projects exist independently and may optionally reference a client later.
+Argus is a project-centric control platform with explicit trust and data-ownership boundaries. Projects exist independently and may optionally reference a client; client context is not required for infrastructure, delivery, operations or content.
 
 ## Core principles
 
-1. **Project is the primary organizational boundary.** Repositories, services, environments, deployments, sites, domains and application data belong to projects. A client relationship is optional.
-2. **Privileged work is typed, not shell-driven.** Browser/API requests become typed commands and eventually reach a narrow local helper. Argus does not expose arbitrary remote shell execution as its normal control path.
-3. **Desired and actual state are separate.** Observed server state is reported by agents; desired state is stored centrally and only supported fields may be reconciled automatically.
-4. **Control data and application/content data have separate ownership.** The Rust control plane owns infrastructure/project operations. Payload owns application/content records in its own PostgreSQL schema.
-5. **Background work uses the same domain boundaries as interactive work.** Monitoring, notifications, reconciliation and synchronization run through persisted jobs instead of hidden in-process timers.
+1. **Project is the primary organizational boundary.** Repositories, services, environments, deployments, sites, domains, managed infrastructure and application/content data belong to projects.
+2. **Privileged work is typed, not shell-driven.** Browser/API requests become typed commands and eventually reach a narrow local helper. Arbitrary remote shell execution is not the normal management path.
+3. **Desired and actual state are separate.** Agents report observed state. The control plane stores desired state and only explicitly supported fields may be reconciled automatically.
+4. **Control data and content/application data have separate ownership.** The Rust control plane owns operational/project state. Payload owns content/application records in its own PostgreSQL schema.
+5. **Background work uses the same domain boundaries as interactive work.** Monitoring, notifications, reconciliation and synchronization run through persisted jobs instead of hidden timers in web processes.
+6. **Installed releases are immutable.** `main` can be used to discover a release, but an installation resolves it to a full Git revision and persists that immutable revision.
 
 ## Runtime components
 
@@ -19,7 +20,7 @@ Browser
 Next.js Web (apps/web)
   |
   v
-Rust Control API (services/control-api) ----> PostgreSQL / public control schema
+Rust Control API (services/control-api) ----> PostgreSQL / control schema
   |                         |
   |                         +----> Jobs Worker (services/worker)
   |
@@ -35,9 +36,9 @@ Payload Content Service (apps/content) ----> same PostgreSQL database
                                              isolated schema: argus_content
 ```
 
-### First-test deployment topology
+## Current deployment topology
 
-The first supported server-test topology is intentionally hybrid:
+The supported control-plane topology is currently a single Linux host:
 
 ```text
 Internet
@@ -46,7 +47,7 @@ Internet
 Caddy container :80/:443
    |---------------------> Web container
    |---------------------> Payload container
-   `-- allowlisted Agent routes --> Control API container
+   `-- allowlisted routes --> Control API container
                                       |
                      +----------------+----------------+
                      |                                 |
@@ -61,45 +62,67 @@ Linux host
    `-- argus-helper.service (root, typed operations only)
 ```
 
-Caddy, Web, Control API, Worker, Payload and PostgreSQL are orchestrated by Docker Compose. Agent and Helper remain native systemd services because their purpose is to observe and safely mutate the actual host. Putting the Helper behind a privileged container with broad host mounts would add a container boundary without reducing its necessary host privilege.
+Caddy, Web, Control API, Worker, Payload and PostgreSQL are orchestrated with Docker Compose. Agent and Helper remain native systemd services because they observe and safely mutate the actual host.
 
-Only Caddy publishes public ports. The Control API additionally binds to host loopback for the local native Agent. PostgreSQL, Web and Payload are not published directly on host interfaces.
+Only Caddy publishes public ports. The Control API also binds to host loopback for the local Agent. PostgreSQL, Web and Payload are not exposed directly on host interfaces.
 
-Argus-owned control-plane containers are labelled `com.argus.protected=true`. The privileged Helper refuses normal managed Docker/Compose start, stop or restart actions for containers carrying that label, preventing Argus from turning off its own control plane through its normal container-management surface.
+Argus-owned control-plane containers are labelled `com.argus.protected=true`. The Helper rejects normal managed Docker/Compose stop/restart actions for protected containers so Argus cannot disable its own control plane through the regular management surface.
 
-### Web
+The current installer entry point is `https://install.noahbozkurt.nl`; see [Installation](installation.md).
 
-`apps/web` is the operator-facing Next.js application. Backend credentials stay server-side. The browser does not receive the Control API service credential and does not directly contact privileged agents/helpers.
+## Web
 
-### Control API
+`apps/web` is the operator-facing Next.js control panel. Backend credentials stay server-side. The browser does not receive the Control API service credential and cannot directly contact the Agent/Helper boundary.
 
-`services/control-api` is the authoritative control-plane API. It owns organization/project authorization, server enrollment, command queuing, maintenance policy, project resources, operational state, audit events and domain events.
+The current global shell exposes Overview, Projects, Servers, Jobs and Notifications. Project workspaces are grouped into Deploy, Infrastructure, Observe, Work and Content.
 
-Control-plane SQL migrations live under `services/control-api/migrations/` and operate on the normal control schema.
+The pre-production operator surface is still wrapped in temporary browser-level authentication. First-class Argus identity is a current product limitation, not an architectural replacement for the authorization checks inside the control plane.
 
-### Jobs Worker
+## Control API
 
-`services/worker` claims persisted jobs from PostgreSQL and calls internal Control API job handlers. Recurring work such as monitoring, notification materialization, desired-state reconciliation, domain lifecycle evaluation and Payload project synchronization uses this path.
+`services/control-api` is the authoritative operational API. It owns organization/project authorization, server enrollment, command queuing, maintenance policy, project resources, operational state, audit events and domain events.
 
-### Agent
+Control-plane migrations live under `services/control-api/migrations/` and operate on the normal control schema.
 
-`crates/agent` runs on a managed Linux node. It establishes an outbound authenticated relationship with the Control API, sends heartbeats/snapshots, polls typed commands, calls the local helper and submits results.
+## Jobs Worker
 
-Enrollment uses a short-lived single-use token. After enrollment the agent stores its long-lived device credential locally with restrictive permissions; the control plane stores a verifier rather than returning secrets through normal read APIs.
+`services/worker` claims persisted jobs from PostgreSQL and calls internal Control API handlers. Recurring work such as monitoring, notification materialization, desired-state reconciliation, domain lifecycle evaluation and Payload project synchronization uses this path.
 
-### Privileged Helper
+## Agent
+
+`crates/agent` runs on managed Linux nodes. It maintains an outbound authenticated relationship with the Control API, sends heartbeats/snapshots, polls typed commands, calls the local Helper and submits results.
+
+Enrollment uses a short-lived single-use token. After enrollment the Agent stores its device credential locally with restrictive permissions and the one-time enrollment token is removed from the persistent environment.
+
+## Privileged Helper
 
 `crates/helper` is the narrow root boundary. It listens only on a local Unix socket and executes fixed operation classes with validated inputs. Systemd, APT, Docker/Compose, firewall and recovery operations pass through this boundary. It does not expose a generic shell endpoint.
 
-### Payload Content Service
+## `argusctl`
 
-`apps/content` is a separate Payload/Next.js service. It uses the same PostgreSQL instance but writes only to `argus_content` through the Payload Postgres adapter. This prevents Payload from taking ownership of control-plane tables.
+`crates/cli` is installed as `/usr/local/bin/argusctl` and provides local diagnostics and lifecycle operations:
 
-The Control API remains the source of truth for Argus projects. A background sync mirrors project identity into Payload project spaces; Payload does not become a second project-management authority.
+```text
+status
+health
+connection
+smoke
+system info
+version
+update
+registry-login
+uninstall
+```
+
+Control-plane self-update is deliberately local/root-driven rather than queued through the control plane it is about to replace.
+
+## Payload Content Service
+
+`apps/content` is a separate Payload/Next.js service. It uses the same PostgreSQL instance but owns the isolated `argus_content` schema through the Payload Postgres adapter.
+
+The Control API remains the source of truth for Argus projects. A background synchronization mirrors project identity into Payload project spaces; Payload is not a second project-management authority.
 
 ## Project/resource model
-
-At a high level:
 
 ```text
 Organization
@@ -111,45 +134,50 @@ Organization
       -> Servers / Compose stacks
       -> Sites / Domains
       -> Monitoring / Incidents / Status
+      -> Tasks / Milestones / Notes
       -> Payload App Data / CMS Content
       -> optional Client context
 ```
 
-Services are semantic resources rather than aliases for containers. A service may be implemented by a container, Compose service or future provider while retaining a stable project-level identity.
+Services are semantic resources rather than aliases for containers. A service may be implemented by a container, Compose service or future provider while keeping a stable project-level identity.
 
 ## Commands and capabilities
 
-A command includes an ID, target server, typed command payload, expiry, idempotency key, risk level and status. Commands move through persisted states such as `QUEUED`, `ACCEPTED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `UNKNOWN` and `EXPIRED`.
+A managed command carries a target server, typed payload, expiry, idempotency key, risk level and persisted status. Commands move through states such as `QUEUED`, `ACCEPTED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `UNKNOWN` and `EXPIRED`.
 
-Agent capabilities are versioned independently from the agent binary. The Control API can therefore reject an unsupported operation before it reaches a helper.
+Agent capabilities are versioned independently from the binary so unsupported operations can be rejected before reaching the Helper.
 
-The queue enforces organization/server ownership, expiry, idempotency and conflict groups. Disruptive operation classes can additionally require an active maintenance window.
+The queue enforces ownership, expiry, idempotency and conflict groups. Disruptive operation classes can additionally require an active maintenance window.
 
 ## Events and audit
 
-Mutations normally produce two different records:
+Mutations generally produce two different record types:
 
 - `audit_events` for security/technical accountability;
 - `domain_events` for project activity, automation and notification inputs.
 
-These are related but intentionally not the same concept. Incidents, lifecycle changes, deployments and other modules can emit project-scoped events without weakening the audit trail.
+These are intentionally separate concepts. Operational modules can emit project-scoped domain events without weakening the audit trail.
 
-## Dependency and impact model
+## Releases and update architecture
 
-Argus stores dependency relationships between resources. This allows operational features to reason about impact across sites, services and infrastructure rather than showing isolated status values. The current implementation is foundational; richer propagated health and automated impact reasoning can build on it later.
+A successful `main` CI revision produces a coordinated set of five SHA-tagged GHCR artifacts: Web, Control API, Worker, Content and host tools. The release workflow verifies the complete immutable set before promoting the moving `main` pointers.
 
-## Current architectural boundaries
+During install/update, Argus resolves a requested alias such as `main` to the image's full `org.opencontainers.image.revision` and persists that SHA. Compose therefore runs a coordinated immutable revision rather than silently following moving tags.
 
-The first-test installer/deployment path is intentionally not yet a production-grade deployment system. Still not implemented as complete production capabilities:
+`argusctl update` pre-pulls and validates the target set, preserves rollback files, takes a PostgreSQL snapshot at the appropriate transaction boundary and runs post-update health/smoke verification. Interrupted-update recovery is tied into the native Helper startup path. Details and limits are documented in [Security & Recovery](security-and-recovery.md).
 
-- automatic upgrades and transactional rollback of the Argus control plane itself;
-- release-channel management beyond the initial `main`/commit image tags;
-- advanced identity such as OIDC/passkeys/mTLS;
-- a general secrets manager;
-- cloud/provider provisioning;
-- Cloudflare/DNS mutation;
-- arbitrary desired-state enforcement beyond explicitly safe operations;
-- browser terminal as an escape hatch;
-- full metrics/time-series observability.
+## Current architectural limits
 
-See [Roadmap](roadmap.md) for planned sequencing.
+The architecture is intentionally not claiming production completeness. Important current limits include:
+
+- single-host control plane rather than HA/multi-node operation;
+- amd64-only supported installation;
+- temporary browser-level operator authentication;
+- no general production secrets manager yet;
+- no provider provisioning or Cloudflare/DNS mutation layer yet;
+- desired-state enforcement remains limited to operations with explicit safety semantics;
+- no full metrics/time-series observability platform;
+- no general browser terminal as the normal control path;
+- update rollback is a bounded transactional safety mechanism, not arbitrary point-in-time restore after successful updates.
+
+See [Roadmap](roadmap.md) for current priorities.
