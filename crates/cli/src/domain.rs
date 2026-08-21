@@ -5,7 +5,7 @@ use std::{
     fs,
     net::{IpAddr, ToSocketAddrs},
     os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
+    path::Path,
 };
 use uuid::Uuid;
 
@@ -55,7 +55,7 @@ pub fn resolve_domain(value: &str) -> Result<Vec<IpAddr>> {
         .to_socket_addrs()
         .with_context(|| {
             format!(
-                "DNS lookup failed for {value}; configure a public A, AAAA, or CNAME record before continuing"
+                "DNS lookup failed for {value}; configure an A, AAAA, or CNAME record before continuing"
             )
         })?
         .map(|address| address.ip())
@@ -64,7 +64,7 @@ pub fn resolve_domain(value: &str) -> Result<Vec<IpAddr>> {
     addresses.dedup();
     if addresses.is_empty() {
         bail!(
-            "DNS lookup returned no addresses for {value}; configure a public A, AAAA, or CNAME record before continuing"
+            "DNS lookup returned no addresses for {value}; configure an A, AAAA, or CNAME record before continuing"
         );
     }
     Ok(addresses)
@@ -118,7 +118,10 @@ pub fn set_installed_domains(web: &str, content: Option<&str>) -> Result<Domains
 fn installed_domains_at(install_dir: &Path) -> Result<Domains> {
     let env_file = install_dir.join(".env");
     if !env_file.is_file() {
-        bail!("Argus control-plane environment not found at {}", env_file.display());
+        bail!(
+            "Argus control-plane environment not found at {}",
+            env_file.display()
+        );
     }
     let values = lifecycle::read_env_file(&env_file)?;
     let web = values
@@ -181,21 +184,8 @@ fn apply_installed_domains(install_dir: &Path, domains: &Domains) -> Result<()> 
 
         run_compose(install_dir, &["config"])
             .context("validate Compose configuration after domain change")?;
-        run_compose(
-            install_dir,
-            &[
-                "up",
-                "-d",
-                "--force-recreate",
-                "--wait",
-                "--wait-timeout",
-                "120",
-                "web",
-                "content",
-            ],
-        )
-        .context("recreate domain-dependent Argus services")?;
-        reload_caddy(install_dir).context("reload Caddy with the new domains")?;
+        recreate_domain_services(install_dir)
+            .context("recreate domain-dependent Argus services")?;
         Ok(())
     })();
 
@@ -258,17 +248,22 @@ fn run_compose(install_dir: &Path, args: &[&str]) -> Result<()> {
     lifecycle::run_quiet("docker", &refs)
 }
 
-fn reload_caddy(install_dir: &Path) -> Result<()> {
+fn recreate_domain_services(install_dir: &Path) -> Result<()> {
+    // Caddy is recreated as well as the app services. Its Caddyfile is a bind mount,
+    // so recreating ensures Docker binds the replacement file rather than retaining the
+    // inode that was mounted before the atomic configuration swap.
     run_compose(
         install_dir,
         &[
-            "exec",
-            "-T",
+            "up",
+            "-d",
+            "--force-recreate",
+            "--wait",
+            "--wait-timeout",
+            "120",
+            "web",
+            "content",
             "caddy",
-            "caddy",
-            "reload",
-            "--config",
-            "/etc/caddy/Caddyfile",
         ],
     )
 }
@@ -281,27 +276,13 @@ fn rollback_domain_change(install_dir: &Path, env: &[u8], caddy: &[u8]) -> Resul
     fs::write(&caddy_file, caddy)
         .with_context(|| format!("restore {}", caddy_file.display()))?;
     fs::set_permissions(&caddy_file, fs::Permissions::from_mode(0o640))?;
-
-    run_compose(
-        install_dir,
-        &[
-            "up",
-            "-d",
-            "--force-recreate",
-            "--wait",
-            "--wait-timeout",
-            "120",
-            "web",
-            "content",
-        ],
-    )
-    .context("restore domain-dependent services")?;
-    reload_caddy(install_dir).context("restore Caddy configuration")
+    recreate_domain_services(install_dir).context("restore domain-dependent services")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn domain_validation_accepts_normal_fqdns() {
@@ -347,10 +328,7 @@ mod tests {
 
     #[test]
     fn domain_set_rejects_equal_web_and_content_domains() {
-        assert!(
-            normalize_domains("argus.example.com", Some("ARGUS.EXAMPLE.COM"))
-                .is_err()
-        );
+        assert!(normalize_domains("argus.example.com", Some("ARGUS.EXAMPLE.COM")).is_err());
     }
 
     #[test]
