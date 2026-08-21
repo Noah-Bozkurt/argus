@@ -16,12 +16,11 @@ on:
       - install.sh
       - scripts/**
       - deploy/**
+      - docker-bake.hcl
       - .github/workflows/ci.yml
-      - .github/workflows/deploy-installer-pages.yml
       - .github/workflows/publish-images.yml
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
       - Cargo.toml
       - Cargo.lock
@@ -36,8 +35,8 @@ on:
       - install.sh
       - scripts/**
       - deploy/**
+      - docker-bake.hcl
       - .github/workflows/ci.yml
-      - .github/workflows/deploy-installer-pages.yml
       - .github/workflows/publish-images.yml
   schedule:
     - cron: '17 3 * * *'
@@ -52,20 +51,28 @@ permissions:
   pull-requests: read
 
 jobs:
-  changes:
+  validate:
+    if: github.event_name != 'push'
     runs-on: [self-hosted, linux, x64]
     outputs:
-      rust: ${{ steps.filter.outputs.rust }}
-      web: ${{ steps.filter.outputs.web }}
-      content: ${{ steps.filter.outputs.content }}
-      installer: ${{ steps.filter.outputs.installer }}
-      deployment: ${{ steps.filter.outputs.deployment }}
       database: ${{ steps.filter.outputs.database }}
       cms_runtime: ${{ steps.filter.outputs.cms_runtime }}
-      acceptance: ${{ steps.filter.outputs.acceptance }}
-      full: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+      full: ${{ steps.scope.outputs.full }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Select validation scope
+        id: scope
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo 'full=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'full=false' >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -94,18 +101,25 @@ jobs:
             installer:
               - 'install.sh'
               - 'apps/installer/**'
+              - 'crates/cli/**'
+              - 'deploy/docker/host-tools.Dockerfile'
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
               - '.github/workflows/ci.yml'
-              - '.github/workflows/deploy-installer-pages.yml'
+              - '.github/workflows/publish-images.yml'
             deployment:
               - 'install.sh'
+              - 'crates/cli/**'
               - 'scripts/first-server-smoke.sh'
               - 'scripts/update-first-test.sh'
               - 'scripts/recover-interrupted-update.sh'
+              - 'scripts/registry-login.sh'
+              - 'scripts/uninstall.sh'
               - 'deploy/**'
+              - 'docker-bake.hcl'
               - '.github/workflows/ci.yml'
+              - '.github/workflows/publish-images.yml'
             database:
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -128,69 +142,67 @@ jobs:
               - '.github/workflows/ci.yml'
             acceptance:
               - 'install.sh'
+              - 'crates/cli/**'
               - 'scripts/first-server-**'
               - 'scripts/reset-first-test.sh'
               - 'scripts/test-first-server-**'
               - 'scripts/test-reset-first-test.sh'
               - '.github/workflows/ci.yml'
 
-  rust:
-    needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.full == 'true'
-    runs-on: [self-hosted, linux, x64]
-    steps:
-      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.filter.outputs.rust == 'true' || steps.scope.outputs.full == 'true'
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all -- --check
-      - run: cargo test --workspace --locked
+        if: steps.filter.outputs.rust == 'true' || steps.scope.outputs.full == 'true'
+      - name: Format Rust
+        if: steps.filter.outputs.rust == 'true' || steps.scope.outputs.full == 'true'
+        run: cargo fmt --all -- --check
+      - name: Test Rust workspace
+        if: steps.filter.outputs.rust == 'true' || steps.scope.outputs.full == 'true'
+        run: cargo test --workspace --locked
 
-  javascript:
-    needs: changes
-    if: >-
-      needs.changes.outputs.web == 'true' ||
-      needs.changes.outputs.content == 'true' ||
-      needs.changes.outputs.installer == 'true'
-    runs-on: [self-hosted, linux, x64]
-    steps:
-      - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
+        if: >-
+          steps.filter.outputs.web == 'true' ||
+          steps.filter.outputs.content == 'true' ||
+          steps.filter.outputs.installer == 'true' ||
+          steps.filter.outputs.acceptance == 'true' ||
+          steps.scope.outputs.full == 'true'
         with:
           version: 9
       - uses: actions/setup-node@v4
+        if: >-
+          steps.filter.outputs.web == 'true' ||
+          steps.filter.outputs.content == 'true' ||
+          steps.filter.outputs.installer == 'true' ||
+          steps.filter.outputs.acceptance == 'true' ||
+          steps.scope.outputs.full == 'true'
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - if: needs.changes.outputs.web == 'true'
+      - name: Install JavaScript dependencies once
+        if: >-
+          steps.filter.outputs.web == 'true' ||
+          steps.filter.outputs.content == 'true' ||
+          steps.filter.outputs.installer == 'true' ||
+          steps.scope.outputs.full == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck Web
+        if: steps.filter.outputs.web == 'true' || steps.scope.outputs.full == 'true'
         run: pnpm --filter @argus/web exec tsc --noEmit
-      - if: needs.changes.outputs.content == 'true'
-        run: pnpm --filter @argus/content run typecheck
-      - if: needs.changes.outputs.content == 'true'
-        run: pnpm --filter @argus/content run test:cms-contract
-      - if: needs.changes.outputs.installer == 'true'
+      - name: Validate Content
+        if: steps.filter.outputs.content == 'true' || steps.scope.outputs.full == 'true'
+        run: |
+          pnpm --filter @argus/content run typecheck
+          pnpm --filter @argus/content run test:cms-contract
+      - name: Test installer packaging
+        if: steps.filter.outputs.installer == 'true' || steps.scope.outputs.full == 'true'
         run: pnpm --filter @argus/installer test
-      - if: needs.changes.outputs.installer == 'true'
-        run: pnpm --filter @argus/installer build
-      - name: Upload tested installer site
-        if: needs.changes.outputs.installer == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: installer-site
-          path: apps/installer/dist
-          if-no-files-found: error
-          retention-days: 1
 
-  acceptance-tooling:
-    needs: changes
-    if: needs.changes.outputs.acceptance == 'true'
-    runs-on: [self-hosted, linux, x64]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Validate acceptance scripts
+      - name: Validate acceptance tooling
+        if: steps.filter.outputs.acceptance == 'true' || steps.scope.outputs.full == 'true'
         run: |
           set -euo pipefail
           bash -n scripts/first-server-acceptance.sh
@@ -203,37 +215,28 @@ jobs:
           bash -n scripts/test-first-server-reset-reinstall-acceptance.sh
           bash -n scripts/test-reset-first-test.sh
           node --check scripts/first-server-content-acceptance.mjs
-      - name: Test acceptance helpers
-        run: |
           bash scripts/test-first-server-acceptance.sh
           bash scripts/test-first-server-restore-acceptance.sh
           bash scripts/test-first-server-reset-reinstall-acceptance.sh
           bash scripts/test-reset-first-test.sh
           node --test scripts/first-server-content-acceptance.test.mjs
 
-  deployment-safety:
-    needs:
-      - changes
-      - acceptance-tooling
-    if: >-
-      always() &&
-      (needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true') &&
-      !contains(needs.*.result, 'failure') &&
-      !contains(needs.*.result, 'cancelled')
-    runs-on: [self-hosted, linux, x64]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Validate deployment lifecycle scripts
+      - name: Validate deployment lifecycle
+        if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'
         run: |
           set -euo pipefail
+          bash -n install.sh
           bash -n scripts/first-server-smoke.sh
           bash -n scripts/test-native-cms-runtime.sh
           bash -n scripts/test-media-runtime.sh
           bash -n scripts/test-forms-runtime.sh
           bash -n scripts/update-first-test.sh
           bash -n scripts/recover-interrupted-update.sh
-          grep -Fq 'org.opencontainers.image.revision' install.sh
+          bash -n scripts/registry-login.sh
+          bash -n scripts/uninstall.sh
+          grep -Fq 'argus-installer' install.sh
+          grep -Fq 'argus-installer' scripts/registry-login.sh
+          grep -Fq 'argus-installer' scripts/uninstall.sh
           grep -Fq 'pg_dump' scripts/update-first-test.sh
           grep -Fq 'pg_restore' scripts/update-first-test.sh
           grep -Fq 'ROLLBACK_READY=1' scripts/update-first-test.sh
@@ -254,30 +257,24 @@ jobs:
           grep -Fq "grep -Eq '__[A-Z0-9_]+__'" scripts/update-first-test.sh
           update_lock="$(sed -n 's/^LOCK_FILE="\(.*\)"$/\1/p' scripts/update-first-test.sh | head -n1)"
           recovery_lock="$(sed -n 's/^LOCK_FILE="\(.*\)"$/\1/p' scripts/recover-interrupted-update.sh | head -n1)"
-          [[ -n "$update_lock" ]]
-          [[ "$update_lock" == "$recovery_lock" ]]
+          [[ -n "$update_lock" && "$update_lock" == "$recovery_lock" ]]
 
       - name: Test update storage helper safety
+        if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'
         run: |
           set -euo pipefail
           tmp="$(mktemp -d)"
           export ARGUS_STATE_DIR="$tmp/state"
-          # shellcheck disable=SC1091
           source scripts/update-first-test.sh --internal-test-library
-
           [[ "$(required_snapshot_space_bytes 0)" == "1073741824" ]]
           [[ "$(required_snapshot_space_bytes 1073741824)" == "3221225472" ]]
-
           mkdir -p "$BACKUP_ROOT"
           make_transaction() {
             local name="$1" result="${2:-}"
             mkdir -p "$BACKUP_ROOT/$name/files"
             printf 'FROM_REVISION=x\n' >"$BACKUP_ROOT/$name/metadata.env"
-            if [[ -n "$result" ]]; then
-              printf '%s\n' "$result" >"$BACKUP_ROOT/$name/result"
-            fi
+            [[ -z "$result" ]] || printf '%s\n' "$result" >"$BACKUP_ROOT/$name/result"
           }
-
           make_transaction 20260819T120005Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb SUCCEEDED
           make_transaction 20260819T120004Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb ROLLED_BACK
           make_transaction 20260819T120003Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb SUCCEEDED
@@ -286,9 +283,7 @@ jobs:
           make_transaction 20260819T115959Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb ROLLBACK_FAILED
           make_transaction 20260819T115958Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb
           make_transaction manual-snapshot SUCCEEDED
-
           prune_completed_transactions
-
           [[ -d "$BACKUP_ROOT/20260819T120005Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb" ]]
           [[ -d "$BACKUP_ROOT/20260819T120004Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb" ]]
           [[ -d "$BACKUP_ROOT/20260819T120003Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb" ]]
@@ -299,23 +294,18 @@ jobs:
           [[ -d "$BACKUP_ROOT/manual-snapshot" ]]
 
       - name: Test update transaction phase safety
+        if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'
         run: |
           set -euo pipefail
           tmp="$(mktemp -d)"
           export ARGUS_STATE_DIR="$tmp/update-state"
-          # shellcheck disable=SC1091
           source scripts/update-first-test.sh --internal-test-library
-
           ARGUS_UPDATE_ACCEPTANCE_FAILURE=after-target-start-armed
           ARGUS_UPDATE_ACCEPTANCE_CONFIRM_FAILURE=wrong
-          if (validate_acceptance_failure_hook); then
-            echo 'incomplete acceptance failure confirmation unexpectedly accepted' >&2
-            exit 1
-          fi
+          if (validate_acceptance_failure_hook); then exit 1; fi
           ARGUS_UPDATE_ACCEPTANCE_CONFIRM_FAILURE=ROLLBACK-TEST-ONLY
           validate_acceptance_failure_hook
           unset ARGUS_UPDATE_ACCEPTANCE_FAILURE ARGUS_UPDATE_ACCEPTANCE_CONFIRM_FAILURE
-
           TRANSACTION_DIR="$BACKUP_ROOT/20260819T130000Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb"
           TARGET_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
           mkdir -p "$TRANSACTION_DIR"
@@ -323,27 +313,18 @@ jobs:
             mkdir -p "$(dirname "$TRANSACTION_DIR/$path")"
             printf 'snapshot:%s\n' "$path" >"$TRANSACTION_DIR/$path"
           done < <(file_snapshot_paths)
-
           seal_file_snapshot
           verify_file_snapshot "$TRANSACTION_DIR"
           printf 'corruption\n' >>"$TRANSACTION_DIR/files/bin/argusctl"
-          if verify_file_snapshot "$TRANSACTION_DIR"; then
-            echo 'corrupted file snapshot unexpectedly verified' >&2
-            exit 1
-          fi
+          if verify_file_snapshot "$TRANSACTION_DIR"; then exit 1; fi
           printf 'snapshot:files/bin/argusctl\n' >"$TRANSACTION_DIR/files/bin/argusctl"
           seal_file_snapshot
-
           printf 'fake-dump\n' >"$TRANSACTION_DIR/argus.dump"
-          (
-            cd "$TRANSACTION_DIR"
-            sha256sum argus.dump >database-snapshot.sha256
-          )
+          (cd "$TRANSACTION_DIR" && sha256sum argus.dump >database-snapshot.sha256)
           verify_database_snapshot_file "$TRANSACTION_DIR"
           DATABASE_BACKUP_READY=1
           arm_target_start
           [[ "$(cat "$TRANSACTION_DIR/target-start-armed")" == "$TARGET_REVISION" ]]
-
           export ARGUS_STATE_DIR="$tmp/recovery-state"
           export ARGUS_INSTALL_DIR="$tmp/recovery-install"
           mkdir -p "$ARGUS_STATE_DIR/update-backups" "$ARGUS_INSTALL_DIR"
@@ -351,61 +332,36 @@ jobs:
           TO=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
           early="$ARGUS_STATE_DIR/update-backups/20260819T130100Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb"
           mkdir -p "$early"
-          cat >"$early/metadata.env" <<EOF
+          cat >"$early/metadata.env" <<META
           TRANSACTION_FORMAT=2
           FROM_REVISION=$FROM
           TO_REVISION=$TO
-          EOF
+          META
           printf 'ARGUS_VERSION=%s\n' "$FROM" >"$ARGUS_INSTALL_DIR/.env"
-
-          # shellcheck disable=SC1091
           source scripts/recover-interrupted-update.sh --internal-test-library
           load_transaction_metadata "$early"
-          if prepare_transaction_recovery "$early"; then
-            echo 'pre-mutation transaction unexpectedly required rollback' >&2
-            exit 1
-          fi
+          if prepare_transaction_recovery "$early"; then exit 1; fi
           [[ "$(cat "$early/result")" == 'ABORTED_PRE_MUTATION' ]]
-
-          marker_test="$ARGUS_STATE_DIR/update-backups/marker-test"
-          mkdir -p "$marker_test"
-          TRANSACTION_FORMAT=2
-          TO_REVISION="$TO"
-          printf '%s\n' "$FROM" >"$marker_test/target-start-armed"
-          if (target_start_was_armed "$marker_test"); then
-            echo 'wrong target-start revision unexpectedly accepted' >&2
-            exit 1
-          fi
-
           failed="$ARGUS_STATE_DIR/update-backups/20260819T130200Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb"
           mkdir -p "$failed"
-          cat >"$failed/metadata.env" <<EOF
+          cat >"$failed/metadata.env" <<META
           TRANSACTION_FORMAT=2
           FROM_REVISION=$FROM
           TO_REVISION=$TO
-          EOF
+          META
           printf 'ROLLBACK_FAILED\n' >"$failed/result"
-
           RETRY_FAILED=0
-          failed_recovery_out="$RUNNER_TEMP/argus-failed-recovery.out"
-          failed_recovery_err="$RUNNER_TEMP/argus-failed-recovery.err"
-          if find_recovery_transaction >"$failed_recovery_out" 2>"$failed_recovery_err"; then
-            blocked_status=0
-          else
-            blocked_status=$?
-          fi
-          [[ "$blocked_status" -eq 2 ]]
-          grep -Fq 'unresolved failed update rollback blocks automatic startup' "$failed_recovery_err"
-
+          if find_recovery_transaction >/dev/null 2>&1; then exit 1; else [[ $? -eq 2 ]]; fi
           RETRY_FAILED=1
-          retry_candidate="$(find_recovery_transaction)"
-          [[ "$retry_candidate" == "$failed" ]]
+          [[ "$(find_recovery_transaction)" == "$failed" ]]
 
-      - name: Validate Compose configuration
+      - name: Validate Compose and Caddy configuration
+        if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'
         run: |
+          set -euo pipefail
           cp deploy/compose/Caddyfile.template deploy/compose/Caddyfile
           compose_env="$RUNNER_TEMP/argus-test.env"
-          cat > "$compose_env" <<'EOF'
+          cat >"$compose_env" <<'ENV'
           ARGUS_REGISTRY=ghcr.io/noah-bozkurt
           ARGUS_VERSION=test
           ARGUS_DOMAIN=argus.example.test
@@ -419,43 +375,23 @@ jobs:
           ARGUS_USER_ID=00000000-0000-4000-8000-000000000002
           ARGUS_GITHUB_TOKEN=
           ARGUS_RUST_LOG=info
-          EOF
-          docker compose \
-            --project-directory deploy/compose \
-            --env-file "$compose_env" \
-            -f deploy/compose/compose.yaml \
-            config >/dev/null
-
-      - name: Validate Caddy routing configuration
-        run: |
-          set -euo pipefail
+          ENV
+          docker compose --project-directory deploy/compose --env-file "$compose_env" -f deploy/compose/compose.yaml config >/dev/null
           caddyfile="$RUNNER_TEMP/argus-Caddyfile"
           hash="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext test-password)"
           cp deploy/compose/Caddyfile.template "$caddyfile"
-          sed -i \
-            -e 's|__ARGUS_DOMAIN__|argus.example.test|g' \
-            -e 's|__ARGUS_CONTENT_DOMAIN__|content.argus.example.test|g' \
-            -e 's|__BASIC_AUTH_USER__|argus|g' \
-            -e "s|__BASIC_AUTH_HASH__|${hash}|g" \
-            "$caddyfile"
+          sed -i -e 's|__ARGUS_DOMAIN__|argus.example.test|g' -e 's|__ARGUS_CONTENT_DOMAIN__|content.argus.example.test|g' -e 's|__BASIC_AUTH_USER__|argus|g' -e "s|__BASIC_AUTH_HASH__|${hash}|g" "$caddyfile"
           grep -Fq 'path /public/status/*' "$caddyfile"
           grep -Fq 'path /public/* /api/media/file/*' "$caddyfile"
-          docker run --rm \
-            -v "$caddyfile:/etc/caddy/Caddyfile:ro" \
-            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
+          docker run --rm -v "$caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
 
   runtime-integration:
-    needs:
-      - changes
-      - rust
-      - javascript
+    needs: validate
     if: >-
-      always() &&
-      (needs.changes.outputs.database == 'true' ||
-       needs.changes.outputs.cms_runtime == 'true' ||
-       needs.changes.outputs.full == 'true') &&
-      !contains(needs.*.result, 'failure') &&
-      !contains(needs.*.result, 'cancelled')
+      always() && needs.validate.result == 'success' &&
+      (needs.validate.outputs.database == 'true' ||
+       needs.validate.outputs.cms_runtime == 'true' ||
+       needs.validate.outputs.full == 'true')
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 15
     services:
@@ -474,10 +410,8 @@ jobs:
           --health-retries 20
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-
       - name: Verify migrations and Worker scheduling
         env:
           DATABASE_URL: postgresql://argus:argus-test-password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/argus
@@ -498,62 +432,40 @@ jobs:
           worker_pid=''
           trap 'kill "$control_pid" ${worker_pid:-} >/dev/null 2>&1 || true' EXIT
           for _ in $(seq 1 300); do
-            if curl -fsS http://127.0.0.1:18080/health >/dev/null 2>&1; then
-              break
-            fi
-            if ! kill -0 "$control_pid" >/dev/null 2>&1; then
-              cat "$control_log"
-              exit 1
-            fi
+            if curl -fsS http://127.0.0.1:18080/health >/dev/null 2>&1; then break; fi
+            if ! kill -0 "$control_pid" >/dev/null 2>&1; then cat "$control_log"; exit 1; fi
             sleep 1
           done
-          curl -fsS http://127.0.0.1:18080/health >/dev/null || {
-            echo "Control API did not become healthy within 5 minutes" >&2
-            cat "$control_log"
-            exit 1
-          }
-
+          curl -fsS http://127.0.0.1:18080/health >/dev/null || { cat "$control_log"; exit 1; }
           psql() {
-            docker run --rm --network host \
-              -e PGPASSWORD=argus-test-password postgres:16 \
-              psql -v ON_ERROR_STOP=1 -h 127.0.0.1 \
-              -p '${{ job.services.postgres.ports[5432] }}' -U argus -d argus "$@"
+            docker run --rm --network host -e PGPASSWORD=argus-test-password postgres:16 psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p '${{ job.services.postgres.ports[5432] }}' -U argus -d argus "$@"
           }
-
           [[ "$(psql -Atc "SELECT indexprs IS NULL AND indpred IS NULL FROM pg_index WHERE indexrelid='background_jobs_dedupe_idx'::regclass")" == "t" ]]
           psql -c "INSERT INTO organizations(id,name) VALUES('00000000-0000-4000-8000-000000000001','CI')"
-
           cargo run --locked -p argus-worker >"$worker_log" 2>&1 &
           worker_pid=$!
           for _ in $(seq 1 60); do
-            if [[ "$(psql -Atc "SELECT EXISTS(SELECT 1 FROM background_jobs WHERE dedupe_key IS NOT NULL)")" == "t" ]]; then
-              exit 0
-            fi
-            if ! kill -0 "$worker_pid" >/dev/null 2>&1; then
-              cat "$worker_log"
-              exit 1
-            fi
+            if [[ "$(psql -Atc "SELECT EXISTS(SELECT 1 FROM background_jobs WHERE dedupe_key IS NOT NULL)")" == "t" ]]; then exit 0; fi
+            if ! kill -0 "$worker_pid" >/dev/null 2>&1; then cat "$worker_log"; exit 1; fi
             sleep 1
           done
-          echo "Worker did not materialize a scheduled job within 60 seconds" >&2
           cat "$worker_log"
           exit 1
 
       - uses: pnpm/action-setup@v4
-        if: needs.changes.outputs.cms_runtime == 'true' || needs.changes.outputs.full == 'true'
+        if: needs.validate.outputs.cms_runtime == 'true' || needs.validate.outputs.full == 'true'
         with:
           version: 9
       - uses: actions/setup-node@v4
-        if: needs.changes.outputs.cms_runtime == 'true' || needs.changes.outputs.full == 'true'
+        if: needs.validate.outputs.cms_runtime == 'true' || needs.validate.outputs.full == 'true'
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - if: needs.changes.outputs.cms_runtime == 'true' || needs.changes.outputs.full == 'true'
+      - if: needs.validate.outputs.cms_runtime == 'true' || needs.validate.outputs.full == 'true'
         run: pnpm install --frozen-lockfile
-
       - name: Exercise native CMS draft and publication workflow
-        if: needs.changes.outputs.cms_runtime == 'true' || needs.changes.outputs.full == 'true'
+        if: needs.validate.outputs.cms_runtime == 'true' || needs.validate.outputs.full == 'true'
         env:
           DATABASE_URL: postgresql://argus:argus-test-password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/argus
           ARGUS_CONTENT_DB_SCHEMA: argus_content
@@ -574,18 +486,50 @@ jobs:
               bash scripts/test-native-cms-runtime.sh
               bash scripts/test-media-runtime.sh
               bash scripts/test-forms-runtime.sh
-              ARGUS_TEST_PROJECT_ID=00000000-0000-4000-8000-000000000003 \
-              ARGUS_TEST_ORG_ID=00000000-0000-4000-8000-000000000001 \
-              ARGUS_TEST_USER_ID=00000000-0000-4000-8000-000000000002 \
-                node scripts/first-server-content-acceptance.mjs >/dev/null
+              ARGUS_TEST_PROJECT_ID=00000000-0000-4000-8000-000000000003 ARGUS_TEST_ORG_ID=00000000-0000-4000-8000-000000000001 ARGUS_TEST_USER_ID=00000000-0000-4000-8000-000000000002 node scripts/first-server-content-acceptance.mjs >/dev/null
               exit 0
             fi
-            if ! kill -0 "$pid" >/dev/null 2>&1; then
-              cat "$content_log"
-              exit 1
-            fi
+            if ! kill -0 "$pid" >/dev/null 2>&1; then cat "$content_log"; exit 1; fi
             sleep 1
           done
-          echo "Payload did not become healthy within 3 minutes" >&2
           cat "$content_log"
           exit 1
+
+  release-gate:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Validate release metadata and lifecycle syntax
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --no-deps >/dev/null
+          bash -n install.sh
+          bash -n scripts/first-server-smoke.sh
+          bash -n scripts/update-first-test.sh
+          bash -n scripts/recover-interrupted-update.sh
+          bash -n scripts/registry-login.sh
+          bash -n scripts/uninstall.sh
+          docker buildx bake --print >/dev/null
+      - name: Validate release Compose configuration
+        run: |
+          set -euo pipefail
+          cp deploy/compose/Caddyfile.template deploy/compose/Caddyfile
+          envfile="$RUNNER_TEMP/argus-release-gate.env"
+          cat >"$envfile" <<'ENV'
+          ARGUS_REGISTRY=ghcr.io/noah-bozkurt
+          ARGUS_VERSION=test
+          ARGUS_DOMAIN=argus.example.test
+          ARGUS_CONTENT_DOMAIN=content.argus.example.test
+          ARGUS_POSTGRES_PASSWORD=x
+          ARGUS_WEB_API_TOKEN=x
+          ARGUS_WORKER_TOKEN=x
+          ARGUS_CONTENT_SYNC_TOKEN=x
+          PAYLOAD_SECRET=x
+          ARGUS_ORG_ID=00000000-0000-4000-8000-000000000001
+          ARGUS_USER_ID=00000000-0000-4000-8000-000000000002
+          ARGUS_GITHUB_TOKEN=
+          ARGUS_RUST_LOG=info
+          ENV
+          docker compose --project-directory deploy/compose --env-file "$envfile" -f deploy/compose/compose.yaml config >/dev/null
