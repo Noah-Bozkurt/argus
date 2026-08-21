@@ -34,7 +34,7 @@ Choose **Install an Argus control plane here** when prompted.
 
 The installer then asks for the information it needs, including the primary Argus domain and private GHCR credentials. The GitHub token is entered silently in the terminal. Registry credentials are stored root-only in `/etc/argus/registry.env` with mode `0600` so later updates can pull the coordinated Argus image set.
 
-The current pre-production control plane also asks for browser credentials used by the temporary outer authentication layer.
+The installer also asks for the initial operator credentials. These seed the first Argus `owner` account used by the first-party login page and the Payload CMS. The older `ARGUS_BASIC_AUTH_*` configuration names are retained for upgrade compatibility, but Caddy no longer performs HTTP Basic Auth and browsers no longer show a native Basic Auth prompt.
 
 ### What gets installed
 
@@ -65,7 +65,7 @@ sudo argusctl smoke
 
 `argusctl smoke` exercises the installed control plane more broadly than the local service checks and should be the first command used after installation or an update.
 
-Open the configured Argus URL in a browser once the checks are green.
+Open the configured Argus URL in a browser once the checks are green. Sign in with the operator credentials configured during installation.
 
 ## Add another managed server
 
@@ -181,6 +181,6 @@ The current path is deliberately narrow:
 - single control-plane host;
 - direct HTTP/HTTPS ingress through Caddy;
 - private GHCR access is required;
-- the operator UI still uses temporary browser-level authentication while first-class identity is developed.
+- first-party login is implemented, but per-user identity is not yet propagated through every Web -> Control API audit path.
 
-These are product limits, not undocumented setup steps. Unsupported scenarios should not be worked around silently in production.
+See [Authentication](authentication.md) for the current session, role and identity model.
