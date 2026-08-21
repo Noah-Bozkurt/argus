@@ -192,12 +192,8 @@ mod tests {
     #[test]
     fn empty_content_domain_input_keeps_content_subdomain_default() {
         assert_eq!(
-            resolve_content_domain_input(
-                "argus.example.com",
-                "content.argus.example.com",
-                ""
-            )
-            .unwrap(),
+            resolve_content_domain_input("argus.example.com", "content.argus.example.com", "")
+                .unwrap(),
             "content.argus.example.com"
         );
     }
