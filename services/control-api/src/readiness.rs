@@ -83,7 +83,7 @@ impl ReadinessStore {
         }
 
         let environment_rows = sqlx::query(
-            "SELECT id,name,environment_type,is_protected FROM environments WHERE organization_id=$1 AND project_id=$2 ORDER BY sort_order,name",
+            "SELECT id,name,type AS environment_type,is_protected FROM environments WHERE organization_id=$1 AND project_id=$2 ORDER BY sort_order,name",
         )
         .bind(identity.organization_id)
         .bind(project_id)
