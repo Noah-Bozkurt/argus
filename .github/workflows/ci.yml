@@ -258,6 +258,7 @@ jobs:
           grep -Fq 'ARGUS_TLS_MODE' scripts/update-first-test.sh
           grep -Fq 'delegating update transaction to target runner' scripts/update-first-test.sh
           grep -Fq 'target update runner revision does not match the verified image set' scripts/update-first-test.sh
+          grep -Fq '/proc/$BASHPID/fd/9' scripts/update-first-test.sh
           grep -Fq 'ARGUS_UPDATE_DELEGATED_REVISION' crates/cli/src/main.rs
           grep -Fq 'org.argus.update-runner-protocol' docker-bake.hcl
           grep -Fq 'UPDATE_RUNNER_PROTOCOL_VERSION=1' scripts/update-first-test.sh
