@@ -132,7 +132,7 @@ compose() {
 
 acquire_update_lock() {
   if [[ -n "$DELEGATED_REVISION" ]]; then
-    [[ -e /proc/$$/fd/9 && "$LOCK_FILE" -ef /proc/$$/fd/9 ]] \
+    [[ -e /proc/$BASHPID/fd/9 && "$LOCK_FILE" -ef /proc/$BASHPID/fd/9 ]] \
       || die "target update runner did not inherit the active update lock"
     return
   fi
