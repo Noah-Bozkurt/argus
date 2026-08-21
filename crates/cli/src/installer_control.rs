@@ -13,6 +13,17 @@ use std::{
     time::Duration,
 };
 
+fn public_acme_options(email: &str, zerossl_first: bool) -> String {
+    let lets_encrypt = "\tcert_issuer acme https://acme-v02.api.letsencrypt.org/directory";
+    let zerossl = "\tcert_issuer acme https://acme.zerossl.com/v2/DV90";
+    let issuers = if zerossl_first {
+        format!("{zerossl}\n{lets_encrypt}")
+    } else {
+        format!("{lets_encrypt}\n{zerossl}")
+    };
+    format!("{{\n\temail {email}\n{issuers}\n}}")
+}
+
 impl Installer {
     pub(crate) fn ensure_argus_user(&self) -> Result<()> {
         if !Command::new("getent")
@@ -117,14 +128,19 @@ impl Installer {
     }
 
     pub(crate) fn generate_caddy_config(&self, config: &ControlConfig) -> Result<()> {
-        self.generate_caddy_config_with(config, false)
+        self.generate_caddy_config_with(config, false, false)
     }
 
     pub(crate) fn regenerate_caddy_config(&self, config: &ControlConfig) -> Result<()> {
-        self.generate_caddy_config_with(config, true)
+        self.generate_caddy_config_with(config, true, false)
     }
 
-    fn generate_caddy_config_with(&self, config: &ControlConfig, force: bool) -> Result<()> {
+    fn generate_caddy_config_with(
+        &self,
+        config: &ControlConfig,
+        force: bool,
+        zerossl_first: bool,
+    ) -> Result<()> {
         if !force
             && self.caddy_file().is_file()
             && env::var("ARGUS_RECONFIGURE_CADDY").as_deref() != Ok("1")
@@ -144,10 +160,7 @@ impl Installer {
         let template = fs::read_to_string(self.install_dir.join("Caddyfile.template"))?;
         let (global_options, tls) = match config.tls_mode {
             TlsMode::PublicAcme => (
-                format!(
-                    "{{\n\temail {}\n\tcert_issuer acme https://acme-v02.api.letsencrypt.org/directory\n\tcert_issuer acme https://acme.zerossl.com/v2/DV90\n}}",
-                    config.acme_email
-                ),
+                public_acme_options(&config.acme_email, zerossl_first),
                 String::new(),
             ),
             TlsMode::CloudflareOrigin => (
@@ -184,6 +197,41 @@ impl Installer {
             "--config",
             "/etc/caddy/Caddyfile",
         ])
+    }
+
+    fn retry_with_zerossl(&self, config: &ControlConfig) -> Result<()> {
+        self.ui
+            .warning("Let's Encrypt is rate-limited; retrying certificate issuance with ZeroSSL.");
+        self.generate_caddy_config_with(config, true, true)?;
+        self.compose_status(&["up", "-d", "--force-recreate", "caddy"])?;
+
+        let web = format!("https://{}/healthz", config.domain);
+        let content = format!("https://{}/healthz", config.content_domain);
+        let succeeded = self.wait_for_https(&web) && self.wait_for_https(&content);
+        let logs = self
+            .compose_output(&["logs", "--tail=300", "caddy"])
+            .unwrap_or_default();
+
+        // Once a certificate exists, restoring the normal order does not trigger another
+        // issuance. It only makes Let's Encrypt the preferred issuer for future renewals.
+        self.generate_caddy_config_with(config, true, false)?;
+        self.compose_status(&[
+            "exec",
+            "-T",
+            "caddy",
+            "caddy",
+            "reload",
+            "--config",
+            "/etc/caddy/Caddyfile",
+        ])?;
+
+        if !succeeded {
+            bail!(
+                "ZeroSSL fallback did not make HTTPS reachable. Caddy logs:\n{}",
+                domain::redact_caddy_tls_logs(&logs, &[&config.domain, &config.content_domain])
+            );
+        }
+        Ok(())
     }
 
     fn configure_firewall_if_active(&self) -> Result<()> {
@@ -474,13 +522,19 @@ VALUES (:'server_id'::uuid, :'org_id'::uuid, :'project_id'::uuid, :'environment_
                 &logs,
                 &[config.domain.as_str(), config.content_domain.as_str()],
             ) {
-                bail!(error);
+                if matches!(config.tls_mode, TlsMode::PublicAcme) {
+                    self.ui.detail(&error);
+                    self.retry_with_zerossl(config)?;
+                } else {
+                    bail!(error);
+                }
+            } else {
+                let _ = self.compose_status(&["logs", "--tail=120", "caddy"]);
+                bail!(
+                    "Argus HTTPS did not become reachable. Verify DNS for {} and external firewall access to ports 80/443",
+                    config.domain
+                );
             }
-            let _ = self.compose_status(&["logs", "--tail=120", "caddy"]);
-            bail!(
-                "Argus HTTPS did not become reachable. Verify DNS for {} and external firewall access to ports 80/443",
-                config.domain
-            );
         }
         if !self.wait_for_https(&format!("https://{}/healthz", config.content_domain)) {
             let logs = self
@@ -552,5 +606,18 @@ VALUES (:'server_id'::uuid, :'org_id'::uuid, :'project_id'::uuid, :'environment_
         }
         self.ui
             .detail("Update: sudo argusctl update --version main");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::public_acme_options;
+
+    #[test]
+    fn public_acme_issuer_order_can_be_reversed_for_fallback() {
+        let normal = public_acme_options("admin@example.com", false);
+        let fallback = public_acme_options("admin@example.com", true);
+        assert!(normal.find("letsencrypt.org").unwrap() < normal.find("zerossl.com").unwrap());
+        assert!(fallback.find("zerossl.com").unwrap() < fallback.find("letsencrypt.org").unwrap());
     }
 }

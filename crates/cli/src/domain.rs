@@ -124,6 +124,17 @@ pub fn caddy_tls_error(logs: &str, domains: &[&str]) -> Option<String> {
     ))
 }
 
+pub fn redact_caddy_tls_logs(logs: &str, domains: &[&str]) -> String {
+    logs.lines()
+        .filter(|line| {
+            domains.iter().any(|domain| line.contains(domain))
+                && (line.contains("error") || line.contains("failed"))
+        })
+        .take(12)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub fn resolve_domains(domains: &Domains) -> Result<Vec<DomainResolution>> {
     Ok(vec![
         DomainResolution {
