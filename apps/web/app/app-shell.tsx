@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import type { ReactNode } from 'react'
 import type { SessionUser } from '../lib/auth'
+import CommandPalette from './command-palette'
 
 type IconName = 'overview' | 'projects' | 'servers' | 'jobs' | 'notifications' | 'settings' | 'logout'
 
@@ -97,6 +98,7 @@ export default function AppShell({ children, user }: { children: ReactNode; user
             <strong>{titleFromPath(pathname)}</strong>
           </div>
           <div className="topbar-actions">
+            <CommandPalette />
             <span className="control-status"><span className="status-dot online" />Control plane</span>
             <Link className="icon-button" href="/notifications" aria-label="Notifications"><Icon name="notifications" /></Link>
             <form className="mobile-signout" action="/auth/logout" method="post">
