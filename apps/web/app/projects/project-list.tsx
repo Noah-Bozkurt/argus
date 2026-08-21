@@ -3,8 +3,14 @@
 import Link from 'next/link'
 import { useMemo, useState } from 'react'
 import type { ProjectSummary } from '../../lib/api'
+import usePersistentChoice from '../use-persistent-choice'
 
 const FAVORITES_KEY = 'argus:favorites:v1'
+const PRESETS = ['all', 'empty', 'software', 'website', 'infrastructure', 'client'] as const
+const SORTS = ['updated', 'name', 'tasks'] as const
+
+type PresetFilter = typeof PRESETS[number]
+type SortChoice = typeof SORTS[number]
 
 function relativeTime(value: string): string {
   const delta = Date.now() - new Date(value).getTime()
@@ -24,8 +30,8 @@ function initialFavorites(): string[] {
 
 export default function ProjectList({ projects }: { projects: ProjectSummary[] }) {
   const [query, setQuery] = useState('')
-  const [preset, setPreset] = useState('all')
-  const [sort, setSort] = useState<'updated' | 'name' | 'tasks'>('updated')
+  const [preset, setPreset] = usePersistentChoice<PresetFilter>('argus:projects:preset', 'all', PRESETS)
+  const [sort, setSort] = usePersistentChoice<SortChoice>('argus:projects:sort', 'updated', SORTS)
   const [favorites, setFavorites] = useState<string[]>(initialFavorites)
 
   function toggleFavorite(projectId: string) {
@@ -58,10 +64,10 @@ export default function ProjectList({ projects }: { projects: ProjectSummary[] }
         <div><h2>All projects</h2><p>{visible.length} of {projects.length} workspace{projects.length === 1 ? '' : 's'}</p></div>
         <div className="resource-toolbar">
           <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects…" aria-label="Search projects" />
-          <select value={preset} onChange={(event) => setPreset(event.target.value)} aria-label="Filter project preset">
+          <select value={preset} onChange={(event) => setPreset(event.target.value as PresetFilter)} aria-label="Filter project preset">
             <option value="all">All presets</option><option value="empty">Empty</option><option value="software">Software</option><option value="website">Website</option><option value="infrastructure">Infrastructure</option><option value="client">Client</option>
           </select>
-          <select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} aria-label="Sort projects">
+          <select value={sort} onChange={(event) => setSort(event.target.value as SortChoice)} aria-label="Sort projects">
             <option value="updated">Recently updated</option><option value="name">Name</option><option value="tasks">Open tasks</option>
           </select>
         </div>
