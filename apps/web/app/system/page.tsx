@@ -2,6 +2,7 @@ import { currentSessionToken, getWorkspaceUser } from '../../lib/auth'
 import { getCommandHistory, getServer } from '../../lib/api'
 import { startArgusUpdate } from './actions'
 import UpdateSubmit from './update-submit'
+import WhatsNew from './whats-new'
 
 function fmt(value: string | null) { return value ? new Date(value).toLocaleString() : '—' }
 
@@ -19,6 +20,7 @@ export default async function SystemPage() {
 
   return <main>
     <div className="page-header"><div><span className="eyebrow">Administration</span><h1>Argus system</h1><p>Control-plane health, versions, recovery information and transactional updates.</p></div></div>
+    <WhatsNew revision={installed} />
     <div className="stats-grid">
       <div className="stat-card"><div className="stat-label"><span>Revision</span><span className="badge info">Pinned</span></div><div className="stat-value system-revision">{installed.slice(0, 12)}</div><div className="stat-meta">Immutable installed revision</div></div>
       <div className="stat-card"><div className="stat-label"><span>Local agent</span><span className={`status-dot ${server?.online ? 'online' : 'danger'}`} /></div><div className="stat-value">{server?.online ? 'Online' : 'Offline'}</div><div className="stat-meta">Last heartbeat {fmt(server?.last_heartbeat ?? null)}</div></div>
