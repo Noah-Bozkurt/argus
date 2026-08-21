@@ -111,9 +111,33 @@ test("public site stays a generic install command", async () => {
     readFile(resolve(appDir, "public/index.html"), "utf8"),
     readFile(resolve(appDir, "public/app.js"), "utf8"),
   ]);
-  assert.doesNotMatch(html, /GitHub username|Argus domain|<form/);
+  assert.doesNotMatch(html, /GitHub username|<form/);
   assert.match(script, /\/install/);
   assert.doesNotMatch(script, /ARGUS_REGISTRY_TOKEN|read -rsp/);
+});
+
+test("installer portal explains the real deployment and published revision", async () => {
+  const [html, script] = await Promise.all([
+    readFile(resolve(appDir, "public/index.html"), "utf8"),
+    readFile(resolve(appDir, "public/app.js"), "utf8"),
+  ]);
+
+  for (const expected of [
+    "Install Argus on your server",
+    "Server requirements",
+    "What Argus installs",
+    "Installation modes",
+    "/opt/argus/",
+    "/etc/argus/",
+    "argusctl smoke",
+    "read:packages",
+  ]) {
+    assert.match(html, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  assert.match(script, /fetch\("\/manifest\.json"/);
+  assert.match(script, /manifest\.revision\.slice\(0, 12\)/);
+  assert.match(script, /navigator\.clipboard\.writeText/);
 });
 
 test("updater still retains transactional progress and registry rotation guidance", async () => {
