@@ -475,7 +475,9 @@ async fn run_update_recovery(retry_failed: bool) -> Result<()> {
 }
 
 async fn run_first_server_update(version: &str, verbose: bool) -> Result<()> {
-    run_update_recovery(false).await?;
+    if std::env::var_os("ARGUS_UPDATE_DELEGATED_REVISION").is_none() {
+        run_update_recovery(false).await?;
+    }
     if verbose {
         run_embedded_script(
             "transactional Argus update",

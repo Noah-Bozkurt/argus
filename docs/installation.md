@@ -129,6 +129,16 @@ sudo argusctl update --version main
 
 Argus resolves the release to an immutable Git revision. The update path performs preflight checks, keeps rollback material and verifies the resulting installation instead of simply replacing running containers in place.
 
+Before changing the installed deployment, the current updater extracts the target revision's
+`argusctl` from the verified host-tools image and delegates the transaction to it. The current
+process keeps the update lock while the target runner verifies its revision, checksum and process
+identity. This lets each release interpret its own deployment templates and migration rules without
+replacing the installed CLI outside the rollback-protected transaction.
+
+Targets that do not advertise a compatible update-runner protocol are rejected before the updater
+creates a transaction or stops services; use a supported bridge release instead of forcing an
+incompatible downgrade.
+
 To install a specific published revision:
 
 ```bash
