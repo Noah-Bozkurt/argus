@@ -3,17 +3,189 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Download and run the verified Argus installer." />
+    <meta
+      name="description"
+      content="Install the Argus control plane or connect a managed server with the verified native installer."
+    />
     <title>Install Argus</title>
     <link rel="stylesheet" href="/styles.css" />
-    <script src="/app.js?v=pat-installer-2" defer></script>
+    <script src="/app.js?v=installer-portal-1" defer></script>
   </head>
-  <body><main>
-    <header><span class="eyebrow">Argus installer</span><h1>Bring a server online.</h1><p class="lede">Run the verified installer on a clean Ubuntu or Debian amd64 server. Configuration and private GHCR authentication happen securely in your terminal.</p></header>
-    <section class="panel command-panel" aria-labelledby="command-title">
-      <div class="section-heading"><span>01</span><div><h2 id="command-title">Run on the server</h2><p>The checksum is verified before the installer starts.</p></div></div>
-      <pre><code id="command">Loading verified install command…</code></pre><button type="button" class="secondary" id="copy-command">Copy command</button>
-    </section>
-    <section class="notes" aria-label="Requirements"><div><strong>Supported host</strong><span>Ubuntu or Debian, amd64, root access</span></div><div><strong>Authorization</strong><span>A classic GitHub PAT with read:packages</span></div><div><strong>Secrets</strong><span>The token is entered silently and used through a temporary Docker configuration</span></div></section>
-  </main></body>
+  <body>
+    <div class="site-shell">
+      <nav class="topbar" aria-label="Primary navigation">
+        <a class="brand" href="#top" aria-label="Argus installer home">
+          <span class="brand-mark" aria-hidden="true">A</span>
+          <span>Argus</span>
+        </a>
+        <div class="nav-links">
+          <a href="#requirements">Requirements</a>
+          <a href="#installed">Installed files</a>
+          <a href="#after-install">After install</a>
+          <a href="https://github.com/Noah-Bozkurt/argus">GitHub</a>
+        </div>
+        <span class="service-status"><span class="status-dot"></span>Installer online</span>
+      </nav>
+
+      <main id="top">
+        <section class="hero" aria-labelledby="page-title">
+          <div class="hero-copy">
+            <p class="kicker">Argus deployment</p>
+            <h1 id="page-title">Install Argus on your server.</h1>
+            <p class="lede">
+              Deploy a new control plane or connect another machine to an existing Argus instance.
+              The public bootstrap verifies the native installer before it runs; credentials and
+              configuration stay in your terminal.
+            </p>
+            <div class="platform-list" aria-label="Supported platform">
+              <span>Ubuntu / Debian</span>
+              <span>amd64</span>
+              <span>root / sudo</span>
+              <span>native installer</span>
+            </div>
+          </div>
+
+          <aside class="release-card" aria-label="Installer release">
+            <div class="release-heading">
+              <span>Current installer</span>
+              <span class="verified-badge">Verified</span>
+            </div>
+            <strong id="revision">Loading revision…</strong>
+            <p id="revision-status">Reading the published installer manifest.</p>
+          </aside>
+        </section>
+
+        <section class="install-card" aria-labelledby="command-title">
+          <div class="card-heading">
+            <div>
+              <p class="section-label">Install</p>
+              <h2 id="command-title">Run one command on the server</h2>
+            </div>
+            <span class="checksum-note">SHA-256 checked before execution</span>
+          </div>
+
+          <div class="command-box">
+            <span class="prompt" aria-hidden="true">$</span>
+            <code id="command">Loading install command…</code>
+            <button type="button" id="copy-command" aria-label="Copy install command">
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+
+          <div class="install-assurances" aria-label="Installer guarantees">
+            <span><b>01</b> Downloads the native installer</span>
+            <span><b>02</b> Verifies the published checksum</span>
+            <span><b>03</b> Starts guided setup in your terminal</span>
+          </div>
+        </section>
+
+        <section class="flow-section" aria-labelledby="flow-title">
+          <div class="section-intro">
+            <p class="section-label">What happens next</p>
+            <h2 id="flow-title">A guided server-side setup</h2>
+            <p>Nothing is configured in this browser. The installer asks only for what the selected setup needs.</p>
+          </div>
+          <ol class="setup-flow">
+            <li><span>1</span><div><strong>Choose a mode</strong><p>Create a control plane here or connect a managed server.</p></div></li>
+            <li><span>2</span><div><strong>Authenticate packages</strong><p>Enter a GitHub classic PAT with <code>read:packages</code>.</p></div></li>
+            <li><span>3</span><div><strong>Configure the host</strong><p>For a control plane, provide the main domain and optional content-domain override.</p></div></li>
+            <li><span>4</span><div><strong>Verify deployment</strong><p>Argus starts its services and runs installation health checks.</p></div></li>
+          </ol>
+        </section>
+
+        <section class="info-grid" id="requirements" aria-labelledby="requirements-title">
+          <div class="section-intro sticky-intro">
+            <p class="section-label">Before you install</p>
+            <h2 id="requirements-title">Server requirements</h2>
+            <p>The installer intentionally refuses unsupported hosts or conflicting container stacks instead of changing them automatically.</p>
+          </div>
+          <div class="requirements-table" role="list">
+            <div role="listitem"><span>Operating system</span><strong>Ubuntu or Debian</strong></div>
+            <div role="listitem"><span>Architecture</span><strong>amd64</strong></div>
+            <div role="listitem"><span>Privileges</span><strong>root or sudo</strong></div>
+            <div role="listitem"><span>Ingress</span><strong>TCP 80 + 443 available</strong></div>
+            <div role="listitem"><span>DNS</span><strong>Main + content domain</strong><small><code>argus.example.com</code><br /><code>content.argus.example.com</code></small></div>
+            <div role="listitem"><span>Private registry</span><strong>GitHub classic PAT</strong><small><code>read:packages</code> access to Argus GHCR images</small></div>
+          </div>
+        </section>
+
+        <section class="split-section" id="installed" aria-labelledby="installed-title">
+          <div class="installed-panel">
+            <div class="section-intro compact">
+              <p class="section-label">On your server</p>
+              <h2 id="installed-title">What Argus installs</h2>
+            </div>
+            <div class="file-tree" aria-label="Default Argus installation paths">
+              <div><code>/opt/argus/</code><span>Compose files and runtime environment</span></div>
+              <div><code>/etc/argus/</code><span>Host configuration and registry credentials</span></div>
+              <div><code>/var/lib/argus/</code><span>Persistent host state and backups</span></div>
+              <div><code>/var/log/argus/</code><span>Installer and lifecycle logs</span></div>
+              <div><code>/usr/local/bin/</code><span><code>argus-agent</code>, <code>argus-helper</code>, <code>argusctl</code></span></div>
+            </div>
+            <p class="panel-footnote">Application services run with Docker Compose. The Agent and privileged Helper run as native systemd services.</p>
+          </div>
+
+          <div class="security-panel">
+            <div class="section-intro compact">
+              <p class="section-label">Installer security</p>
+              <h2>Designed to be inspectable</h2>
+            </div>
+            <div class="security-list">
+              <div><span class="check">✓</span><div><strong>Verified bootstrap</strong><p>The published installer checksum is validated before execution.</p></div></div>
+              <div><span class="check">✓</span><div><strong>Terminal-only secrets</strong><p>Your registry token is entered silently and is never collected by this page.</p></div></div>
+              <div><span class="check">✓</span><div><strong>Root-only registry storage</strong><p>Validated GHCR credentials are stored in <code>/etc/argus/registry.env</code> with mode <code>0600</code>.</p></div></div>
+              <div><span class="check">✓</span><div><strong>Rerunnable</strong><p>Existing generated IDs, secrets, data and the installed immutable revision are preserved.</p></div></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="mode-section" aria-labelledby="modes-title">
+          <div class="section-intro">
+            <p class="section-label">Installation modes</p>
+            <h2 id="modes-title">One installer, two jobs</h2>
+          </div>
+          <div class="mode-grid">
+            <article>
+              <span class="mode-index">01</span>
+              <h3>New control plane</h3>
+              <p>Install the Argus application stack plus the local Agent and Helper on this server.</p>
+              <ul>
+                <li>Main and content domains</li>
+                <li>Initial operator credentials</li>
+                <li>Docker Compose control plane</li>
+              </ul>
+            </article>
+            <article>
+              <span class="mode-index">02</span>
+              <h3>Managed server</h3>
+              <p>Connect another machine to an existing Argus project using a short-lived setup code.</p>
+              <ul>
+                <li>Single-use enrollment code</li>
+                <li>Native Agent + Helper</li>
+                <li>No local control plane</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section class="after-section" id="after-install" aria-labelledby="after-title">
+          <div class="section-intro compact">
+            <p class="section-label">After installation</p>
+            <h2 id="after-title">Verify the host</h2>
+            <p>Use the native CLI for local service, connection and broader installation checks.</p>
+          </div>
+          <pre class="verification-code"><code>argusctl status
+argusctl health
+argusctl connection
+sudo argusctl smoke</code></pre>
+        </section>
+      </main>
+
+      <footer>
+        <div class="brand footer-brand"><span class="brand-mark" aria-hidden="true">A</span><span>Argus</span></div>
+        <p>Self-hosted infrastructure and content management.</p>
+        <div class="footer-links"><a href="#top">Install</a><a href="#requirements">Requirements</a><a href="https://github.com/Noah-Bozkurt/argus">GitHub</a></div>
+      </footer>
+    </div>
+  </body>
 </html>
