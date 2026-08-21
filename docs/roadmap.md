@@ -18,6 +18,7 @@ The current `main` branch includes:
 - Payload-backed application data and CMS functionality;
 - drafts, publication, pages/components, media, relationships and forms;
 - an Argus-native Content workflow inside each project;
+- first-party Argus login with Payload-backed shared sessions and `owner`, `admin`, `member` and `client` workspace roles;
 - a static installer site and checksum-verifying bootstrap;
 - guided control-plane and managed-node installation;
 - `argusctl` diagnostics, smoke verification, registry login, update and uninstall flows;
@@ -46,7 +47,7 @@ Installation starts at [install.noahbozkurt.nl](https://install.noahbozkurt.nl) 
 
 The main reasons Argus should still be considered pre-production are:
 
-- the operator UI is still protected by a temporary browser-level authentication layer rather than finished first-class identity;
+- per-user identity is not yet forwarded through every Web -> Control API request, so control-plane audit attribution still has a bootstrap-user limitation;
 - the deployment model is single-host rather than HA;
 - amd64 is the only supported architecture;
 - private package access is required during installation and updates;
@@ -58,9 +59,9 @@ These limitations should be treated as product work, not solved by adding undocu
 
 ## Near-term priorities
 
-### 1. First-class authentication and access control
+### 1. Finish identity and access control
 
-Replace the temporary browser-level guard with Argus-native authentication suitable for both operator use and future restricted customer-facing surfaces. This should evolve toward proper sessions, user management and stronger authorization rather than layering more behavior onto Basic Auth.
+First-party login, shared sessions and workspace roles are implemented. The next identity work is to forward each authenticated operator's `argusUserId` through Web -> Control API calls so audit attribution is per-user, then improve account-management UX and add stronger authentication options such as 2FA, passkeys or SSO where they make sense.
 
 ### 2. Installation and release hardening
 
