@@ -256,6 +256,11 @@ jobs:
           grep -Fq 'Caddyfile.rendered' scripts/update-first-test.sh
           grep -Fq 'ARGUS_GLOBAL_OPTIONS' scripts/update-first-test.sh
           grep -Fq 'ARGUS_TLS_MODE' scripts/update-first-test.sh
+          grep -Fq 'delegating update transaction to target runner' scripts/update-first-test.sh
+          grep -Fq 'target update runner revision does not match the verified image set' scripts/update-first-test.sh
+          grep -Fq 'ARGUS_UPDATE_DELEGATED_REVISION' crates/cli/src/main.rs
+          grep -Fq 'org.argus.update-runner-protocol' docker-bake.hcl
+          grep -Fq 'UPDATE_RUNNER_PROTOCOL_VERSION=1' scripts/update-first-test.sh
           grep -Fq "grep -Eq '__[A-Z0-9_]+__'" scripts/update-first-test.sh
           update_lock="$(sed -n 's/^LOCK_FILE="\(.*\)"$/\1/p' scripts/update-first-test.sh | head -n1)"
           recovery_lock="$(sed -n 's/^LOCK_FILE="\(.*\)"$/\1/p' scripts/recover-interrupted-update.sh | head -n1)"
@@ -294,6 +299,33 @@ jobs:
           [[ -d "$BACKUP_ROOT/20260819T115959Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb" ]]
           [[ -d "$BACKUP_ROOT/20260819T115958Z-aaaaaaaaaaaa-to-bbbbbbbbbbbb" ]]
           [[ -d "$BACKUP_ROOT/manual-snapshot" ]]
+
+      - name: Test target update runner handoff safety
+        if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          export ARGUS_STATE_DIR="$tmp/state"
+          source scripts/update-first-test.sh --internal-test-library
+          mkdir -p "$ARGUS_STATE_DIR"
+          exec 9>"$LOCK_FILE"
+          flock -n 9
+          DELEGATED_REVISION=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          acquire_update_lock
+          if (exec 9>&-; acquire_update_lock); then exit 1; fi
+          DELEGATED_REVISION=invalid
+          if (validate_delegated_runner); then exit 1; fi
+          DELEGATED_REVISION=""
+          TARGET_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          TARGET_TMP="$tmp/target"
+          mkdir -p "$TARGET_TMP"
+          printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$ARGUS_UPDATE_DELEGATED_REVISION" "$ARGUS_UPDATE_DELEGATED_RUNNER_SHA256" "$*" >"%s/handoff"\n' "$tmp" >"$TARGET_TMP/argusctl"
+          chmod 0700 "$TARGET_TMP/argusctl"
+          delegate_to_target_runner
+          mapfile -t handoff <"$tmp/handoff"
+          [[ "${handoff[0]}" == "$TARGET_REVISION" ]]
+          [[ "${handoff[1]}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${handoff[2]}" == "update --version $TARGET_REVISION --yes --verbose" ]]
 
       - name: Test update transaction phase safety
         if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'

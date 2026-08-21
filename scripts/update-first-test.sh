@@ -13,6 +13,7 @@ LOCK_FILE="$STATE_DIR/update.lock"
 COMPLETED_TRANSACTION_RETENTION=3
 SNAPSHOT_FIXED_HEADROOM_BYTES=1073741824
 TRANSACTION_FORMAT_VERSION=2
+UPDATE_RUNNER_PROTOCOL_VERSION=1
 
 DOCKER_CONFIG_DIR=""
 TARGET_BUNDLE_CONTAINER=""
@@ -24,10 +25,14 @@ TARGET_START_ARMED=0
 ROLLBACK_IN_PROGRESS=0
 CURRENT_REVISION=""
 TARGET_REVISION=""
+TARGET_RUNNER_PROTOCOL=""
 REQUESTED_VERSION="${ARGUS_TARGET_VERSION:-main}"
 PROGRESS_PID=""
 PROGRESS_MESSAGE=""
 PROGRESS_ENABLED=0
+DELEGATED_REVISION="${ARGUS_UPDATE_DELEGATED_REVISION:-}"
+DELEGATED_RUNNER="${ARGUS_UPDATE_DELEGATED_RUNNER:-}"
+DELEGATED_RUNNER_SHA256="${ARGUS_UPDATE_DELEGATED_RUNNER_SHA256:-}"
 
 if [[ ! -t 1 && -w /dev/tty && "${TERM:-}" != "dumb" ]]; then
   PROGRESS_ENABLED=1
@@ -126,8 +131,46 @@ compose() {
 }
 
 acquire_update_lock() {
+  if [[ -n "$DELEGATED_REVISION" ]]; then
+    [[ -e /proc/$$/fd/9 && "$LOCK_FILE" -ef /proc/$$/fd/9 ]] \
+      || die "target update runner did not inherit the active update lock"
+    return
+  fi
   exec 9>"$LOCK_FILE"
   flock -n 9 || die "another Argus update is already running"
+}
+
+validate_delegated_runner() {
+  [[ -n "$DELEGATED_REVISION" ]] || return 0
+  validate_revision "$DELEGATED_REVISION"
+  [[ -n "$DELEGATED_RUNNER" && -n "$DELEGATED_RUNNER_SHA256" ]] \
+    || die "target update runner handoff is incomplete"
+  [[ "$DELEGATED_RUNNER_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+    || die "target update runner handoff has an invalid checksum"
+  [[ -f "$DELEGATED_RUNNER" && -x "$DELEGATED_RUNNER" ]] \
+    || die "target update runner is missing or not executable"
+  [[ "$(stat -c %u "$DELEGATED_RUNNER")" == "0" ]] \
+    || die "target update runner is not owned by root"
+  [[ "$(stat -c %a "$DELEGATED_RUNNER")" == "700" ]] \
+    || die "target update runner permissions are not 0700"
+  [[ "$(sha256sum "$DELEGATED_RUNNER" | awk '{ print $1 }')" == "$DELEGATED_RUNNER_SHA256" ]] \
+    || die "target update runner failed checksum verification"
+  [[ "$DELEGATED_RUNNER" -ef "/proc/$PPID/exe" ]] \
+    || die "update handoff is not executing the verified target runner"
+}
+
+delegate_to_target_runner() {
+  local runner="$TARGET_TMP/argusctl" runner_sha256
+  chmod 0700 "$runner"
+  runner_sha256="$(sha256sum "$runner" | awk '{ print $1 }')"
+  [[ "$runner_sha256" =~ ^[0-9a-f]{64}$ ]] \
+    || die "could not checksum the target update runner"
+
+  log "delegating update transaction to target runner $TARGET_REVISION"
+  ARGUS_UPDATE_DELEGATED_REVISION="$TARGET_REVISION" \
+  ARGUS_UPDATE_DELEGATED_RUNNER="$runner" \
+  ARGUS_UPDATE_DELEGATED_RUNNER_SHA256="$runner_sha256" \
+    "$runner" update --version "$TARGET_REVISION" --yes --verbose
 }
 
 durable_write_text() {
@@ -229,6 +272,12 @@ image_revision() {
     --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
 }
 
+image_update_runner_protocol() {
+  local image="$1"
+  docker image inspect "$image" \
+    --format '{{ index .Config.Labels "org.argus.update-runner-protocol" }}'
+}
+
 pull_image() {
   local ref="$1" output
 
@@ -292,6 +341,8 @@ pull_and_verify_target() {
     [[ "$revision" == "$TARGET_REVISION" ]] \
       || die "$ref does not identify the expected revision $TARGET_REVISION"
   done
+
+  TARGET_RUNNER_PROTOCOL="$(image_update_runner_protocol "${ARGUS_REGISTRY}/argus-host-tools:${TARGET_REVISION}")"
 
   log "resolved target revision: $TARGET_REVISION"
 }
@@ -764,6 +815,7 @@ trap 'on_signal SIGTERM' TERM
 main() {
   require_root
   validate_acceptance_failure_hook
+  validate_delegated_runner
   require_file "$ENV_FILE"
   require_file "$COMPOSE_FILE"
   require_file "$CADDY_FILE"
@@ -792,7 +844,6 @@ main() {
 
   registry_login
   resolve_current_revision
-  normalize_installed_version
 
   log "verifying current installation before update"
   /usr/local/bin/argusctl smoke
@@ -800,11 +851,26 @@ main() {
   prune_completed_transactions
   pull_and_verify_target
   if [[ "$TARGET_REVISION" == "$CURRENT_REVISION" ]]; then
+    normalize_installed_version
     log "already running requested revision $CURRENT_REVISION"
     return
   fi
 
+  [[ "$TARGET_RUNNER_PROTOCOL" == "$UPDATE_RUNNER_PROTOCOL_VERSION" ]] \
+    || die "target host tools do not support update runner protocol $UPDATE_RUNNER_PROTOCOL_VERSION"
+
   prepare_target_bundle
+  if [[ -n "$DELEGATED_REVISION" ]]; then
+    [[ "$REQUESTED_VERSION" == "$DELEGATED_REVISION" ]] \
+      || die "target update runner was invoked for an unexpected version"
+    [[ "$TARGET_REVISION" == "$DELEGATED_REVISION" ]] \
+      || die "target update runner revision does not match the verified image set"
+    log "target update runner accepted revision $TARGET_REVISION"
+    normalize_installed_version
+  else
+    delegate_to_target_runner
+    return
+  fi
   preflight_snapshot_space
 
   TRANSACTION_DIR="$BACKUP_ROOT/$(date -u +%Y%m%dT%H%M%SZ)-${CURRENT_REVISION:0:12}-to-${TARGET_REVISION:0:12}"
