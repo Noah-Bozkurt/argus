@@ -229,6 +229,20 @@ image_revision() {
     --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
 }
 
+pull_image() {
+  local ref="$1" output
+
+  if [[ "${ARGUS_UPDATE_VERBOSE:-0}" == "1" ]] || [[ -t 1 ]]; then
+    docker pull "$ref" || die "failed to pull $ref"
+    return
+  fi
+
+  if ! output="$(docker pull "$ref" 2>&1)"; then
+    [[ -z "$output" ]] || printf '%s\n' "$output" >&2
+    die "failed to pull $ref"
+  fi
+}
+
 running_service_image_id() {
   local service="$1" cid
   cid="$(compose ps -q "$service")"
@@ -265,7 +279,7 @@ pull_and_verify_target() {
   validate_version_tag "$REQUESTED_VERSION"
   local discovery_image="${ARGUS_REGISTRY}/argus-host-tools:${REQUESTED_VERSION}"
   log "resolving target '$REQUESTED_VERSION' through $discovery_image"
-  docker pull "$discovery_image" >/dev/null
+  pull_image "$discovery_image"
   TARGET_REVISION="$(image_revision "$discovery_image")"
   validate_revision "$TARGET_REVISION"
 
@@ -273,7 +287,7 @@ pull_and_verify_target() {
   for image in argus-web argus-control-api argus-worker argus-content argus-host-tools; do
     ref="${ARGUS_REGISTRY}/${image}:${TARGET_REVISION}"
     log "pre-fetching $ref"
-    docker pull "$ref" >/dev/null
+    pull_image "$ref"
     revision="$(image_revision "$ref")"
     [[ "$revision" == "$TARGET_REVISION" ]] \
       || die "$ref does not identify the expected revision $TARGET_REVISION"
