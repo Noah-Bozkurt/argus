@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use cli::lifecycle;
 
+mod installer_agent;
 mod installer_control;
 mod installer_host;
 mod installer_shared;
@@ -58,10 +59,8 @@ impl Installer {
             .working("Collecting control-plane configuration", || {
                 self.load_control_config(&credentials)
             })?;
-        self.ui.detail(&format!(
-            "Installing Argus for {}",
-            config.get("ARGUS_DOMAIN")?
-        ));
+        self.ui
+            .detail(&format!("Installing Argus for {}", config.domain));
 
         self.ui.working("Downloading and verifying Argus", || {
             self.pull_host_bundle(&mut config, true)
@@ -79,7 +78,7 @@ impl Installer {
         self.ui.working("Verifying installation health", || {
             self.verify_installation(&config)
         })?;
-        self.print_summary(&config)?;
+        self.print_summary(&config);
         Ok(())
     }
 }
