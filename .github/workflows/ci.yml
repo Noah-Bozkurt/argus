@@ -380,7 +380,7 @@ jobs:
           caddyfile="$RUNNER_TEMP/argus-Caddyfile"
           hash="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext test-password)"
           cp deploy/compose/Caddyfile.template "$caddyfile"
-          sed -i -e 's|__ARGUS_DOMAIN__|argus.example.test|g' -e 's|__ARGUS_CONTENT_DOMAIN__|content.argus.example.test|g' -e 's|__BASIC_AUTH_USER__|argus|g' -e "s|__BASIC_AUTH_HASH__|${hash}|g" "$caddyfile"
+          sed -i -e 's|__ARGUS_GLOBAL_OPTIONS__||g' -e 's|__ARGUS_DOMAIN__|argus.example.test|g' -e 's|__ARGUS_CONTENT_DOMAIN__|content.argus.example.test|g' -e 's|__ARGUS_TLS__|tls internal|g' -e 's|__BASIC_AUTH_USER__|argus|g' -e "s|__BASIC_AUTH_HASH__|${hash}|g" "$caddyfile"
           grep -Fq 'path /public/status/*' "$caddyfile"
           grep -Fq 'path /public/* /api/media/file/*' "$caddyfile"
           docker run --rm -v "$caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
