@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -8,47 +9,82 @@ import { spawnSync } from "node:child_process";
 
 const appDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(appDir, "../..");
+const revision = "0123456789abcdef0123456789abcdef01234567";
 
-test("build publishes the canonical installer with a valid checksum", async () => {
+async function buildFixture() {
+  const temp = await mkdtemp(resolve(tmpdir(), "argus-installer-test-"));
+  const binaryPath = resolve(temp, "argus-installer");
+  const binary = Buffer.from("fake native argus installer\n");
+  await writeFile(binaryPath, binary, { mode: 0o755 });
   const build = spawnSync(process.execPath, [resolve(appDir, "build.mjs")], {
     encoding: "utf8",
+    env: {
+      ...process.env,
+      ARGUS_RELEASE_REVISION: revision,
+      ARGUS_INSTALLER_BINARY: binaryPath,
+    },
   });
   assert.equal(build.status, 0, build.stderr);
+  return { temp, binary };
+}
 
-  const [source, published, checksum] = await Promise.all([
-    readFile(resolve(rootDir, "install.sh")),
-    readFile(resolve(appDir, "dist/install.sh")),
-    readFile(resolve(appDir, "dist/install.sh.sha256"), "utf8"),
-  ]);
-  assert.deepEqual(published, source);
-  const digest = createHash("sha256").update(source).digest("hex");
-  assert.equal(checksum, `${digest}  install.sh\n`);
+test("build publishes bootstrap, native installer and immutable manifest", async () => {
+  const { temp, binary } = await buildFixture();
+  try {
+    const [sourceBootstrap, publishedBootstrap, publishedBinary, manifest] = await Promise.all([
+      readFile(resolve(rootDir, "install.sh")),
+      readFile(resolve(appDir, "dist/install")),
+      readFile(resolve(appDir, "dist/bin/argus-installer-x86_64")),
+      readFile(resolve(appDir, "dist/manifest.json"), "utf8"),
+    ]);
+    assert.deepEqual(publishedBootstrap, sourceBootstrap);
+    assert.deepEqual(publishedBinary, binary);
+    assert.deepEqual(JSON.parse(manifest), {
+      revision,
+      installer_sha256: createHash("sha256").update(binary).digest("hex"),
+    });
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
 });
 
-test("bootstrap endpoint downloads and verifies the canonical installer", async () => {
-  const bootstrap = await readFile(resolve(appDir, "public/install"), "utf8");
-  assert.match(bootstrap, /install\.sh\.sha256/);
-  assert.match(bootstrap, /sha256sum -c/);
-  assert.match(bootstrap, /bash "\$tmp\/install\.sh"/);
+test("bootstrap downloads and verifies the native installer", async () => {
+  const bootstrap = await readFile(resolve(rootDir, "install.sh"), "utf8");
+  assert.match(bootstrap, /manifest\.json/);
+  assert.match(bootstrap, /bin\/\$ASSET/);
+  assert.match(bootstrap, /sha256sum/);
+  assert.match(bootstrap, /installer_sha256/);
+  assert.match(bootstrap, /ARGUS_VERSION=.*REVISION/);
+  assert.match(bootstrap, /exec "\$TMP\/argus-installer"/);
 });
 
 test("bootstrap shell syntax is valid", () => {
-  const result = spawnSync("bash", ["-n", resolve(appDir, "public/install")], {
+  const result = spawnSync("bash", ["-n", resolve(rootDir, "install.sh")], {
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stderr);
 });
 
-test("bootstrap keeps the guided installer interactive while presenting concise progress", async () => {
-  const bootstrap = await readFile(resolve(appDir, "public/install"), "utf8");
-  assert.match(bootstrap, /<\/dev\/tty/);
-  assert.match(bootstrap, /concise_install_output/);
-  assert.match(bootstrap, /Downloading and verifying Argus/);
-  assert.match(bootstrap, /Starting the control plane/);
-  assert.match(bootstrap, /Verifying installation health/);
-  assert.match(bootstrap, /frames=\('⠋'/);
-  assert.match(bootstrap, /PIPESTATUS\[0\]/);
-  assert.match(bootstrap, /--verbose/);
+test("native installer owns interactive registry authentication", async () => {
+  const [lifecycle, installer] = await Promise.all([
+    readFile(resolve(rootDir, "crates/cli/src/lifecycle.rs"), "utf8"),
+    readFile(resolve(rootDir, "crates/cli/src/installer.rs"), "utf8"),
+  ]);
+  assert.match(lifecycle, /open\("\/dev\/tty"\)/);
+  assert.match(lifecycle, /GitHub username:/);
+  assert.match(lifecycle, /classic PAT with read:packages/);
+  assert.match(installer, /Install an Argus control plane or managed node/);
+});
+
+test("legacy lifecycle scripts are only native compatibility shims", async () => {
+  const [registry, uninstall] = await Promise.all([
+    readFile(resolve(rootDir, "scripts/registry-login.sh"), "utf8"),
+    readFile(resolve(rootDir, "scripts/uninstall.sh"), "utf8"),
+  ]);
+  assert.match(registry, /argus-installer/);
+  assert.doesNotMatch(registry, /docker login/);
+  assert.match(uninstall, /argus-installer/);
+  assert.doesNotMatch(uninstall, /docker compose/);
 });
 
 test("public site does not contain a packaged registry credential", async () => {
@@ -62,26 +98,17 @@ test("public site does not contain a packaged registry credential", async () => 
   }
 });
 
-test("public site is a generic verified command without configuration fields", async () => {
+test("public site stays a generic install command", async () => {
   const [html, script] = await Promise.all([
     readFile(resolve(appDir, "public/index.html"), "utf8"),
     readFile(resolve(appDir, "public/app.js"), "utf8"),
   ]);
   assert.doesNotMatch(html, /GitHub username|Argus domain|<form/);
-  assert.match(html, /app\.js\?v=pat-installer-2/);
-  assert.match(html, /Loading verified install command/);
   assert.match(script, /\/install/);
   assert.doesNotMatch(script, /ARGUS_REGISTRY_TOKEN|read -rsp/);
 });
 
-test("guided installer uses hidden PAT authentication without distribution storage", async () => {
-  const installer = await readFile(resolve(rootDir, "install.sh"), "utf8");
-  assert.match(installer, /classic PAT with read:packages/);
-  assert.match(installer, /read -r -s -p 'GitHub token/);
-  assert.match(installer, /INSTALL_MODE.*control-plane.*agent/s);
-  assert.doesNotMatch(installer, /R2|device\/start|artifact-grants|release_public_key/);
-  assert.match(installer, /registry\.env/);
-  assert.match(installer, /chmod 0600/);
+test("updater still retains transactional progress and registry rotation guidance", async () => {
   const updater = await readFile(resolve(rootDir, "scripts/update-first-test.sh"), "utf8");
   assert.match(updater, /REGISTRY_CREDENTIAL_FILE/);
   assert.match(updater, /argusctl registry-login/);
