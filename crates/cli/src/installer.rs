@@ -80,8 +80,10 @@ fn run_uninstall(yes: bool, mut purge_data: bool) -> Result<()> {
         println!("  State and Docker volumes can be preserved for recovery.\n");
 
         if purge_data {
-            println!("  WARNING: Purging permanently deletes all Argus data, backups, logs,");
-            println!("  and Docker volumes. This cannot be undone without an external backup.\n");
+            println!(
+                "  WARNING: Purging will permanently remove all Argus data, backups, logs, and Docker volumes."
+            );
+            println!("  This cannot be undone without an external backup.\n");
         }
 
         let answer = lifecycle::prompt_line("Type YES to continue: ")?;
@@ -91,8 +93,10 @@ fn run_uninstall(yes: bool, mut purge_data: bool) -> Result<()> {
 
         if !purge_data {
             println!();
-            println!("  WARNING: Purging permanently deletes all Argus data, backups, logs,");
-            println!("  and Docker volumes. This cannot be undone without an external backup.");
+            println!(
+                "  WARNING: Purging will permanently remove all Argus data, backups, logs, and Docker volumes."
+            );
+            println!("  This cannot be undone without an external backup.");
             let answer = lifecycle::prompt_line("Purge all Argus data? [y/N]: ")?;
             purge_data = purge_data_from_answer(&answer);
         }
@@ -148,8 +152,7 @@ impl Installer {
                 && !self.env_file().exists()
                 && !std::path::Path::new("/usr/local/bin/argus-agent").exists();
             let result = (|| -> Result<()> {
-                self.ui
-                    .working("Checking host requirements", || self.preflight())?;
+                self.preflight()?;
                 self.ui
                     .working("Authenticating with the Argus registry", || {
                         lifecycle::docker_login(&credentials, &self.docker_config)?;
@@ -192,8 +195,7 @@ impl Installer {
         self.configure_tls(&mut config)?;
 
         let install_result = (|| -> Result<()> {
-            self.ui
-                .working("Checking host requirements", || self.preflight())?;
+            self.preflight()?;
             self.ui
                 .working("Authenticating with the Argus registry", || {
                     lifecycle::docker_login(&credentials, &self.docker_config)?;

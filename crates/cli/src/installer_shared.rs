@@ -38,6 +38,22 @@ impl Ui {
         fs::create_dir_all(log_dir)?;
         fs::set_permissions(log_dir, fs::Permissions::from_mode(0o700))?;
         let path = log_dir.join("installer.log");
+        if path
+            .metadata()
+            .is_ok_and(|metadata| metadata.len() >= 10 * 1024 * 1024)
+        {
+            for index in (1..5).rev() {
+                let source = if index == 1 {
+                    path.clone()
+                } else {
+                    log_dir.join(format!("installer.log.{}", index - 1))
+                };
+                let target = log_dir.join(format!("installer.log.{index}"));
+                if source.exists() {
+                    let _ = fs::rename(source, target);
+                }
+            }
+        }
         let file = fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -126,6 +142,7 @@ impl Ui {
         let spinner = thread::spawn(move || {
             let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             let mut i = 0usize;
+            let started = std::time::Instant::now();
             while flag.load(Ordering::Relaxed) {
                 let frame = frames[i % frames.len()];
                 let prefix = if color {
@@ -133,7 +150,13 @@ impl Ui {
                 } else {
                     format!("  {frame}")
                 };
-                print!("\r{prefix} {message_owned}\x1b[K");
+                let elapsed = started.elapsed().as_secs();
+                let detail = if elapsed >= 15 {
+                    format!(" · {elapsed}s · still working")
+                } else {
+                    format!(" · {elapsed}s")
+                };
+                print!("\r{prefix} {message_owned}{detail}\x1b[K");
                 let _ = std::io::stdout().flush();
                 i += 1;
                 thread::sleep(Duration::from_millis(90));

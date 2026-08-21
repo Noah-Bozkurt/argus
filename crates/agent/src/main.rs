@@ -22,7 +22,7 @@ const BACKUP_INTERVAL: Duration = Duration::from_secs(300);
 const JOURNAL_LINES: u32 = 50;
 
 fn capabilities() -> Vec<Capability> {
-    [
+    let mut names = vec![
         "systemd",
         "system.metrics",
         "apt",
@@ -33,13 +33,17 @@ fn capabilities() -> Vec<Capability> {
         "security.inspect",
         "security.firewall",
         "backup",
-    ]
-    .into_iter()
-    .map(|name| Capability {
-        name: name.into(),
-        version: "v1".into(),
-    })
-    .collect()
+    ];
+    if Path::new("/opt/argus/.env").is_file() && Path::new("/usr/local/bin/argusctl").is_file() {
+        names.push("argus.update");
+    }
+    names
+        .into_iter()
+        .map(|name| Capability {
+            name: name.into(),
+            version: "v1".into(),
+        })
+        .collect()
 }
 fn config_path() -> PathBuf {
     std::env::var_os("ARGUS_AGENT_CONFIG")
@@ -109,6 +113,14 @@ async fn collect_diagnostics(runtime: &AgentRuntime, services: &[String]) -> Dia
             Err(error) => {
                 warn!(service=%service, code=%error.code, "failed to collect service journal")
             }
+        }
+    }
+    if let Ok(output) = runtime.helper.argus_update_log().await {
+        if !output.trim().is_empty() {
+            diagnostics.journals.push(ServiceJournal {
+                service: "argus-update".into(),
+                output,
+            });
         }
     }
     diagnostics

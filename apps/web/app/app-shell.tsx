@@ -29,6 +29,7 @@ const nav = [
   { group: 'Operations' },
   { label: 'Jobs', href: '/jobs', icon: 'jobs' as const },
   { label: 'Notifications', href: '/notifications', icon: 'notifications' as const },
+  { label: 'System', href: '/system', icon: 'settings' as const },
 ]
 
 function titleFromPath(pathname: string): string {

@@ -153,8 +153,7 @@ impl Installer {
         self.restore_uninstall_recovery()
             .context("restore retained uninstall configuration")?;
         let credentials = lifecycle::collect_registry_credentials(&self.config_dir, None)?;
-        self.ui
-            .working("Checking host requirements", || self.preflight())?;
+        self.preflight()?;
         self.ui
             .working("Authenticating with the Argus registry", || {
                 lifecycle::docker_login(&credentials, &self.docker_config)?;

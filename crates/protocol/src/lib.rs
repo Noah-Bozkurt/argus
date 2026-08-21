@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: &str = "1.9";
+pub const PROTOCOL_VERSION: &str = "1.10";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentHandshake {
@@ -58,6 +58,8 @@ pub enum CommandType {
     PackagesUpgradeAll,
     #[serde(rename = "system.reboot")]
     SystemReboot,
+    #[serde(rename = "argus.update")]
+    ArgusUpdate { version: String },
     #[serde(rename = "logs.journal")]
     LogsJournal { service: String, lines: u32 },
     #[serde(rename = "docker.start")]
@@ -94,6 +96,7 @@ impl CommandType {
             | CommandType::PackagesUpgradeSecurity
             | CommandType::PackagesUpgradeAll => "packages.mutate",
             CommandType::SystemReboot => "system.reboot",
+            CommandType::ArgusUpdate { .. } => "argus.update",
             CommandType::LogsJournal { .. } => "logs.read",
             CommandType::DockerStart { .. }
             | CommandType::DockerStop { .. }
@@ -126,6 +129,10 @@ impl CommandType {
             },
             CommandType::SystemReboot => Capability {
                 name: "system.reboot".into(),
+                version: "v1".into(),
+            },
+            CommandType::ArgusUpdate { .. } => Capability {
+                name: "argus.update".into(),
                 version: "v1".into(),
             },
             CommandType::LogsJournal { .. } => Capability {
@@ -163,6 +170,7 @@ impl CommandType {
             CommandType::PackagesUpgradeSecurity
                 | CommandType::PackagesUpgradeAll
                 | CommandType::SystemReboot
+                | CommandType::ArgusUpdate { .. }
                 | CommandType::SecurityFirewallEnable
                 | CommandType::BackupRestoreApply { .. }
         )
@@ -207,6 +215,15 @@ pub struct UpdateState {
     pub supported: bool,
     pub pending_updates: u32,
     pub reboot_required: bool,
+    #[serde(default)]
+    pub packages: Vec<PackageUpdate>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct PackageUpdate {
+    pub name: String,
+    pub installed_version: String,
+    pub candidate_version: String,
+    pub security: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ServiceJournal {
@@ -265,6 +282,29 @@ pub struct BackupState {
     pub target: String,
     pub artifacts: Vec<BackupArtifact>,
 }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct MountState {
+    pub name: String,
+    pub mount_point: String,
+    pub file_system: String,
+    pub total_bytes: u64,
+    pub available_bytes: u64,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct NetworkInterfaceState {
+    pub name: String,
+    pub received_bytes: u64,
+    pub transmitted_bytes: u64,
+    pub receive_errors: u64,
+    pub transmit_errors: u64,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ProcessState {
+    pub pid: u32,
+    pub name: String,
+    pub cpu_percent: f32,
+    pub memory_bytes: u64,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SystemSnapshot {
     pub server_id: Uuid,
@@ -288,6 +328,12 @@ pub struct SystemSnapshot {
     pub security: SecurityState,
     #[serde(default)]
     pub backups: BackupState,
+    #[serde(default)]
+    pub mounts: Vec<MountState>,
+    #[serde(default)]
+    pub network: Vec<NetworkInterfaceState>,
+    #[serde(default)]
+    pub top_processes: Vec<ProcessState>,
     pub captured_at: DateTime<Utc>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -327,6 +373,13 @@ pub enum HelperRequest {
     PackagesUpgradeAll,
     #[serde(rename = "system.reboot")]
     SystemReboot,
+    #[serde(rename = "argus.update")]
+    ArgusUpdate {
+        operation_id: String,
+        version: String,
+    },
+    #[serde(rename = "argus.update.log")]
+    ArgusUpdateLog,
     #[serde(rename = "logs.journal")]
     Journal { service: String, lines: u32 },
     #[serde(rename = "docker.list")]
@@ -434,5 +487,14 @@ mod tests {
     #[test]
     fn protocol_version_validation_rejects_older_versions() {
         assert!(validate_protocol_version("1.8").is_err());
+    }
+    #[test]
+    fn argus_update_is_a_maintenance_gated_typed_capability() {
+        let command = CommandType::ArgusUpdate {
+            version: "main".into(),
+        };
+        assert!(command.requires_maintenance());
+        assert_eq!(command.conflict_group(), "argus.update");
+        assert_eq!(command.required_capability().name, "argus.update");
     }
 }

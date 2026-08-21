@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import type { CSSProperties } from 'react'
-import { getCommandHistory, getDesiredState, getMaintenanceHistory, getServer } from '../../../../lib/api'
+import { getCommandHistory, getDesiredState, getMaintenanceHistory, getMetricHistory, getServer, type MetricSample } from '../../../../lib/api'
 import {
   actOnContainer,
   actOnServer,
@@ -14,6 +14,8 @@ import {
   saveDesiredState,
   verifySystemConfigBackup,
 } from './actions'
+import LiveOperations from './live-operations'
+import OperationSubmit from './operation-submit'
 
 function formatDate(value: string | null | undefined): string {
   if (!value) return 'Never'
@@ -68,6 +70,22 @@ function MetricGauge({ label, value }: { label: string; value: number | undefine
   )
 }
 
+function Utilization({ value }: { value: number | undefined }) {
+  const safe = typeof value === 'number' ? Math.max(0, Math.min(100, value)) : 0
+  return <div className="utilization-cell"><div className="utilization-value"><span>{typeof value === 'number' ? `${Math.round(value)}%` : '—'}</span></div><div className="utilization-track"><div className="utilization-fill" style={{ width: `${safe}%` }} /></div></div>
+}
+
+function MetricChart({ label, samples, field, color }: { label: string; samples: MetricSample[]; field: 'cpu_percent' | 'ram_percent' | 'disk_percent'; color: string }) {
+  const values = samples.slice(-180).map((sample) => Math.max(0, Math.min(100, sample[field])))
+  const points = values.map((value, index) => `${values.length <= 1 ? 0 : (index / (values.length - 1)) * 100},${100 - value}`).join(' ')
+  const current = values.at(-1)
+  const peak = values.length ? Math.max(...values) : undefined
+  return <article className="metric-history-card">
+    <div className="metric-history-head"><strong>{label}</strong><span>{current === undefined ? '—' : `${current.toFixed(1)}%`} <small>peak {peak === undefined ? '—' : `${peak.toFixed(1)}%`}</small></span></div>
+    {points ? <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label={`${label} utilization history`}><polyline points={points} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" /></svg> : <div className="metric-history-empty">Collecting history…</div>}
+  </article>
+}
+
 function statusBadge(
   value: boolean | null | undefined,
   positiveWhenTrue = true,
@@ -85,11 +103,12 @@ function firewallStatusClass(status: string): string {
 }
 
 export default async function ServerPage({ params }: { params: { serverId: string } }) {
-  const [server, commands, maintenance, desiredState] = await Promise.all([
+  const [server, commands, maintenance, desiredState, metrics] = await Promise.all([
     getServer(params.serverId),
     getCommandHistory(params.serverId),
     getMaintenanceHistory(params.serverId),
     getDesiredState(params.serverId),
+    getMetricHistory(params.serverId, 24),
   ])
   const snapshot = server.snapshot
   const now = Date.now()
@@ -102,6 +121,14 @@ export default async function ServerPage({ params }: { params: { serverId: strin
   const firewallDrift = desiredState.drift.some((item) => item.field === 'firewall_enabled')
   const reconcileMode = desiredState.policy.mode === 'ENFORCE'
   const distro = osIcon(snapshot?.os)
+  const healthInsights = [
+    snapshot && snapshot.cpu_percent >= 90 ? { level: 'warning', title: 'High CPU utilization', detail: `${snapshot.cpu_percent.toFixed(1)}% at the latest sample` } : null,
+    snapshot && snapshot.ram_percent >= 90 ? { level: 'warning', title: 'High memory utilization', detail: `${snapshot.ram_percent.toFixed(1)}% at the latest sample` } : null,
+    snapshot && snapshot.disk_percent >= 85 ? { level: 'danger', title: 'Disk capacity pressure', detail: `${snapshot.disk_percent.toFixed(1)}% used across reported disks` } : null,
+    snapshot?.updates.reboot_required ? { level: 'warning', title: 'Reboot required', detail: 'Installed updates require a host reboot.' } : null,
+    snapshot?.diagnostics.failed_units.length ? { level: 'danger', title: 'Failed system services', detail: snapshot.diagnostics.failed_units.join(', ') } : null,
+    !server.online ? { level: 'danger', title: 'Agent offline', detail: 'Live data may be stale.' } : null,
+  ].filter((item): item is { level: string; title: string; detail: string } => Boolean(item))
 
   return (
     <main className="server-page">
@@ -125,7 +152,50 @@ export default async function ServerPage({ params }: { params: { serverId: strin
         </div>
       </div>
 
-      <div className="server-overview-grid">
+      <nav className="server-tabs" aria-label="Server sections">
+        <a href="#overview">Overview</a><a href="#performance">Performance</a><a href="#workloads">Workloads</a><a href="#logs">Logs</a><a href="#security">Security</a><a href="#updates">Updates</a><a href="#backups">Backups</a><a href="#activity">Activity</a>
+      </nav>
+
+      <section className="detail-card" id="performance">
+        <div className="detail-card-header"><div><h2>Performance history</h2><p>Last 24 hours of agent samples. Recent samples are shown at full resolution.</p></div><span className="badge info">Live history</span></div>
+        <div className="detail-card-body metric-history-grid">
+          <MetricChart label="CPU" samples={metrics} field="cpu_percent" color="#7590ff" />
+          <MetricChart label="Memory" samples={metrics} field="ram_percent" color="#44c88a" />
+          <MetricChart label="Disk" samples={metrics} field="disk_percent" color="#e7b35a" />
+        </div>
+      </section>
+
+      <LiveOperations initialServer={server} initialCommands={commands} />
+
+      <section className="detail-card">
+        <div className="detail-card-header"><div><h2>Health insights</h2><p>Immediate actionable findings from the latest snapshot.</p></div><span className={`badge ${healthInsights.length ? 'warning' : 'success'}`}>{healthInsights.length ? `${healthInsights.length} active` : 'Healthy'}</span></div>
+        <div className="detail-card-body">{healthInsights.length ? <div className="resource-list">{healthInsights.map((item) => <article className="resource-card" key={item.title}><div className="resource-card-head"><strong>{item.title}</strong><span className={`badge ${item.level}`}>{item.level}</span></div><div className="resource-meta">{item.detail}</div></article>)}</div> : <div className="callout success">No immediate CPU, memory, disk, service, reboot, or connectivity findings.</div>}</div>
+      </section>
+
+      <div className="detail-split">
+        <section className="detail-card">
+          <div className="detail-card-header"><div><h2>Storage</h2><p>Mounted filesystems and capacity pressure.</p></div><span className="badge">{snapshot?.mounts?.length ?? 0} mounts</span></div>
+          <div className="detail-card-body">
+            {!snapshot?.mounts?.length ? <div className="empty-state"><strong>No mount inventory</strong>Upgrade the agent to collect mount details.</div> : <div className="table-wrap"><table className="responsive-table"><thead><tr><th>Mount</th><th>Filesystem</th><th>Used</th><th>Available</th></tr></thead><tbody>{snapshot.mounts.map((mount) => {
+              const used = mount.total_bytes > 0 ? ((mount.total_bytes - mount.available_bytes) / mount.total_bytes) * 100 : 0
+              return <tr key={`${mount.name}-${mount.mount_point}`}><td><strong>{mount.mount_point}</strong><div className="row-subtitle">{mount.name}</div></td><td data-label="Filesystem">{mount.file_system}</td><td data-label="Used"><Utilization value={used} /></td><td data-label="Available">{formatBytes(mount.available_bytes)}</td></tr>
+            })}</tbody></table></div>}
+          </div>
+        </section>
+        <section className="detail-card">
+          <div className="detail-card-header"><div><h2>Network</h2><p>Interface totals and reported errors.</p></div><span className="badge">{snapshot?.network?.length ?? 0} interfaces</span></div>
+          <div className="detail-card-body">
+            {!snapshot?.network?.length ? <div className="empty-state"><strong>No network inventory</strong>Upgrade the agent to collect interface details.</div> : <div className="resource-list">{snapshot.network.map((item) => <article className="resource-card" key={item.name}><div className="resource-card-head"><strong>{item.name}</strong><span className={`badge ${item.receive_errors + item.transmit_errors > 0 ? 'warning' : 'success'}`}>{item.receive_errors + item.transmit_errors} errors</span></div><div className="resource-meta">Received {formatBytes(item.received_bytes)} · sent {formatBytes(item.transmitted_bytes)}</div></article>)}</div>}
+          </div>
+        </section>
+      </div>
+
+      <section className="detail-card">
+        <div className="detail-card-header"><div><h2>Top processes</h2><p>Read-only process inventory ordered by current CPU use.</p></div><span className="badge info">Read only</span></div>
+        <div className="detail-card-body">{!snapshot?.top_processes?.length ? <div className="empty-state"><strong>No process inventory</strong>Upgrade the agent to collect process details.</div> : <div className="table-wrap"><table className="responsive-table"><thead><tr><th>Process</th><th>PID</th><th>CPU</th><th>Memory</th></tr></thead><tbody>{snapshot.top_processes.map((process) => <tr key={process.pid}><td><strong>{process.name}</strong></td><td data-label="PID"><code>{process.pid}</code></td><td data-label="CPU">{process.cpu_percent.toFixed(1)}%</td><td data-label="Memory">{formatBytes(process.memory_bytes)}</td></tr>)}</tbody></table></div>}</div>
+      </section>
+
+      <div className="server-overview-grid" id="overview">
         <section className="server-overview-card">
           <h2 className="overview-card-title">System identity</h2>
           <div className="info-grid">
@@ -194,7 +264,7 @@ export default async function ServerPage({ params }: { params: { serverId: strin
       </section>
 
       <div className="detail-split">
-        <section className="detail-card">
+        <section className="detail-card" id="security">
           <div className="detail-card-header"><div><h2>Security posture</h2><p>Baseline hardening reported by the agent.</p></div></div>
           <div className="detail-card-body">
             {!snapshot?.security.available ? <div className="empty-state"><strong>Security inspection unavailable</strong>The agent did not report security data.</div> : (
@@ -220,7 +290,7 @@ export default async function ServerPage({ params }: { params: { serverId: strin
           </div>
         </section>
 
-        <section className="detail-card">
+        <section className="detail-card" id="logs">
           <div className="detail-card-header"><div><h2>Diagnostics</h2><p>Service health, listening ports and recent journals.</p></div></div>
           <div className="detail-card-body">
             <div className="info-grid">
@@ -242,7 +312,7 @@ export default async function ServerPage({ params }: { params: { serverId: strin
         </section>
       </div>
 
-      <section className="detail-card">
+      <section className="detail-card" id="backups">
         <div className="detail-card-header"><div><h2>Backups &amp; recovery</h2><p>System-security configuration snapshots with integrity verification and guarded restore.</p></div>{snapshot?.backups.available ? <span className="badge success">Target available</span> : <span className="badge warning">Unavailable</span>}</div>
         <div className="detail-card-body">
           {!snapshot?.backups.available ? <div className="empty-state"><strong>Backup target unavailable</strong>This server is not currently reporting a usable backup target.</div> : (
@@ -280,7 +350,7 @@ export default async function ServerPage({ params }: { params: { serverId: strin
         </div>
       </section>
 
-      <section className="detail-card">
+      <section className="detail-card" id="workloads">
         <div className="detail-card-header"><div><h2>Containers</h2><p>Docker workloads discovered on this host.</p></div><span className="badge info">{snapshot?.docker.containers.length ?? 0} workloads</span></div>
         <div className="detail-card-body">
           {!snapshot?.docker.available ? <div className="empty-state"><strong>Docker unavailable</strong>This server is not reporting a Docker runtime.</div> : null}
@@ -309,15 +379,16 @@ export default async function ServerPage({ params }: { params: { serverId: strin
           </div>
         </section>
 
-        <section className="detail-card">
+        <section className="detail-card" id="updates">
           <div className="detail-card-header"><div><h2>System updates</h2><p>APT inventory and guarded package operations.</p></div>{snapshot?.updates.reboot_required ? <span className="badge warning">Reboot required</span> : null}</div>
           <div className="detail-card-body">
             {snapshot?.updates.supported ? <div className="info-grid"><div className="info-item"><span className="info-label">Pending packages</span><span className="info-value">{snapshot.updates.pending_updates}</span></div><div className="info-item"><span className="info-label">Reboot</span><span className="info-value">{snapshot.updates.reboot_required ? 'Required' : 'Not required'}</span></div></div> : <div className="callout warning">APT update inventory unavailable on this server.</div>}
+            {snapshot?.updates.packages?.length ? <details className="package-inventory"><summary className="button small">View {snapshot.updates.packages.length} packages</summary><div className="table-wrap"><table className="responsive-table"><thead><tr><th>Package</th><th>Installed</th><th>Candidate</th><th>Type</th></tr></thead><tbody>{snapshot.updates.packages.map((pkg) => <tr key={pkg.name}><td><strong>{pkg.name}</strong></td><td data-label="Installed"><code>{pkg.installed_version || '—'}</code></td><td data-label="Candidate"><code>{pkg.candidate_version || '—'}</code></td><td data-label="Type"><span className={`badge ${pkg.security ? 'warning' : ''}`}>{pkg.security ? 'Security' : 'Update'}</span></td></tr>)}</tbody></table></div></details> : null}
             <div className="action-row">
-              <form action={async () => { 'use server'; await actOnServer(server.server_id, 'packages.refresh') }}><button type="submit">Check updates</button></form>
-              <form action={async () => { 'use server'; await actOnServer(server.server_id, 'packages.upgrade.security') }}><button type="submit" disabled={!activeMaintenance}>Security updates</button></form>
-              <form action={async () => { 'use server'; await actOnServer(server.server_id, 'packages.upgrade.all') }}><button type="submit" disabled={!activeMaintenance}>Install all</button></form>
-              <form action={async () => { 'use server'; await actOnServer(server.server_id, 'system.reboot') }}><button className="danger" type="submit" disabled={!activeMaintenance}>Reboot</button></form>
+              <form action={async () => { 'use server'; await actOnServer(server.server_id, 'packages.refresh') }}><OperationSubmit>Check updates</OperationSubmit></form>
+              <form action={async () => { 'use server'; await actOnServer(server.server_id, 'packages.upgrade.security') }}><OperationSubmit disabled={!activeMaintenance}>Security updates</OperationSubmit></form>
+              <form action={async () => { 'use server'; await actOnServer(server.server_id, 'packages.upgrade.all') }}><OperationSubmit disabled={!activeMaintenance}>Install all</OperationSubmit></form>
+              <form action={async () => { 'use server'; await actOnServer(server.server_id, 'system.reboot') }}><OperationSubmit className="danger" disabled={!activeMaintenance}>Reboot</OperationSubmit></form>
             </div>
             {!activeMaintenance ? <div className="callout">Package upgrades and reboot require an active maintenance window.</div> : null}
           </div>
@@ -340,16 +411,6 @@ export default async function ServerPage({ params }: { params: { serverId: strin
       </section>
 
       <div className="detail-split">
-        <section className="detail-card">
-          <div className="detail-card-header"><div><h2>Recent commands</h2><p>Latest privileged operations sent to this host.</p></div></div>
-          <div className="detail-card-body">
-            {commands.length === 0 ? <div className="empty-state"><strong>No commands yet</strong>Agent operations will appear here.</div> : <ol className="timeline">{commands.slice(0, 12).map((item) => {
-              const target = item.command.command_type.service ?? item.command.command_type.container ?? item.command.command_type.backup ?? item.command.command_type.profile ?? ''
-              return <li className="timeline-item" key={item.command.id}><div className="timeline-title">{item.command.command_type.kind} {target}</div><div className="timeline-meta"><span className={`badge ${item.command.status === 'SUCCEEDED' ? 'success' : item.command.status === 'FAILED' ? 'danger' : 'info'}`}>{item.command.status}</span></div>{item.error_code ? <div className="timeline-message text-danger">{item.error_code}: {item.error_message ?? ''}</div> : null}</li>
-            })}</ol>}
-          </div>
-        </section>
-
         <section className="detail-card">
           <div className="detail-card-header"><div><h2>Maintenance history</h2><p>Recent maintenance windows for this server.</p></div></div>
           <div className="detail-card-body">

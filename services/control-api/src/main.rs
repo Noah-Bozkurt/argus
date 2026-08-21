@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -212,6 +212,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/servers", get(list_servers).post(create_server))
         .route("/servers/:server_id", get(get_server))
         .route("/servers/:server_id/commands", get(command_history))
+        .route("/servers/:server_id/metrics", get(metric_history))
         .route("/servers/:server_id/maintenance", get(maintenance_history))
         .route(
             "/servers/:server_id/maintenance/start",
@@ -534,6 +535,32 @@ async fn command_history(
         state
             .storage
             .command_history(identity, server_id)
+            .await
+            .map_err(map_storage)?,
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+struct MetricHistoryQuery {
+    #[serde(default = "default_metric_hours")]
+    hours: i64,
+}
+
+fn default_metric_hours() -> i64 {
+    24
+}
+
+async fn metric_history(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(server_id): Path<Uuid>,
+    Query(query): Query<MetricHistoryQuery>,
+) -> Result<Json<Vec<persistence::MetricSample>>, ApiError> {
+    let identity = web_identity(&state, &headers).await?;
+    Ok(Json(
+        state
+            .storage
+            .metric_history(identity, server_id, query.hours)
             .await
             .map_err(map_storage)?,
     ))

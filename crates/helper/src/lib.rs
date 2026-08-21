@@ -1,6 +1,8 @@
 use protocol::{BackupArtifact, BackupState, SecurityFinding, SecurityState};
 use std::{
     collections::HashSet,
+    io::Write,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -437,27 +439,93 @@ impl HelperApi {
         })
     }
 
-    pub async fn refresh_packages(&self) -> Result<(), HelperError> {
-        run("apt-get", &["update"]).await
+    pub async fn refresh_packages(&self) -> Result<String, HelperError> {
+        run_capture_combined("apt-get", &["update"]).await
     }
-    pub async fn upgrade_all_packages(&self) -> Result<(), HelperError> {
-        run(
+    pub async fn upgrade_all_packages(&self) -> Result<String, HelperError> {
+        run_capture_combined(
             "apt-get",
             &["-y", "-o", "Dpkg::Options::=--force-confold", "upgrade"],
         )
         .await
     }
-    pub async fn upgrade_security_packages(&self) -> Result<(), HelperError> {
+    pub async fn upgrade_security_packages(&self) -> Result<String, HelperError> {
         if tokio::fs::metadata("/usr/bin/unattended-upgrade")
             .await
             .is_err()
         {
             return Err(HelperError::UtilityUnavailable("unattended-upgrade".into()));
         }
-        run("unattended-upgrade", &["--verbose"]).await
+        run_capture_combined("unattended-upgrade", &["--verbose"]).await
     }
     pub async fn reboot(&self) -> Result<(), HelperError> {
         run("systemctl", &["reboot"]).await
+    }
+    pub async fn argus_update(
+        &self,
+        operation_id: &str,
+        version: &str,
+    ) -> Result<String, HelperError> {
+        let valid_id = operation_id.len() == 36
+            && operation_id
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || c == '-');
+        let valid_version = !version.is_empty()
+            && version.len() <= 128
+            && version
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
+        if !valid_id || !valid_version || !Path::new("/opt/argus/.env").is_file() {
+            return Err(HelperError::InvalidRequest);
+        }
+        tokio::fs::create_dir_all("/var/log/argus")
+            .await
+            .map_err(|e| HelperError::SystemCommandFailed(e.to_string()))?;
+        let log_path = Path::new("/var/log/argus/update.log");
+        if log_path
+            .metadata()
+            .is_ok_and(|metadata| metadata.len() >= 25 * 1024 * 1024)
+        {
+            let _ = std::fs::rename(log_path, "/var/log/argus/update.previous.log");
+        }
+        let mut log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o640)
+            .open(log_path)
+            .map_err(|error| HelperError::SystemCommandFailed(error.to_string()))?;
+        std::fs::set_permissions(log_path, std::fs::Permissions::from_mode(0o640))
+            .map_err(|error| HelperError::SystemCommandFailed(error.to_string()))?;
+        writeln!(
+            log,
+            "\n--- Argus update {operation_id} to {version} scheduled ---"
+        )
+        .map_err(|error| HelperError::SystemCommandFailed(error.to_string()))?;
+        let unit = format!("argus-update-{operation_id}");
+        run_capture_combined(
+            "systemd-run",
+            &[
+                "--unit",
+                &unit,
+                "--on-active=3s",
+                "--property=StandardOutput=append:/var/log/argus/update.log",
+                "--property=StandardError=append:/var/log/argus/update.log",
+                "/usr/local/bin/argusctl",
+                "update",
+                "--version",
+                version,
+                "--yes",
+                "--verbose",
+            ],
+        )
+        .await
+    }
+    pub async fn argus_update_log(&self) -> Result<String, HelperError> {
+        match tokio::fs::read_to_string("/var/log/argus/update.log").await {
+            Ok(value) => Ok(truncate_utf8(redact_output(&value), 25 * 1024 * 1024)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(error) => Err(HelperError::SystemCommandFailed(error.to_string())),
+        }
     }
 }
 
@@ -505,6 +573,52 @@ async fn run_capture(program: &str, args: &[&str]) -> Result<String, HelperError
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
         ))
     }
+}
+async fn run_capture_combined(program: &str, args: &[&str]) -> Result<String, HelperError> {
+    let output = Command::new(program)
+        .args(args)
+        .env("DEBIAN_FRONTEND", "noninteractive")
+        .output()
+        .await
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                HelperError::UtilityUnavailable(program.into())
+            } else {
+                HelperError::SystemCommandFailed(e.to_string())
+            }
+        })?;
+    let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
+    if !output.stderr.is_empty() {
+        if !combined.ends_with('\n') && !combined.is_empty() {
+            combined.push('\n');
+        }
+        combined.push_str(&String::from_utf8_lossy(&output.stderr));
+    }
+    let combined = truncate_utf8(redact_output(&combined), 25 * 1024 * 1024);
+    if output.status.success() {
+        Ok(combined)
+    } else {
+        Err(HelperError::SystemCommandFailed(
+            combined.trim().to_string(),
+        ))
+    }
+}
+fn redact_output(value: &str) -> String {
+    value
+        .lines()
+        .map(|line| {
+            let lower = line.to_ascii_lowercase();
+            if ["authorization:", "password=", "token=", "secret="]
+                .iter()
+                .any(|needle| lower.contains(needle))
+            {
+                "[redacted sensitive command output]".to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 fn truncate_utf8(mut value: String, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
@@ -570,5 +684,12 @@ mod tests {
         let finding = finding("HIGH", "TEST", "test");
         assert_eq!(finding.severity, "HIGH");
         assert_eq!(finding.code, "TEST");
+    }
+    #[test]
+    fn operation_output_redacts_common_secret_assignments() {
+        let output = redact_output("downloading package\ntoken=secret-value\nfinished");
+        assert!(output.contains("downloading package"));
+        assert!(output.contains("[redacted sensitive command output]"));
+        assert!(!output.contains("secret-value"));
     }
 }

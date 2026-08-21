@@ -1,7 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use protocol::{
-    AgentHandshake, Command, CommandRequest, CommandResult, CommandStatus, HeartbeatRequest,
-    RiskLevel, ServiceState, SystemSnapshot,
+    AgentHandshake, Capability, Command, CommandRequest, CommandResult, CommandStatus,
+    HeartbeatRequest, RiskLevel, ServiceState, SystemSnapshot,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -36,6 +36,7 @@ pub struct ServerView {
     pub last_heartbeat: Option<DateTime<Utc>>,
     pub snapshot: Option<SystemSnapshot>,
     pub services: Vec<ServiceState>,
+    pub capabilities: Vec<Capability>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -46,6 +47,18 @@ pub struct CommandHistoryItem {
     pub error_code: Option<String>,
     pub error_message: Option<String>,
     pub actor_user_id: Option<Uuid>,
+    pub phase: Option<String>,
+    pub output: Option<String>,
+    pub output_truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MetricSample {
+    pub captured_at: DateTime<Utc>,
+    pub cpu_percent: f32,
+    pub ram_percent: f32,
+    pub disk_percent: f32,
+    pub load: f64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -123,6 +136,7 @@ impl Storage {
         .bind(hostname)
         .execute(&self.pool)
         .await?;
+
         Ok(id)
     }
 
@@ -287,6 +301,19 @@ impl Storage {
         .execute(&self.pool)
         .await?;
 
+        sqlx::query(
+            "INSERT INTO server_metric_samples(server_id,organization_id,captured_at,cpu_percent,ram_percent,disk_percent,load) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING",
+        )
+        .bind(identity.server_id)
+        .bind(identity.organization_id)
+        .bind(heartbeat.snapshot.captured_at)
+        .bind(heartbeat.snapshot.cpu_percent)
+        .bind(heartbeat.snapshot.ram_percent)
+        .bind(heartbeat.snapshot.disk_percent)
+        .bind(heartbeat.snapshot.load)
+        .execute(&self.pool)
+        .await?;
+
         if reconnect {
             self.emit_event(
                 identity.organization_id,
@@ -305,7 +332,7 @@ impl Storage {
     ) -> Result<Vec<ServerView>, StorageError> {
         self.verify_web_identity(identity).await?;
         let rows = sqlx::query(
-            "SELECT s.id,s.project_id,s.environment_id,s.hostname,a.last_seen_at,a.snapshot,a.services FROM servers s LEFT JOIN agents a ON a.server_id=s.id WHERE s.organization_id=$1 ORDER BY s.hostname",
+            "SELECT s.id,s.project_id,s.environment_id,s.hostname,a.last_seen_at,a.snapshot,a.services,a.capabilities FROM servers s LEFT JOIN agents a ON a.server_id=s.id WHERE s.organization_id=$1 ORDER BY s.hostname",
         )
         .bind(identity.organization_id)
         .fetch_all(&self.pool)
@@ -320,7 +347,7 @@ impl Storage {
     ) -> Result<ServerView, StorageError> {
         self.verify_web_identity(identity).await?;
         let row = sqlx::query(
-            "SELECT s.id,s.project_id,s.environment_id,s.hostname,a.last_seen_at,a.snapshot,a.services FROM servers s LEFT JOIN agents a ON a.server_id=s.id WHERE s.id=$1 AND s.organization_id=$2",
+            "SELECT s.id,s.project_id,s.environment_id,s.hostname,a.last_seen_at,a.snapshot,a.services,a.capabilities FROM servers s LEFT JOIN agents a ON a.server_id=s.id WHERE s.id=$1 AND s.organization_id=$2",
         )
         .bind(server_id)
         .bind(identity.organization_id)
@@ -443,7 +470,7 @@ impl Storage {
             return Ok(None);
         };
         let mut command = command_from_row(row)?;
-        sqlx::query("UPDATE commands SET status='RUNNING',started_at=NOW() WHERE id=$1")
+        sqlx::query("UPDATE commands SET status='RUNNING',phase=CASE command_type->>'kind' WHEN 'packages.refresh' THEN 'REFRESHING_REPOSITORIES' WHEN 'packages.upgrade.security' THEN 'INSTALLING_SECURITY_UPDATES' WHEN 'packages.upgrade.all' THEN 'INSTALLING_PACKAGES' WHEN 'argus.update' THEN 'SCHEDULING_HOST_UPDATE' ELSE 'EXECUTING' END,started_at=NOW() WHERE id=$1")
             .bind(command.id)
             .execute(&mut *tx)
             .await?;
@@ -497,18 +524,58 @@ impl Storage {
         let (error_code, error_message) = result
             .error
             .as_ref()
-            .map(|error| (Some(error.code.clone()), Some(error.message.clone())))
+            .map(|error| {
+                let mut message = error.message.clone();
+                if message.len() > 4096 {
+                    let mut boundary = 4096;
+                    while !message.is_char_boundary(boundary) {
+                        boundary -= 1;
+                    }
+                    message.truncate(boundary);
+                    message.push_str("… See full log.");
+                }
+                (Some(error.code.clone()), Some(message))
+            })
             .unwrap_or((None, None));
+        let output = result.output.as_deref().map(|value| {
+            if value.len() <= 25 * 1024 * 1024 {
+                value.to_string()
+            } else {
+                let mut boundary = 25 * 1024 * 1024;
+                while !value.is_char_boundary(boundary) {
+                    boundary -= 1;
+                }
+                format!(
+                    "{}\n[output truncated by control plane]\n",
+                    &value[..boundary]
+                )
+            }
+        });
+        let output_truncated = result
+            .output
+            .as_ref()
+            .is_some_and(|value| value.len() > 25 * 1024 * 1024);
+        let phase = if result.status == CommandStatus::SUCCEEDED {
+            "COMPLETE"
+        } else {
+            "FAILED"
+        };
         sqlx::query(
-            "UPDATE commands SET status=$2,finished_at=$3,error_code=$4,error_message=$5 WHERE id=$1",
+            "UPDATE commands SET status=$2,phase=$3,finished_at=$4,error_code=$5,error_message=$6,output=$7,output_truncated=$8 WHERE id=$1",
         )
         .bind(result.command_id)
         .bind(format!("{:?}", result.status))
+        .bind(phase)
         .bind(result.finished_at)
         .bind(error_code)
         .bind(error_message)
+        .bind(output)
+        .bind(output_truncated)
         .execute(&mut *tx)
         .await?;
+        sqlx::query("UPDATE commands SET output=NULL,output_truncated=FALSE WHERE finished_at < NOW() - INTERVAL '30 days' AND output IS NOT NULL")
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
 
         self.audit(
@@ -552,7 +619,7 @@ impl Storage {
         }
 
         let rows = sqlx::query(
-            "SELECT id,server_id,command_type,status,idempotency_key,risk_level,created_at,expires_at,started_at,finished_at,error_code,error_message,actor_user_id FROM commands WHERE server_id=$1 ORDER BY created_at DESC LIMIT 50",
+            "SELECT id,server_id,command_type,status,idempotency_key,risk_level,created_at,expires_at,started_at,finished_at,error_code,error_message,actor_user_id,phase,output,output_truncated FROM commands WHERE server_id=$1 ORDER BY created_at DESC LIMIT 50",
         )
         .bind(server_id)
         .fetch_all(&self.pool)
@@ -568,9 +635,48 @@ impl Storage {
                     error_code: row.try_get("error_code")?,
                     error_message: row.try_get("error_message")?,
                     actor_user_id: row.try_get("actor_user_id")?,
+                    phase: row.try_get("phase")?,
+                    output: row.try_get("output")?,
+                    output_truncated: row.try_get("output_truncated")?,
                 })
             })
             .collect()
+    }
+
+    pub async fn metric_history(
+        &self,
+        identity: WebIdentity,
+        server_id: Uuid,
+        hours: i64,
+    ) -> Result<Vec<MetricSample>, StorageError> {
+        self.verify_web_identity(identity).await?;
+        let hours = hours.clamp(1, 24 * 30);
+        let bucket = if hours <= 24 {
+            "5 seconds"
+        } else if hours <= 24 * 7 {
+            "1 minute"
+        } else {
+            "15 minutes"
+        };
+        let rows = sqlx::query(
+            "SELECT date_bin($4::interval,m.captured_at,TIMESTAMPTZ '2000-01-01') AS captured_at,AVG(m.cpu_percent)::REAL AS cpu_percent,AVG(m.ram_percent)::REAL AS ram_percent,AVG(m.disk_percent)::REAL AS disk_percent,AVG(m.load)::DOUBLE PRECISION AS load FROM server_metric_samples m JOIN servers s ON s.id=m.server_id WHERE m.server_id=$1 AND s.organization_id=$2 AND m.captured_at >= NOW() - make_interval(hours => $3::int) GROUP BY 1 ORDER BY 1",
+        )
+        .bind(server_id)
+        .bind(identity.organization_id)
+        .bind(hours as i32)
+        .bind(bucket)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| MetricSample {
+                captured_at: row.get("captured_at"),
+                cpu_percent: row.get("cpu_percent"),
+                ram_percent: row.get("ram_percent"),
+                disk_percent: row.get("disk_percent"),
+                load: row.get("load"),
+            })
+            .collect())
     }
 
     async fn audit(
@@ -638,6 +744,11 @@ fn server_from_row(row: sqlx::postgres::PgRow) -> Result<ServerView, StorageErro
         .map(serde_json::from_value)
         .transpose()?
         .unwrap_or_default();
+    let capabilities = row
+        .try_get::<Option<serde_json::Value>, _>("capabilities")?
+        .map(serde_json::from_value)
+        .transpose()?
+        .unwrap_or_default();
 
     Ok(ServerView {
         server_id: row.get("id"),
@@ -648,6 +759,7 @@ fn server_from_row(row: sqlx::postgres::PgRow) -> Result<ServerView, StorageErro
         last_heartbeat,
         snapshot,
         services,
+        capabilities,
     })
 }
 

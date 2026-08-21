@@ -116,7 +116,11 @@ registry-login
 uninstall
 ```
 
-Control-plane self-update is deliberately local/root-driven rather than queued through the control plane it is about to replace.
+Control-plane self-update is executed by a host-side transactional updater. Owners may authorize
+the same typed operation from the Web UI after password re-authentication; the Agent schedules a
+delayed systemd unit so the acknowledgement is persisted before Web/API restart. The updater keeps
+running independently, writes a bounded host log, verifies health and rolls back on failure. The
+local `argusctl update` and recovery commands remain available when the UI is unavailable.
 
 ## Payload Content Service
 

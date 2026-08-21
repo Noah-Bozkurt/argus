@@ -72,18 +72,55 @@ impl HelperClient {
             .await
             .map(|_| ())
     }
+    pub async fn refresh_packages_with_output(&self) -> Result<String, OperationError> {
+        Ok(self
+            .request(HelperRequest::PackagesRefresh)
+            .await?
+            .unwrap_or_default())
+    }
     pub async fn upgrade_security_packages(&self) -> Result<(), OperationError> {
         self.request(HelperRequest::PackagesUpgradeSecurity)
             .await
             .map(|_| ())
+    }
+    pub async fn upgrade_security_packages_with_output(&self) -> Result<String, OperationError> {
+        Ok(self
+            .request(HelperRequest::PackagesUpgradeSecurity)
+            .await?
+            .unwrap_or_default())
     }
     pub async fn upgrade_all_packages(&self) -> Result<(), OperationError> {
         self.request(HelperRequest::PackagesUpgradeAll)
             .await
             .map(|_| ())
     }
+    pub async fn upgrade_all_packages_with_output(&self) -> Result<String, OperationError> {
+        Ok(self
+            .request(HelperRequest::PackagesUpgradeAll)
+            .await?
+            .unwrap_or_default())
+    }
     pub async fn reboot(&self) -> Result<(), OperationError> {
         self.request(HelperRequest::SystemReboot).await.map(|_| ())
+    }
+    pub async fn argus_update(
+        &self,
+        operation_id: Uuid,
+        version: &str,
+    ) -> Result<String, OperationError> {
+        Ok(self
+            .request(HelperRequest::ArgusUpdate {
+                operation_id: operation_id.to_string(),
+                version: version.into(),
+            })
+            .await?
+            .unwrap_or_default())
+    }
+    pub async fn argus_update_log(&self) -> Result<String, OperationError> {
+        Ok(self
+            .request(HelperRequest::ArgusUpdateLog)
+            .await?
+            .unwrap_or_default())
     }
     pub async fn journal(&self, service: &str, lines: u32) -> Result<String, OperationError> {
         Ok(self
@@ -313,20 +350,29 @@ impl AgentRuntime {
             }
             protocol::CommandType::ServiceStatus { .. } => Ok(None),
             protocol::CommandType::PackagesRefresh => {
-                self.helper.refresh_packages().await.map(|_| None)
+                self.helper.refresh_packages_with_output().await.map(Some)
             }
-            protocol::CommandType::PackagesUpgradeSecurity => {
-                self.helper.upgrade_security_packages().await.map(|_| None)
-            }
-            protocol::CommandType::PackagesUpgradeAll => {
-                self.helper.upgrade_all_packages().await.map(|_| None)
-            }
+            protocol::CommandType::PackagesUpgradeSecurity => self
+                .helper
+                .upgrade_security_packages_with_output()
+                .await
+                .map(Some),
+            protocol::CommandType::PackagesUpgradeAll => self
+                .helper
+                .upgrade_all_packages_with_output()
+                .await
+                .map(Some),
             protocol::CommandType::SystemReboot => self.helper.reboot().await.map(|_| {
                 Some(format!(
                     "{{\"reboot_requested_at_uptime\":{}}}",
                     system::current_uptime_seconds()
                 ))
             }),
+            protocol::CommandType::ArgusUpdate { version } => self
+                .helper
+                .argus_update(command.id, version)
+                .await
+                .map(Some),
             protocol::CommandType::LogsJournal { service, lines } => {
                 self.helper.journal(service, *lines).await.map(Some)
             }
@@ -390,8 +436,17 @@ impl AgentRuntime {
                 command_id: command.id,
                 status: CommandStatus::FAILED,
                 finished_at: Utc::now(),
+                output: if matches!(
+                    command.command_type,
+                    protocol::CommandType::PackagesRefresh
+                        | protocol::CommandType::PackagesUpgradeSecurity
+                        | protocol::CommandType::PackagesUpgradeAll
+                ) {
+                    Some(error.message.clone())
+                } else {
+                    None
+                },
                 error: Some(error),
-                output: None,
             },
         }
     }

@@ -320,6 +320,33 @@
 .utilization-track { height: 4px; margin-top: 6px; overflow: hidden; border-radius: 999px; background: #252b36; }
 .utilization-fill { height: 100%; border-radius: inherit; background: var(--primary); }
 
+.metric-history-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.metric-history-card { min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: #0d1016; }
+.metric-history-head { display: flex; justify-content: space-between; gap: 12px; color: var(--text-soft); font-size: 12px; }
+.metric-history-head span { text-align: right; }
+.metric-history-head small { display: block; margin-top: 3px; color: var(--muted); font-weight: 400; }
+.metric-history-card svg { width: 100%; height: 112px; margin-top: 12px; overflow: visible; border-bottom: 1px solid var(--border); background: repeating-linear-gradient(to bottom, transparent 0, transparent 24%, rgba(255,255,255,.035) 25%); }
+.metric-history-empty { height: 112px; display: grid; place-items: center; color: var(--muted); font-size: 11px; }
+.operation-phase { color: var(--muted); font-size: 10px; }
+.operation-log { margin-top: 10px; }
+.operation-log > summary { width: max-content; list-style: none; }
+.operation-log > summary::-webkit-details-marker { display: none; }
+.operation-log-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; color: var(--muted); font-size: 10px; }
+.operation-log pre { max-height: 58vh; margin: 8px 0 0; white-space: pre; overflow: auto; overscroll-behavior: contain; }
+.live-metric-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.live-metric-strip > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 7px; background: #0d1016; }
+.live-metric-strip span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+.live-metric-strip strong { font-size: 12px; }
+.package-inventory { margin: 12px 0; }
+.package-inventory > summary { list-style: none; }
+.package-inventory > summary::-webkit-details-marker { display: none; }
+.package-inventory .table-wrap { margin-top: 10px; max-height: 360px; }
+.server-tabs { position: sticky; z-index: 12; top: 64px; display: flex; gap: 4px; margin: 0 0 18px; padding: 5px; overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: rgba(11,13,18,.94); backdrop-filter: blur(16px); scrollbar-width: none; }
+.server-tabs::-webkit-scrollbar { display: none; }
+.server-tabs a { flex: 0 0 auto; min-height: 34px; display: grid; place-items: center; padding: 0 11px; border-radius: 6px; color: var(--muted); font-size: 11px; font-weight: 600; }
+.server-tabs a:hover { background: var(--surface-2); color: var(--text); }
+.server-page [id] { scroll-margin-top: 120px; }
+
 /* Responsive table -> cards. Only opt-in tables use this. */
 @media (max-width: 760px) {
   .responsive-table { min-width: 0; }
@@ -353,7 +380,7 @@
     backdrop-filter: blur(18px);
   }
   .brand, .nav-group, .sidebar-footer { display: none; }
-  .sidebar-nav { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 4px; }
+  .sidebar-nav { display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: 4px; }
   .nav-link {
     min-height: 52px;
     flex-direction: column;
@@ -395,6 +422,13 @@
 
   .server-overview-grid,
   .detail-split { grid-template-columns: 1fr; }
+  .metric-history-grid { grid-template-columns: 1fr; }
+  .server-tabs { top: 54px; margin-left: -13px; margin-right: -13px; border-left: 0; border-right: 0; border-radius: 0; padding-left: 13px; padding-right: 13px; }
+  .live-metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric-history-card svg { height: 92px; }
+  .operation-log { margin-left: -8px; margin-right: -8px; }
+  .operation-log > summary { width: 100%; }
+  .operation-log pre { max-height: 70vh; font-size: 10px; -webkit-overflow-scrolling: touch; }
   .server-overview-card,
   .server-metrics-card { padding: 14px; }
   .metric-grid { gap: 8px; }
@@ -422,6 +456,7 @@
 
   .public-status-page { width: min(100% - 26px, 860px); padding-top: 34px; }
 }
+.system-revision { font-family: "SFMono-Regular", Consolas, monospace; font-size: 20px; }
 
 @media (max-width: 390px) {
   .metric-grid { grid-template-columns: 1fr; }
