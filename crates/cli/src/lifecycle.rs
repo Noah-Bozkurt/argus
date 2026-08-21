@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::{
     collections::BTreeMap,
     env,
@@ -47,7 +47,9 @@ impl UninstallOptions {
 }
 
 pub fn env_path(name: &str, default: &str) -> PathBuf {
-    env::var_os(name).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(default))
+    env::var_os(name)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(default))
 }
 
 pub fn require_root() -> Result<()> {
@@ -122,7 +124,9 @@ pub fn run_with_input(program: &str, args: &[&str], input: &[u8]) -> Result<()> 
         .context("open child stdin")?
         .write_all(input)
         .with_context(|| format!("write input to {program}"))?;
-    let status = child.wait().with_context(|| format!("wait for {program}"))?;
+    let status = child
+        .wait()
+        .with_context(|| format!("wait for {program}"))?;
     if !status.success() {
         bail!("{program} failed with {status}");
     }
@@ -147,7 +151,9 @@ pub fn run_with_input_env(
         .context("open child stdin")?
         .write_all(input)
         .with_context(|| format!("write input to {program}"))?;
-    let status = child.wait().with_context(|| format!("wait for {program}"))?;
+    let status = child
+        .wait()
+        .with_context(|| format!("wait for {program}"))?;
     if !status.success() {
         bail!("{program} failed with {status}");
     }
@@ -155,7 +161,11 @@ pub fn run_with_input_env(
 }
 
 fn open_tty() -> Option<File> {
-    OpenOptions::new().read(true).write(true).open("/dev/tty").ok()
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .ok()
 }
 
 pub fn interactive_available() -> bool {
@@ -210,7 +220,9 @@ pub fn prompt_secret(prompt: &str) -> Result<String> {
         write!(tty, "{prompt}")?;
         tty.flush()?;
         EchoGuard::set(Some(&tty), false)?;
-        let guard = EchoGuard { tty: Some(tty.try_clone()?) };
+        let guard = EchoGuard {
+            tty: Some(tty.try_clone()?),
+        };
         let mut value = String::new();
         let read = BufReader::new(tty.try_clone()?).read_line(&mut value);
         drop(guard);
@@ -311,9 +323,19 @@ pub fn collect_registry_credentials(
 pub fn docker_login(credentials: &RegistryCredentials, docker_config: &Path) -> Result<()> {
     fs::create_dir_all(docker_config)?;
     fs::set_permissions(docker_config, fs::Permissions::from_mode(0o700))?;
-    let registry_host = credentials.registry.split('/').next().unwrap_or(&credentials.registry);
+    let registry_host = credentials
+        .registry
+        .split('/')
+        .next()
+        .unwrap_or(&credentials.registry);
     let mut child = Command::new("docker")
-        .args(["login", registry_host, "-u", &credentials.username, "--password-stdin"])
+        .args([
+            "login",
+            registry_host,
+            "-u",
+            &credentials.username,
+            "--password-stdin",
+        ])
         .env("DOCKER_CONFIG", docker_config)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -331,7 +353,10 @@ pub fn docker_login(credentials: &RegistryCredentials, docker_config: &Path) -> 
     Ok(())
 }
 
-pub fn save_registry_credentials(config_dir: &Path, credentials: &RegistryCredentials) -> Result<()> {
+pub fn save_registry_credentials(
+    config_dir: &Path,
+    credentials: &RegistryCredentials,
+) -> Result<()> {
     let existed = config_dir.exists();
     fs::create_dir_all(config_dir)?;
     if !existed {
@@ -420,7 +445,10 @@ pub fn write_env_file(path: &Path, values: &[(&str, &str)], mode: u32) -> Result
 }
 
 pub fn quote_env(value: &str) -> String {
-    if value.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:/@+-".contains(&b)) {
+    if value
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b"._:/@+-".contains(&b))
+    {
         return value.to_string();
     }
     format!("'{}'", value.replace('\'', "'\\''"))
@@ -475,7 +503,12 @@ pub fn uninstall(options: UninstallOptions) -> Result<()> {
 
     println!("[argus-uninstall] stopping Argus services");
     let _ = Command::new("systemctl")
-        .args(["disable", "--now", "argus-agent.service", "argus-helper.service"])
+        .args([
+            "disable",
+            "--now",
+            "argus-agent.service",
+            "argus-helper.service",
+        ])
         .status();
 
     let env_file = options.install_dir.join(".env");
@@ -520,7 +553,9 @@ pub fn uninstall(options: UninstallOptions) -> Result<()> {
         remove_path(&options.log_dir)?;
         let _ = Command::new("userdel").arg("argus").status();
         let _ = Command::new("groupdel").arg("argus").status();
-        println!("Argus and its data were removed. This cannot be recovered without an external backup.");
+        println!(
+            "Argus and its data were removed. This cannot be recovered without an external backup."
+        );
     } else {
         println!("Argus was removed. State and Docker volumes were preserved for recovery.");
         println!("Preserved state: {}", options.state_dir.display());
@@ -544,7 +579,13 @@ mod tests {
 
     #[test]
     fn env_quote_round_trip_for_credentials() {
-        for value in ["plain", "ghp_token", "value with space", "quote'value", "dollar$value"] {
+        for value in [
+            "plain",
+            "ghp_token",
+            "value with space",
+            "quote'value",
+            "dollar$value",
+        ] {
             let quoted = quote_env(value);
             assert_eq!(unquote_env(&quoted), value);
         }

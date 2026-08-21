@@ -1,11 +1,17 @@
-use anyhow::{bail, Result};
-use cli::lifecycle::{self, env_path, prompt_line, temp_dir, DEFAULT_CONFIG_DIR, DEFAULT_INSTALL_DIR, DEFAULT_LOG_DIR, DEFAULT_STATE_DIR};
+use anyhow::{Result, bail};
+use cli::lifecycle::{
+    self, DEFAULT_CONFIG_DIR, DEFAULT_INSTALL_DIR, DEFAULT_LOG_DIR, DEFAULT_STATE_DIR, env_path,
+    prompt_line, temp_dir,
+};
 use std::{
     collections::BTreeMap,
     env, fs,
     io::{IsTerminal, Write},
     path::{Path, PathBuf},
-    sync::{atomic::{AtomicBool, Ordering}, Arc},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::Duration,
 };
@@ -26,19 +32,33 @@ impl Ui {
     }
 
     fn paint(&self, code: &str, text: &str) -> String {
-        if self.color { format!("\x1b[{code}m{text}\x1b[0m") } else { text.to_string() }
+        if self.color {
+            format!("\x1b[{code}m{text}\x1b[0m")
+        } else {
+            text.to_string()
+        }
     }
 
-    pub(crate) fn title(&self) { println!("{}\n", self.paint("1;36", "Argus installer")); }
-    pub(crate) fn detail(&self, message: &str) { println!("{}", self.paint("2", &format!("    {message}"))); }
-    pub(crate) fn warning(&self, message: &str) { eprintln!("{} {message}", self.paint("33", "  !")); }
-    pub(crate) fn success_title(&self, message: &str) { println!("{}", self.paint("1;32", message)); }
+    pub(crate) fn title(&self) {
+        println!("{}\n", self.paint("1;36", "Argus installer"));
+    }
+    pub(crate) fn detail(&self, message: &str) {
+        println!("{}", self.paint("2", &format!("    {message}")));
+    }
+    pub(crate) fn warning(&self, message: &str) {
+        eprintln!("{} {message}", self.paint("33", "  !"));
+    }
+    pub(crate) fn success_title(&self, message: &str) {
+        println!("{}", self.paint("1;32", message));
+    }
 
     pub(crate) fn working<T>(&self, message: &str, work: impl FnOnce() -> Result<T>) -> Result<T> {
         if self.verbose || !std::io::stdout().is_terminal() {
             println!("{} {message}", self.paint("36", "  ›"));
             let result = work();
-            if result.is_ok() { println!("{} {message}", self.paint("32", "  ✓")); }
+            if result.is_ok() {
+                println!("{} {message}", self.paint("32", "  ✓"));
+            }
             return result;
         }
         let running = Arc::new(AtomicBool::new(true));
@@ -50,7 +70,11 @@ impl Ui {
             let mut i = 0usize;
             while flag.load(Ordering::Relaxed) {
                 let frame = frames[i % frames.len()];
-                let prefix = if color { format!("\x1b[36m  {frame}\x1b[0m") } else { format!("  {frame}") };
+                let prefix = if color {
+                    format!("\x1b[36m  {frame}\x1b[0m")
+                } else {
+                    format!("  {frame}")
+                };
                 print!("\r{prefix} {message_owned}\x1b[K");
                 let _ = std::io::stdout().flush();
                 i += 1;
@@ -62,13 +86,18 @@ impl Ui {
         let _ = spinner.join();
         print!("\r\x1b[2K");
         let _ = std::io::stdout().flush();
-        if result.is_ok() { println!("{} {message}", self.paint("32", "  ✓")); }
+        if result.is_ok() {
+            println!("{} {message}", self.paint("32", "  ✓"));
+        }
         result
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum InstallMode { ControlPlane, Agent }
+pub(crate) enum InstallMode {
+    ControlPlane,
+    Agent,
+}
 
 impl InstallMode {
     pub(crate) fn parse(value: &str) -> Result<Self> {
@@ -81,7 +110,9 @@ impl InstallMode {
 }
 
 pub(crate) fn select_mode(requested: Option<String>) -> Result<InstallMode> {
-    if let Some(value) = requested { return InstallMode::parse(&value); }
+    if let Some(value) = requested {
+        return InstallMode::parse(&value);
+    }
     if !lifecycle::interactive_available() {
         bail!("ARGUS_INSTALL_MODE must be control-plane or agent in non-interactive mode");
     }
@@ -133,7 +164,8 @@ pub(crate) struct Installer {
 impl Installer {
     pub(crate) fn new(mode: InstallMode, verbose: bool) -> Result<Self> {
         Ok(Self {
-            ui: Ui::new(verbose), mode,
+            ui: Ui::new(verbose),
+            mode,
             install_dir: env_path("ARGUS_INSTALL_DIR", DEFAULT_INSTALL_DIR),
             config_dir: env_path("ARGUS_CONFIG_DIR", DEFAULT_CONFIG_DIR),
             state_dir: env_path("ARGUS_STATE_DIR", DEFAULT_STATE_DIR),
@@ -141,57 +173,96 @@ impl Installer {
             docker_config: temp_dir("argus-installer-docker")?,
         })
     }
-    pub(crate) fn env_file(&self) -> PathBuf { self.install_dir.join(".env") }
-    pub(crate) fn compose_file(&self) -> PathBuf { self.install_dir.join("compose.yaml") }
-    pub(crate) fn caddy_file(&self) -> PathBuf { self.install_dir.join("Caddyfile") }
+    pub(crate) fn env_file(&self) -> PathBuf {
+        self.install_dir.join(".env")
+    }
+    pub(crate) fn compose_file(&self) -> PathBuf {
+        self.install_dir.join("compose.yaml")
+    }
+    pub(crate) fn caddy_file(&self) -> PathBuf {
+        self.install_dir.join("Caddyfile")
+    }
 }
 
 impl Drop for Installer {
-    fn drop(&mut self) { let _ = fs::remove_dir_all(&self.docker_config); }
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.docker_config);
+    }
 }
 
 pub(crate) fn parse_os_release() -> Result<BTreeMap<String, String>> {
     let path = Path::new("/etc/os-release");
-    if !path.is_file() { bail!("/etc/os-release is required"); }
+    if !path.is_file() {
+        bail!("/etc/os-release is required");
+    }
     let mut values = BTreeMap::new();
     for line in fs::read_to_string(path)?.lines() {
         if let Some((key, value)) = line.split_once('=') {
-            values.insert(key.to_string(), value.trim_matches(|c| c == '\'' || c == '"').to_string());
+            values.insert(
+                key.to_string(),
+                value.trim_matches(|c| c == '\'' || c == '"').to_string(),
+            );
         }
     }
     Ok(values)
 }
 
 pub(crate) fn validate_domain(value: &str) -> Result<()> {
-    if !value.contains('.') || value.starts_with('.') || value.ends_with('.')
-        || value.bytes().any(|b| !(b.is_ascii_alphanumeric() || b == b'.' || b == b'-')) {
+    if !value.contains('.')
+        || value.starts_with('.')
+        || value.ends_with('.')
+        || value
+            .bytes()
+            .any(|b| !(b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
+    {
         bail!("invalid fully-qualified domain: {value}");
     }
     Ok(())
 }
 
 pub(crate) fn validate_basic_user(value: &str) -> Result<()> {
-    if value.is_empty() || value.bytes().any(|b| !(b.is_ascii_alphanumeric() || b"._-".contains(&b))) {
+    if value.is_empty()
+        || value
+            .bytes()
+            .any(|b| !(b.is_ascii_alphanumeric() || b"._-".contains(&b)))
+    {
         bail!("ARGUS_BASIC_AUTH_USER may only contain letters, digits, dot, underscore and hyphen");
     }
     Ok(())
 }
 
 pub(crate) fn is_revision(value: &str) -> bool {
-    value.len() == 40 && value.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 pub(crate) fn new_secret(length: usize) -> String {
     let mut value = String::new();
-    while value.len() < length { value.push_str(&Uuid::new_v4().simple().to_string()); }
+    while value.len() < length {
+        value.push_str(&Uuid::new_v4().simple().to_string());
+    }
     value.truncate(length);
     value
 }
 
-pub(crate) fn value_or_secret(values: &BTreeMap<String, String>, key: &str, length: usize) -> String {
-    env::var(key).ok().or_else(|| values.get(key).cloned()).filter(|v| !v.is_empty()).unwrap_or_else(|| new_secret(length))
+pub(crate) fn value_or_secret(
+    values: &BTreeMap<String, String>,
+    key: &str,
+    length: usize,
+) -> String {
+    env::var(key)
+        .ok()
+        .or_else(|| values.get(key).cloned())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| new_secret(length))
 }
 
 pub(crate) fn value_or_uuid(values: &BTreeMap<String, String>, key: &str) -> String {
-    env::var(key).ok().or_else(|| values.get(key).cloned()).filter(|v| !v.is_empty()).unwrap_or_else(|| Uuid::new_v4().to_string())
+    env::var(key)
+        .ok()
+        .or_else(|| values.get(key).cloned())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| Uuid::new_v4().to_string())
 }

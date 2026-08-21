@@ -7,7 +7,7 @@ mod installer_control;
 mod installer_host;
 mod installer_shared;
 
-use installer_shared::{select_mode, InstallMode, Installer};
+use installer_shared::{InstallMode, Installer, select_mode};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -43,9 +43,11 @@ impl Installer {
         self.ui
             .working("Checking host requirements", || self.preflight())?;
 
-        let credentials = self.ui.working("Authenticating with the Argus registry", || {
-            self.authenticate_registry()
-        })?;
+        let credentials = self
+            .ui
+            .working("Authenticating with the Argus registry", || {
+                self.authenticate_registry()
+            })?;
 
         if self.mode == InstallMode::Agent {
             self.ui.working("Installing managed-node bundle", || {
@@ -106,7 +108,7 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::installer_shared::{is_revision, InstallMode};
+    use super::installer_shared::{InstallMode, is_revision};
 
     #[test]
     fn revision_validation_is_strict() {
