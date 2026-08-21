@@ -23,6 +23,7 @@ RUN for package in crates/agent crates/cli crates/common crates/helper crates/pr
       printf 'fn main() {}\n' >"$package/src/main.rs"; \
       printf '\n' >"$package/src/lib.rs"; \
     done \
+    && printf 'fn main() {}\n' >crates/cli/src/installer.rs \
     && cargo build --locked --release --target x86_64-unknown-linux-musl -p agent -p helper -p cli
 
 COPY crates crates
@@ -34,6 +35,7 @@ FROM scratch AS artifact
 COPY --from=build /src/target/x86_64-unknown-linux-musl/release/argus-agent /out/argus-agent
 COPY --from=build /src/target/x86_64-unknown-linux-musl/release/argus-helper /out/argus-helper
 COPY --from=build /src/target/x86_64-unknown-linux-musl/release/argusctl /out/argusctl
+COPY --from=build /src/target/x86_64-unknown-linux-musl/release/argus-installer /out/argus-installer
 COPY deploy/compose/compose.yaml /deploy/compose.yaml
 COPY deploy/compose/Caddyfile.template /deploy/Caddyfile.template
 COPY deploy/systemd/argus-agent.service /deploy/systemd/argus-agent.service
