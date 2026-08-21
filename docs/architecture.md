@@ -76,7 +76,9 @@ The current installer entry point is `https://install.noahbozkurt.nl`; see [Inst
 
 The current global shell exposes Overview, Projects, Servers, Jobs and Notifications. Project workspaces are grouped into Deploy, Infrastructure, Observe, Work and Content.
 
-The pre-production operator surface is still wrapped in temporary browser-level authentication. First-class Argus identity is a current product limitation, not an architectural replacement for the authorization checks inside the control plane.
+Human authentication is first-party. The Web app and Payload CMS use the Payload `workspace-users` auth collection and share an HTTP-only session cookie across the configured Argus domains. Workspace roles are `owner`, `admin`, `member` and `client`; client accounts are denied access to the operator control panel. See [Authentication](authentication.md).
+
+Web still authenticates its server-to-server Control API calls with `ARGUS_WEB_API_TOKEN`. Per-request forwarding of the authenticated operator's `argusUserId` into Control API audit attribution is not complete yet; the current client still uses the installation's bootstrap `ARGUS_USER_ID` for that attribution.
 
 ## Control API
 
@@ -172,7 +174,7 @@ The architecture is intentionally not claiming production completeness. Importan
 
 - single-host control plane rather than HA/multi-node operation;
 - amd64-only supported installation;
-- temporary browser-level operator authentication;
+- per-user operator identity is not yet forwarded through every Web -> Control API request and audit path;
 - no general production secrets manager yet;
 - no provider provisioning or Cloudflare/DNS mutation layer yet;
 - desired-state enforcement remains limited to operations with explicit safety semantics;
