@@ -26,22 +26,29 @@ export default async function MonitorSchedulesSection({ projectId }: { projectId
             <article className="resource-card" key={schedule.site_id}>
               <div className="resource-card-head">
                 <div><h4>{schedule.site_name}</h4><div className="resource-meta">{schedule.has_monitor_config ? 'Monitor configured' : 'Configure site monitoring first'}</div></div>
-                <span className={`badge ${schedule.enabled ? 'success' : ''}`}>{schedule.enabled ? 'Scheduled' : 'Manual only'}</span>
+                <span className={`badge ${schedule.enabled ? 'success' : ''}`}>{schedule.enabled ? 'Scheduled' : 'Paused'}</span>
               </div>
-              {schedule.schedule_id ? <div className="info-grid" style={{ marginTop: 12 }}><div className="info-item"><span className="info-label">Interval</span><span className="info-value">{formatInterval(schedule.interval_seconds)}</span></div><div className="info-item"><span className="info-label">Next run</span><span className="info-value">{formatDate(schedule.next_run_at)}</span></div><div className="info-item"><span className="info-label">Last queued</span><span className="info-value">{formatDate(schedule.last_enqueued_at)}</span></div></div> : null}
+              {schedule.schedule_id ? <div className="info-grid" style={{ marginTop: 12 }}><div className="info-item"><span className="info-label">Interval</span><span className="info-value">{formatInterval(schedule.interval_seconds)}</span></div><div className="info-item"><span className="info-label">Next run</span><span className="info-value">{schedule.enabled ? formatDate(schedule.next_run_at) : 'Paused'}</span></div><div className="info-item"><span className="info-label">Last queued</span><span className="info-value">{formatDate(schedule.last_enqueued_at)}</span></div></div> : null}
               {schedule.has_monitor_config ? (
-                <details className="resource-editor">
-                  <summary className="button small">Configure schedule</summary>
-                  <div className="resource-editor-body">
-                    <form action={async (formData) => { 'use server'; await saveMonitorScheduleAction(projectId, schedule.site_id, formData) }}>
-                      <div className="form-grid">
-                        <label style={{ display: 'flex', gridTemplateColumns: 'auto 1fr', alignItems: 'center' }}><input name="enabled" type="checkbox" defaultChecked={schedule.enabled} /> Enable automatic checks</label>
-                        <label>Interval seconds<input name="interval_seconds" type="number" min={60} max={86400} step={60} defaultValue={schedule.interval_seconds} required /></label>
-                      </div>
-                      <button type="submit">Save schedule</button>
-                    </form>
-                  </div>
-                </details>
+                <div className="resource-inline-actions" style={{ marginTop: 12 }}>
+                  <form action={async (formData) => { 'use server'; await saveMonitorScheduleAction(projectId, schedule.site_id, formData) }}>
+                    {schedule.enabled ? null : <input type="hidden" name="enabled" value="on" />}
+                    <input type="hidden" name="interval_seconds" value={String(schedule.interval_seconds)} />
+                    <button className="small" type="submit">{schedule.enabled ? 'Pause checks' : 'Resume checks'}</button>
+                  </form>
+                  <details className="resource-editor">
+                    <summary className="button small">Configure schedule</summary>
+                    <div className="resource-editor-body">
+                      <form action={async (formData) => { 'use server'; await saveMonitorScheduleAction(projectId, schedule.site_id, formData) }}>
+                        <div className="form-grid">
+                          <label style={{ display: 'flex', gridTemplateColumns: 'auto 1fr', alignItems: 'center' }}><input name="enabled" type="checkbox" defaultChecked={schedule.enabled} /> Enable automatic checks</label>
+                          <label>Interval seconds<input name="interval_seconds" type="number" min={60} max={86400} step={60} defaultValue={schedule.interval_seconds} required /></label>
+                        </div>
+                        <button type="submit">Save schedule</button>
+                      </form>
+                    </div>
+                  </details>
+                </div>
               ) : null}
             </article>
           ))}
