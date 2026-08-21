@@ -25,12 +25,63 @@ ROLLBACK_IN_PROGRESS=0
 CURRENT_REVISION=""
 TARGET_REVISION=""
 REQUESTED_VERSION="${ARGUS_TARGET_VERSION:-main}"
+PROGRESS_PID=""
+PROGRESS_MESSAGE=""
+PROGRESS_ENABLED=0
 
-log() { printf '[argus-update] %s\n' "$*"; }
-warn() { printf '[argus-update] warning: %s\n' "$*" >&2; }
-die() { printf '[argus-update] error: %s\n' "$*" >&2; exit 1; }
+if [[ ! -t 1 && -w /dev/tty && "${TERM:-}" != "dumb" ]]; then
+  PROGRESS_ENABLED=1
+fi
+
+progress_stop() {
+  if [[ -z "$PROGRESS_PID" ]]; then
+    return
+  fi
+  kill "$PROGRESS_PID" >/dev/null 2>&1 || true
+  wait "$PROGRESS_PID" 2>/dev/null || true
+  PROGRESS_PID=""
+  PROGRESS_MESSAGE=""
+  printf '\r\033[2K' >/dev/tty 2>/dev/null || true
+}
+
+progress_start() {
+  local message="$1"
+  [[ "$PROGRESS_ENABLED" == "1" ]] || return
+  progress_stop
+  PROGRESS_MESSAGE="$message"
+  (
+    local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏') i=0 frame
+    while :; do
+      frame="${frames[$((i % ${#frames[@]}))]}"
+      if [[ -z "${NO_COLOR:-}" ]]; then
+        printf '\r\033[2K\033[36m  %s\033[0m %s' "$frame" "$message" >/dev/tty
+      else
+        printf '\r\033[2K  %s %s' "$frame" "$message" >/dev/tty
+      fi
+      i=$((i + 1))
+      sleep 0.1
+    done
+  ) &
+  PROGRESS_PID=$!
+}
+
+log() {
+  case "$*" in
+    "resolved target revision:"*|"installing target deployment assets and native binaries"|"starting target control plane "*|"update succeeded:"*) progress_stop ;;
+  esac
+  printf '[argus-update] %s\n' "$*"
+  case "$*" in
+    "pre-fetching "*) [[ -n "$PROGRESS_PID" ]] || progress_start "Downloading update" ;;
+    "creating consistent PostgreSQL backup") progress_start "Creating rollback backup" ;;
+    "installing target deployment assets and native binaries") progress_start "Installing update" ;;
+    "starting target control plane "*) progress_start "Starting Argus services" ;;
+  esac
+}
+warn() { progress_stop; printf '[argus-update] warning: %s\n' "$*" >&2; }
+die() { progress_stop; printf '[argus-update] error: %s\n' "$*" >&2; exit 1; }
 
 cleanup() {
+  progress_stop
   if [[ -n "$TARGET_BUNDLE_CONTAINER" ]]; then
     docker rm -f "$TARGET_BUNDLE_CONTAINER" >/dev/null 2>&1 || true
   fi
@@ -515,6 +566,7 @@ start_target() {
   systemctl enable --now argus-helper.service
   systemctl enable --now argus-agent.service
 
+  progress_stop
   /usr/local/bin/argusctl smoke
 }
 
