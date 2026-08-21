@@ -140,11 +140,13 @@ impl UpdateUi {
         }
 
         if let Some(revision) = line.strip_prefix("[argus-update] current installed revision: ") {
-            self.detail(&format!("Current: {}", Self::short_revision(revision)));
+            self.step(&format!(
+                "Checking current installation ({})",
+                Self::short_revision(revision)
+            ));
             return;
         }
         if line == "[argus-update] verifying current installation before update" {
-            self.step("Checking current installation");
             return;
         }
         if line.starts_with("Argus first-server smoke test passed:") {
@@ -173,7 +175,9 @@ impl UpdateUi {
             ));
             return;
         }
-        if let Some(revision) = line.strip_prefix("[argus-update] already running requested revision ") {
+        if let Some(revision) =
+            line.strip_prefix("[argus-update] already running requested revision ")
+        {
             self.success(&format!(
                 "Already up to date ({})",
                 Self::short_revision(revision)
@@ -182,10 +186,11 @@ impl UpdateUi {
             return;
         }
         if line.starts_with("[argus-update] storage preflight: ") {
-            self.success("Backup storage check passed");
+            self.step("Checking backup storage");
             return;
         }
         if line == "[argus-update] quiescing native Agent/Helper and control-plane writers" {
+            self.success("Backup storage is sufficient");
             self.step("Stopping Argus services");
             return;
         }
