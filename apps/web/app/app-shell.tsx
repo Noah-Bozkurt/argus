@@ -3,8 +3,9 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import type { ReactNode } from 'react'
+import type { SessionUser } from '../lib/auth'
 
-type IconName = 'overview' | 'projects' | 'servers' | 'jobs' | 'notifications' | 'settings'
+type IconName = 'overview' | 'projects' | 'servers' | 'jobs' | 'notifications' | 'settings' | 'logout'
 
 function Icon({ name }: { name: IconName }) {
   const paths: Record<IconName, ReactNode> = {
@@ -14,6 +15,7 @@ function Icon({ name }: { name: IconName }) {
     jobs: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
     notifications: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></>,
     settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 3.6 15a1.7 1.7 0 0 0-1.5-1H2v-4h.1A1.7 1.7 0 0 0 3.6 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 8 4.6a1.7 1.7 0 0 0 1-1.5V3h4v.1A1.7 1.7 0 0 0 14 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.5 1h.1v4h-.1a1.7 1.7 0 0 0-1.5 1z"/></>,
+    logout: <><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/></>,
   }
 
   return <svg className="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>
@@ -37,9 +39,14 @@ function titleFromPath(pathname: string): string {
   return parts.at(-1)?.replaceAll('-', ' ').replace(/^./, (value) => value.toUpperCase()) ?? 'Argus'
 }
 
-export default function AppShell({ children }: { children: ReactNode }) {
+function userInitial(user: SessionUser | null): string {
+  const source = user?.displayName?.trim() || user?.email || 'A'
+  return source.charAt(0).toUpperCase()
+}
+
+export default function AppShell({ children, user }: { children: ReactNode; user: SessionUser | null }) {
   const pathname = usePathname()
-  const publicPage = pathname.startsWith('/status/') || pathname === '/healthz'
+  const publicPage = pathname.startsWith('/status/') || pathname === '/healthz' || pathname === '/login'
 
   if (publicPage) return <>{children}</>
 
@@ -68,7 +75,16 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="sidebar-footer">
+          {user ? (
+            <div className="signed-in-user">
+              <strong>{user.displayName || user.email}</strong>
+              <small>{user.role}</small>
+            </div>
+          ) : null}
           <div className="nav-link muted"><Icon name="settings" /><span>Settings</span></div>
+          <form action="/auth/logout" method="post">
+            <button className="nav-link logout-button" type="submit"><Icon name="logout" /><span>Sign out</span></button>
+          </form>
           <div className="version">Argus <span>v0.1.0</span></div>
         </div>
       </aside>
@@ -82,7 +98,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <div className="topbar-actions">
             <span className="control-status"><span className="status-dot online" />Control plane</span>
             <Link className="icon-button" href="/notifications" aria-label="Notifications"><Icon name="notifications" /></Link>
-            <div className="avatar" title="Operator">A</div>
+            <form className="mobile-signout" action="/auth/logout" method="post">
+              <button className="icon-button" type="submit" aria-label="Sign out" title="Sign out"><Icon name="logout" /></button>
+            </form>
+            <div className="avatar" title={user?.email ?? 'Argus account'}>{userInitial(user)}</div>
           </div>
         </header>
         <div className="page-frame">{children}</div>

@@ -1,6 +1,6 @@
 import type { Access, PayloadRequest, Where } from 'payload'
 
-type WorkspaceRole = 'admin' | 'member'
+type WorkspaceRole = 'owner' | 'admin' | 'member' | 'client'
 type ProjectRole = 'manager' | 'editor' | 'viewer'
 
 type WorkspaceUser = {
@@ -26,6 +26,10 @@ export function relationshipID(value: unknown): string | number | null {
 
 function workspaceUser(req: PayloadRequest): WorkspaceUser | null {
   return (req.user as WorkspaceUser | null | undefined) ?? null
+}
+
+function hasWorkspaceAdminRole(user: WorkspaceUser | null): boolean {
+  return user?.role === 'owner' || user?.role === 'admin'
 }
 
 export function userOrganizationID(req: PayloadRequest): string | null {
@@ -69,7 +73,7 @@ export async function hasProjectRole(
   const user = workspaceUser(req)
   const organizationId = user?.organizationId
   if (!user || !organizationId) return false
-  if (user.role === 'admin') {
+  if (hasWorkspaceAdminRole(user)) {
     const project = await req.payload.findByID({
       collection: 'project-spaces',
       id: projectID,
@@ -103,7 +107,7 @@ async function projectDocumentWhere(
   const user = workspaceUser(req)
   const organizationId = user?.organizationId
   if (!user || !organizationId) return false
-  if (user.role === 'admin') {
+  if (hasWorkspaceAdminRole(user)) {
     return { organizationId: { equals: organizationId } } as Where
   }
   const projectIDs = await membershipProjectIDs(req, minimumRole)
@@ -131,7 +135,7 @@ export const readProjectSpaces: Access = async ({ req }) => {
   const user = workspaceUser(req)
   const organizationId = user?.organizationId
   if (!user || !organizationId) return false
-  if (user.role === 'admin') {
+  if (hasWorkspaceAdminRole(user)) {
     return { organizationId: { equals: organizationId } } as Where
   }
   const projectIDs = await membershipProjectIDs(req, 'viewer')
@@ -146,14 +150,14 @@ export const readProjectSpaces: Access = async ({ req }) => {
 
 export const createProjectSpace: Access = ({ req }) => {
   const user = workspaceUser(req)
-  return Boolean(user?.role === 'admin' && user.organizationId)
+  return Boolean(hasWorkspaceAdminRole(user) && user?.organizationId)
 }
 
 export const manageProjectSpaces: Access = async ({ req }) => {
   const user = workspaceUser(req)
   const organizationId = user?.organizationId
   if (!user || !organizationId) return false
-  if (user.role === 'admin') {
+  if (hasWorkspaceAdminRole(user)) {
     return { organizationId: { equals: organizationId } } as Where
   }
   const projectIDs = await membershipProjectIDs(req, 'manager')

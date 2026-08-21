@@ -12,9 +12,6 @@ __ARGUS_DOMAIN__ {
 	}
 
 	handle {
-		basic_auth {
-			__BASIC_AUTH_USER__ __BASIC_AUTH_HASH__
-		}
 		reverse_proxy web:3000
 	}
 }
@@ -28,9 +25,6 @@ __ARGUS_CONTENT_DOMAIN__ {
 	}
 
 	handle {
-		basic_auth {
-			__BASIC_AUTH_USER__ __BASIC_AUTH_HASH__
-		}
 		reverse_proxy content:3000
 	}
 }
