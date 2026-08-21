@@ -10,7 +10,23 @@ function statusClass(status: string): string {
 }
 
 export default async function ReadinessSection({ projectId }: { projectId: string }) {
-  const assessment = await getProjectReadiness(projectId)
+  let assessment
+  try {
+    assessment = await getProjectReadiness(projectId)
+  } catch (error) {
+    console.error('Unable to load project readiness', error)
+    return (
+      <section>
+        <h2>Release / launch readiness</h2>
+        <p>Read-only assessment of current Argus signals. This view never deploys, restarts, updates or otherwise mutates resources.</p>
+        <div className="empty-state">
+          <strong>Readiness is temporarily unavailable</strong>
+          The rest of this project remains usable. Reload this page after the Control API issue has been resolved.
+        </div>
+      </section>
+    )
+  }
+
   const checks = [...assessment.checks].sort((left, right) => {
     const leftIndex = statusOrder.indexOf(left.status)
     const rightIndex = statusOrder.indexOf(right.status)
