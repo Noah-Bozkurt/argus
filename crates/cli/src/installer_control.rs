@@ -1,0 +1,186 @@
+use super::installer_shared::{ControlConfig, Installer};
+use anyhow::{bail, Context, Result};
+use cli::lifecycle::{self, output, write_env_file};
+use serde_json::{json, Value};
+use std::{env, fs, os::unix::fs::PermissionsExt, process::{Command, Stdio}, thread, time::Duration};
+
+impl Installer {
+    pub(crate) fn ensure_argus_user(&self) -> Result<()> {
+        if !Command::new("getent").args(["group", "argus"]).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|status| status.success()) {
+            lifecycle::run_quiet("groupadd", &["--system", "argus"])?;
+        }
+        if !Command::new("id").arg("argus").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|status| status.success()) {
+            lifecycle::run_quiet("useradd", &["--system", "--gid", "argus", "--home-dir", self.state_dir.to_str().context("state path")?, "--shell", "/usr/sbin/nologin", "argus"])?;
+        }
+        fs::create_dir_all(&self.config_dir)?;
+        fs::create_dir_all(self.state_dir.join("backups"))?;
+        lifecycle::run_quiet("chown", &["root:argus", self.config_dir.to_str().context("config path")?])?;
+        fs::set_permissions(&self.config_dir, fs::Permissions::from_mode(0o750))?;
+        lifecycle::run_quiet("chown", &["-R", "argus:argus", self.state_dir.to_str().context("state path")?])?;
+        fs::set_permissions(&self.state_dir, fs::Permissions::from_mode(0o750))?;
+        Ok(())
+    }
+
+    pub(crate) fn write_runtime_env(&self, config: &ControlConfig) -> Result<()> {
+        let values = [
+            ("ARGUS_REGISTRY", config.registry.as_str()), ("ARGUS_VERSION", config.version.as_str()),
+            ("ARGUS_DOMAIN", config.domain.as_str()), ("ARGUS_CONTENT_DOMAIN", config.content_domain.as_str()),
+            ("ARGUS_BASIC_AUTH_USER", config.basic_auth_user.as_str()), ("ARGUS_BASIC_AUTH_PASSWORD", config.basic_auth_password.as_str()),
+            ("ARGUS_POSTGRES_PASSWORD", config.postgres_password.as_str()), ("ARGUS_WEB_API_TOKEN", config.web_api_token.as_str()),
+            ("ARGUS_WORKER_TOKEN", config.worker_token.as_str()), ("ARGUS_CONTENT_SYNC_TOKEN", config.content_sync_token.as_str()),
+            ("PAYLOAD_SECRET", config.payload_secret.as_str()), ("ARGUS_ORG_ID", config.org_id.as_str()),
+            ("ARGUS_USER_ID", config.user_id.as_str()), ("ARGUS_BOOTSTRAP_PROJECT_ID", config.bootstrap_project_id.as_str()),
+            ("ARGUS_BOOTSTRAP_ENVIRONMENT_ID", config.bootstrap_environment_id.as_str()), ("ARGUS_SERVER_ID", config.server_id.as_str()),
+            ("ARGUS_GITHUB_TOKEN", config.github_token.as_str()), ("ARGUS_RUST_LOG", config.rust_log.as_str()),
+        ];
+        write_env_file(&self.env_file(), &values, 0o600)
+    }
+
+    pub(crate) fn generate_caddy_config(&self, config: &ControlConfig) -> Result<()> {
+        if self.caddy_file().is_file() && env::var("ARGUS_RECONFIGURE_CADDY").as_deref() != Ok("1") {
+            self.ui.detail("Preserving existing Caddyfile");
+            return Ok(());
+        }
+        let hash = self.docker_output(&["run", "--rm", "caddy:2-alpine", "caddy", "hash-password", "--plaintext", &config.basic_auth_password])?;
+        let template = fs::read_to_string(self.install_dir.join("Caddyfile.template"))?;
+        let rendered = template.replace("__ARGUS_DOMAIN__", &config.domain).replace("__ARGUS_CONTENT_DOMAIN__", &config.content_domain).replace("__BASIC_AUTH_USER__", &config.basic_auth_user).replace("__BASIC_AUTH_HASH__", &hash);
+        if rendered.contains("__ARGUS_") || rendered.contains("__BASIC_AUTH_") { bail!("Caddy template still contains unresolved placeholders"); }
+        fs::write(self.caddy_file(), rendered)?;
+        fs::set_permissions(self.caddy_file(), fs::Permissions::from_mode(0o640))?;
+        self.docker_status(&["run", "--rm", "-v", &format!("{}:/etc/caddy/Caddyfile:ro", self.caddy_file().display()), "caddy:2-alpine", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"])
+    }
+
+    fn configure_firewall_if_active(&self) -> Result<()> {
+        if !lifecycle::command_exists("ufw") { return Ok(()); }
+        let status = output("ufw", &["status"])?;
+        if status.lines().any(|line| line.trim() == "Status: active") {
+            for rule in ["80/tcp", "443/tcp", "443/udp"] { lifecycle::run_quiet("ufw", &["allow", rule])?; }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn start_control_plane(&self) -> Result<()> {
+        self.compose_status(&["config"])?;
+        self.compose_status(&["pull"])?;
+        self.configure_firewall_if_active()?;
+        self.compose_status(&["up", "-d"])?;
+        for _ in 0..90 {
+            if Command::new("curl").args(["-fsS", "http://127.0.0.1:8080/health"]).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|status| status.success()) { return Ok(()); }
+            thread::sleep(Duration::from_secs(2));
+        }
+        let _ = self.compose_status(&["ps"]);
+        let _ = self.compose_status(&["logs", "--tail=120", "control-api", "postgres"]);
+        bail!("Control API did not become healthy")
+    }
+
+    pub(crate) fn bootstrap_control_plane(&self, config: &ControlConfig) -> Result<()> {
+        let hostname = output("hostname", &["-f"]).or_else(|_| output("hostname", &[]))?;
+        let sql = r#"
+INSERT INTO organizations(id,name) VALUES (:'org_id'::uuid, :'org_name') ON CONFLICT(id) DO NOTHING;
+INSERT INTO users(id,organization_id,email) VALUES (:'user_id'::uuid, :'org_id'::uuid, :'operator_email') ON CONFLICT(id) DO NOTHING;
+INSERT INTO projects(id,organization_id,name,client_id,description,preset,status,tags)
+VALUES (:'project_id'::uuid, :'org_id'::uuid, 'Argus Control Plane', NULL, 'Bootstrap project for the server running Argus itself.', 'infrastructure', 'ACTIVE', '[]'::jsonb) ON CONFLICT(id) DO NOTHING;
+INSERT INTO environments(id,organization_id,project_id,name,type,description,is_protected,sort_order)
+VALUES (:'environment_id'::uuid, :'org_id'::uuid, :'project_id'::uuid, 'Control Plane', 'production', 'Environment containing the Argus host.', TRUE, 0) ON CONFLICT(id) DO NOTHING;
+INSERT INTO servers(id,organization_id,project_id,environment_id,hostname)
+VALUES (:'server_id'::uuid, :'org_id'::uuid, :'project_id'::uuid, :'environment_id'::uuid, :'host_name') ON CONFLICT(id) DO NOTHING;
+"#;
+        self.compose_with_input(&["exec", "-T", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "argus", "-d", "argus", "-v", &format!("org_id={}", config.org_id), "-v", &format!("user_id={}", config.user_id), "-v", &format!("project_id={}", config.bootstrap_project_id), "-v", &format!("environment_id={}", config.bootstrap_environment_id), "-v", &format!("server_id={}", config.server_id), "-v", &format!("org_name={}", config.org_name), "-v", &format!("operator_email={}", config.operator_email), "-v", &format!("host_name={hostname}")], sql.as_bytes())
+    }
+
+    pub(crate) fn write_helper_env(&self) -> Result<()> {
+        let allowed = env::var("ARGUS_ALLOWED_SERVICES").unwrap_or_default();
+        let backup_dir = self.state_dir.join("backups").display().to_string();
+        write_env_file(&self.config_dir.join("helper.env"), &[("ARGUS_HELPER_SOCKET", "/run/argus/helper.sock"), ("ARGUS_ALLOWED_SERVICES", allowed.as_str()), ("ARGUS_BACKUP_DIR", backup_dir.as_str())], 0o640)?;
+        lifecycle::run_quiet("chown", &["root:argus", self.config_dir.join("helper.env").to_str().context("helper env path")?])
+    }
+
+    pub(crate) fn write_agent_env(&self, control_plane_url: &str, server_id: &str, rust_log: &str, enrollment_token: Option<&str>) -> Result<()> {
+        let agent_config = self.state_dir.join("agent.json").display().to_string();
+        let managed = env::var("ARGUS_MANAGED_SERVICES").unwrap_or_default();
+        let mut values = vec![("ARGUS_CONTROL_PLANE_URL", control_plane_url), ("ARGUS_SERVER_ID", server_id), ("ARGUS_AGENT_CONFIG", agent_config.as_str()), ("ARGUS_HELPER_SOCKET", "/run/argus/helper.sock"), ("ARGUS_MANAGED_SERVICES", managed.as_str()), ("RUST_LOG", rust_log)];
+        if let Some(token) = enrollment_token { values.push(("ARGUS_ENROLLMENT_TOKEN", token)); }
+        write_env_file(&self.config_dir.join("agent.env"), &values, 0o640)?;
+        lifecycle::run_quiet("chown", &["root:argus", self.config_dir.join("agent.env").to_str().context("agent env path")?])
+    }
+
+    pub(crate) fn enroll_local_agent(&self, config: &ControlConfig) -> Result<()> {
+        self.write_helper_env()?;
+        lifecycle::run_quiet("systemctl", &["enable", "--now", "argus-helper.service"])?;
+        let agent_json = self.state_dir.join("agent.json");
+        if agent_json.is_file() && fs::metadata(&agent_json)?.len() > 0 {
+            self.ui.detail("Existing local Agent identity found; skipping enrollment");
+            self.write_agent_env("http://127.0.0.1:8080", &config.server_id, &config.rust_log, None)?;
+            lifecycle::run_quiet("systemctl", &["enable", "--now", "argus-agent.service"])?;
+            return Ok(());
+        }
+        let payload = json!({"server_id": config.server_id, "ttl_seconds": 1800}).to_string();
+        let response = output("curl", &["-fsS", "-H", &format!("Authorization: Bearer {}", config.web_api_token), "-H", &format!("x-argus-org-id: {}", config.org_id), "-H", &format!("x-argus-user-id: {}", config.user_id), "-H", "content-type: application/json", "-d", &payload, "http://127.0.0.1:8080/enrollment/tokens"])?;
+        let token = serde_json::from_str::<Value>(&response)?.get("token").and_then(Value::as_str).context("enrollment response is missing token")?.to_string();
+        self.write_agent_env("http://127.0.0.1:8080", &config.server_id, &config.rust_log, Some(&token))?;
+        lifecycle::run_quiet("systemctl", &["enable", "--now", "argus-agent.service"])?;
+        for _ in 0..60 {
+            if agent_json.is_file() && fs::metadata(&agent_json)?.len() > 0 {
+                let query = format!("SELECT EXISTS(SELECT 1 FROM agents WHERE server_id='{}'::uuid)", config.server_id);
+                if self.compose_output(&["exec", "-T", "postgres", "psql", "-U", "argus", "-d", "argus", "-Atc", &query])? == "t" {
+                    self.write_agent_env("http://127.0.0.1:8080", &config.server_id, &config.rust_log, None)?;
+                    return Ok(());
+                }
+            }
+            thread::sleep(Duration::from_secs(2));
+        }
+        let _ = lifecycle::run("journalctl", &["-u", "argus-helper.service", "-n", "80", "--no-pager"]);
+        let _ = lifecycle::run("journalctl", &["-u", "argus-agent.service", "-n", "80", "--no-pager"]);
+        bail!("local Argus Agent did not enroll successfully")
+    }
+
+    fn verify_compose_service(&self, service: &str, require_health: bool) -> Result<()> {
+        let cid = self.compose_output(&["ps", "-q", service])?;
+        if cid.is_empty() { bail!("Compose service '{service}' has no container"); }
+        if self.docker_output(&["inspect", "-f", "{{.State.Running}}", &cid])? != "true" { bail!("Compose service '{service}' is not running"); }
+        if require_health {
+            let health = self.docker_output(&["inspect", "-f", "{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}", &cid])?;
+            if health != "healthy" { bail!("Compose service '{service}' is not healthy (status: {health})"); }
+        }
+        Ok(())
+    }
+
+    fn wait_for_https(&self, url: &str) -> bool {
+        for _ in 0..45 {
+            if let Ok(output) = Command::new("curl").args(["-sS", "--connect-timeout", "5", "-o", "/dev/null", "-w", "%{http_code}", url]).output() {
+                if matches!(String::from_utf8_lossy(&output.stdout).trim(), "200" | "401" | "302" | "307" | "308") { return true; }
+            }
+            thread::sleep(Duration::from_secs(2));
+        }
+        false
+    }
+
+    pub(crate) fn verify_installation(&self, config: &ControlConfig) -> Result<()> {
+        for service in ["postgres", "control-api", "worker", "web", "content"] { self.verify_compose_service(service, true)?; }
+        self.verify_compose_service("caddy", false)?;
+        lifecycle::run_quiet("systemctl", &["is-active", "--quiet", "argus-helper.service"])?;
+        lifecycle::run_quiet("systemctl", &["is-active", "--quiet", "argus-agent.service"])?;
+        lifecycle::run_quiet("curl", &["-fsS", "http://127.0.0.1:8080/health"])?;
+        if !self.wait_for_https(&format!("https://{}/", config.domain)) { let _ = self.compose_status(&["logs", "--tail=120", "caddy"]); bail!("Argus HTTPS did not become reachable. Verify DNS for {} and external firewall access to ports 80/443", config.domain); }
+        if !self.wait_for_https(&format!("https://{}/", config.content_domain)) { let _ = self.compose_status(&["logs", "--tail=120", "caddy"]); bail!("Payload HTTPS did not become reachable. Verify DNS for {} and external firewall access to ports 80/443", config.content_domain); }
+        lifecycle::run_quiet("curl", &["-fsS", "-u", &format!("{}:{}", config.basic_auth_user, config.basic_auth_password), &format!("https://{}/healthz", config.domain)])?;
+        lifecycle::run_quiet("curl", &["-fsS", "-u", &format!("{}:{}", config.basic_auth_user, config.basic_auth_password), &format!("https://{}/healthz", config.content_domain)])?;
+        Ok(())
+    }
+
+    pub(crate) fn print_summary(&self, config: &ControlConfig) {
+        println!();
+        self.ui.success_title("Argus is ready");
+        println!();
+        println!("Web:      https://{}", config.domain);
+        println!("Content:  https://{}", config.content_domain);
+        println!("User:     {}", config.basic_auth_user);
+        println!("Password: {}", config.basic_auth_password);
+        if config.generated_basic_password { println!(); self.ui.detail(&format!("A password was generated and stored in {}", self.env_file().display())); }
+        println!("Version:  {}", config.version);
+        println!("Server:   {}", config.server_id);
+        println!();
+        self.ui.detail("Diagnostics: argusctl status / sudo argusctl smoke");
+        self.ui.detail("Update: sudo argusctl update --version main");
+    }
+}
