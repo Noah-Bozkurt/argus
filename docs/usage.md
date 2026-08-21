@@ -19,7 +19,7 @@ A public status page does not use the authenticated control-panel shell.
 
 ### Command palette and shortcuts
 
-Use **Cmd/Ctrl+K** or `/` outside a text field to open the global command palette. It searches projects, managed servers, recent jobs and primary Argus destinations. Projects and servers can be pinned, and recently visited resources are remembered locally in the browser.
+Use **Cmd/Ctrl+K** (or `/` outside a text field) to open the global command palette. It searches projects, managed servers, recent jobs and primary Argus destinations. Projects and servers can be pinned, and recently visited resources are remembered locally in the browser.
 
 Keyboard navigation also supports quick `g` sequences:
 
