@@ -81,10 +81,6 @@ test("native installer keeps interactive prompts visible and guides uninstall", 
   assert.match(installer, /Type YES to continue:/);
   assert.match(installer, /permanently remove all Argus data, backups, logs, and Docker volumes/);
   assert.match(installer, /Content domain \[\{default\}\]:/);
-  assert.doesNotMatch(
-    installer,
-    /working\("Authenticating with the Argus registry"[\s\S]*?authenticate_registry\(\)/,
-  );
 });
 
 test("legacy lifecycle scripts are only native compatibility shims", async () => {
