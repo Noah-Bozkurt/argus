@@ -8,6 +8,10 @@ publish = false
 name = "argusctl"
 path = "src/main.rs"
 
+[[bin]]
+name = "argus-installer"
+path = "src/installer.rs"
+
 [dependencies]
 agent = { path = "../agent" }
 anyhow = { workspace = true }
