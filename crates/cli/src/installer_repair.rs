@@ -56,6 +56,7 @@ impl Installer {
             ("compose.yaml", self.install_dir.join("compose.yaml")),
             ("Caddyfile", self.install_dir.join("Caddyfile")),
             ("registry.env", self.config_dir.join("registry.env")),
+            ("cloudflare.env", self.config_dir.join("cloudflare.env")),
             ("agent.env", self.config_dir.join("agent.env")),
             ("helper.env", self.config_dir.join("helper.env")),
             ("revision", self.config_dir.join("revision")),
@@ -75,6 +76,7 @@ impl Installer {
             self.install_dir.join("Caddyfile"),
             self.install_dir.join("Caddyfile.template"),
             self.config_dir.join("registry.env"),
+            self.config_dir.join("cloudflare.env"),
             self.config_dir.join("agent.env"),
             self.config_dir.join("helper.env"),
             self.config_dir.join("revision"),
@@ -90,6 +92,7 @@ impl Installer {
     fn repair_control_plane(&self, config: &mut ControlConfig) -> Result<()> {
         self.pull_host_bundle(config, true)?;
         self.ensure_argus_user()?;
+        self.provision_tls(config)?;
         self.write_runtime_env(config)?;
         self.regenerate_caddy_config(config)?;
         self.start_control_plane()?;

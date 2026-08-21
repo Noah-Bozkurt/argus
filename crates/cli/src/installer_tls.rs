@@ -1,6 +1,6 @@
 use super::installer_shared::{ControlConfig, Installer, TlsMode};
 use anyhow::{Context, Result, bail};
-use cli::lifecycle::{self, prompt_secret};
+use cli::lifecycle::{self, prompt_line, prompt_secret, write_env_file};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use std::{fs, os::unix::fs::PermissionsExt, time::Duration};
@@ -53,21 +53,35 @@ impl Installer {
         }
 
         self.ui.detail("Cloudflare proxy detected for both domains");
+        let use_cloudflare = if lifecycle::interactive_available() {
+            println!("\nCloudflare proxy detected for both domains.");
+            println!("  1. Cloudflare Origin CA (requires a Cloudflare API token)");
+            println!("  2. Let's Encrypt with ZeroSSL fallback\n");
+            loop {
+                match prompt_line("Choose certificate provider [1-2]: ")?.trim() {
+                    "1" => break true,
+                    "2" => break false,
+                    _ => self.ui.warning("Choose 1 or 2."),
+                }
+            }
+        } else {
+            std::env::var("ARGUS_TLS_MODE").as_deref() == Ok("cloudflare-origin")
+                || !config.cloudflare_api_token.is_empty()
+        };
+        if !use_cloudflare {
+            config.tls_mode = TlsMode::PublicAcme;
+            return Ok(());
+        }
+
         if config.cloudflare_api_token.is_empty() && lifecycle::interactive_available() {
-            println!(
-                "\nCloudflare proxy detected. Argus can create a Cloudflare Origin CA certificate."
-            );
             println!("The token needs Zone / SSL and Certificates / Edit permission.");
             println!(
-                "Keep Cloudflare SSL/TLS mode set to Full (strict). Leaving this blank uses public ACME.\n"
+                "It will be saved root-only for certificate repair and domain changes. Keep Cloudflare SSL/TLS mode set to Full (strict).\n"
             );
-            config.cloudflare_api_token = prompt_secret("Cloudflare API token (optional): ")?;
+            config.cloudflare_api_token = prompt_secret("Cloudflare API token: ")?;
         }
         if config.cloudflare_api_token.is_empty() {
-            self.ui.warning(
-                "No Cloudflare API token was supplied; using Let's Encrypt with ZeroSSL fallback.",
-            );
-            config.tls_mode = TlsMode::PublicAcme;
+            bail!("Cloudflare Origin CA was selected but no API token was supplied");
         } else {
             config.tls_mode = TlsMode::CloudflareOrigin;
         }
@@ -76,6 +90,13 @@ impl Installer {
 
     pub(crate) fn provision_tls(&self, config: &ControlConfig) -> Result<()> {
         if !matches!(config.tls_mode, TlsMode::CloudflareOrigin) {
+            return Ok(());
+        }
+        let tls_dir = self.config_dir.join("tls");
+        if config.existing_install
+            && tls_dir.join("origin.crt").is_file()
+            && tls_dir.join("origin.key").is_file()
+        {
             return Ok(());
         }
         let client = Client::builder()
@@ -113,7 +134,6 @@ impl Installer {
             .get("private_key")
             .and_then(Value::as_str)
             .context("Cloudflare response omitted private key")?;
-        let tls_dir = self.config_dir.join("tls");
         fs::create_dir_all(&tls_dir)?;
         fs::write(tls_dir.join("origin.crt"), certificate)?;
         fs::write(tls_dir.join("origin.key"), private_key)?;
@@ -124,6 +144,14 @@ impl Installer {
         fs::set_permissions(
             tls_dir.join("origin.key"),
             fs::Permissions::from_mode(0o600),
+        )?;
+        write_env_file(
+            &self.config_dir.join("cloudflare.env"),
+            &[(
+                "ARGUS_CLOUDFLARE_API_TOKEN",
+                config.cloudflare_api_token.as_str(),
+            )],
+            0o600,
         )?;
         Ok(())
     }

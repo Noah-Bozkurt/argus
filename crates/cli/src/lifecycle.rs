@@ -494,6 +494,7 @@ fn preserve_recovery_files(options: &UninstallOptions) -> Result<PathBuf> {
         (options.install_dir.join("compose.yaml"), "compose.yaml"),
         (options.install_dir.join("Caddyfile"), "Caddyfile"),
         (options.config_dir.join("registry.env"), "registry.env"),
+        (options.config_dir.join("cloudflare.env"), "cloudflare.env"),
         (options.config_dir.join("agent.env"), "agent.env"),
         (options.config_dir.join("helper.env"), "helper.env"),
         (options.config_dir.join("revision"), "revision"),

@@ -242,6 +242,14 @@ impl Installer {
         } else {
             BTreeMap::new()
         };
+        let cloudflare_credentials = self.config_dir.join("cloudflare.env");
+        let saved_cloudflare_token = if cloudflare_credentials.is_file() {
+            read_env_file(&cloudflare_credentials)?
+                .get("ARGUS_CLOUDFLARE_API_TOKEN")
+                .cloned()
+        } else {
+            None
+        };
         let existing_install = !existing_values.is_empty();
         if existing_install {
             self.ui
@@ -366,7 +374,10 @@ impl Installer {
             } else {
                 TlsMode::PublicAcme
             },
-            cloudflare_api_token: env::var("ARGUS_CLOUDFLARE_API_TOKEN").unwrap_or_default(),
+            cloudflare_api_token: env::var("ARGUS_CLOUDFLARE_API_TOKEN")
+                .ok()
+                .or(saved_cloudflare_token)
+                .unwrap_or_default(),
             org_name: env::var("ARGUS_ORG_NAME").unwrap_or_else(|_| "Argus".to_string()),
             generated_basic_password,
             existing_install,
