@@ -14,6 +14,8 @@ Prepare:
 - inbound TCP 80 and 443 available;
 - a GitHub classic PAT with `read:packages` and access to the private Argus GHCR packages.
 
+Both domains must already resolve through DNS before a control-plane installation can continue. A records, AAAA records and CNAME chains are supported. Cloudflare-proxied records are also supported: Argus checks that the hostname resolves, not that the returned address equals the origin server's public IP.
+
 The control-plane installer installs required host packages and Docker when Docker is not already installed. It intentionally refuses unsupported distributions, unsupported architectures and conflicting container stacks instead of modifying them automatically.
 
 ## Install a control plane
@@ -32,7 +34,7 @@ The bootstrap performs three important steps before the installer runs:
 
 Choose **Install an Argus control plane here** when prompted.
 
-The installer then asks for the information it needs, including the primary Argus domain and private GHCR credentials. The GitHub token is entered silently in the terminal. Registry credentials are stored root-only in `/etc/argus/registry.env` with mode `0600` so later updates can pull the coordinated Argus image set.
+The installer then asks for the information it needs, including the primary Argus domain and private GHCR credentials. The content domain defaults to `content.<primary-domain>` when no custom value is entered. Before the control plane is configured, the installer verifies that both selected domains resolve successfully. The GitHub token is entered silently in the terminal. Registry credentials are stored root-only in `/etc/argus/registry.env` with mode `0600` so later updates can pull the coordinated Argus image set.
 
 The installer also asks for the initial operator credentials. These seed the first Argus `owner` account used by the first-party login page and the Payload CMS. The older `ARGUS_BASIC_AUTH_*` configuration names are retained for upgrade compatibility, but Caddy no longer performs HTTP Basic Auth and browsers no longer show a native Basic Auth prompt.
 
@@ -112,6 +114,36 @@ To install a specific published revision:
 sudo argusctl update --version <40-character-git-sha>
 ```
 
+## Manage the control-plane domains
+
+Show the currently configured web and content domains:
+
+```bash
+argusctl domain show
+```
+
+Check their current DNS resolution:
+
+```bash
+argusctl domain check
+```
+
+Change the primary domain and use the default `content.<new-domain>` content hostname:
+
+```bash
+sudo argusctl domain set argus.example.com
+```
+
+Or set both hostnames explicitly:
+
+```bash
+sudo argusctl domain set argus.example.com --content-domain cms.example.com
+```
+
+`domain set` validates both hostnames and requires both to resolve before it changes `.env` or Caddy configuration. Cloudflare-proxied records are accepted because the check does not compare returned addresses with the origin IP. Argus validates the rendered Caddy configuration, recreates the domain-dependent Web, Content and Caddy services, and restores the previous `.env` and Caddy configuration if the apply step fails.
+
+Changing the public control-plane hostname while additional managed agents are enrolled is currently blocked. Those agents persist the public control-plane URL locally, and switching the hostname without migrating that state would disconnect them. Automatic managed-agent URL migration should be implemented before this guard is relaxed.
+
 ## Rotate GHCR credentials
 
 If the package PAT expires or is replaced:
@@ -156,6 +188,7 @@ Start with:
 argusctl status
 argusctl health
 argusctl connection
+argusctl domain check
 sudo argusctl smoke
 ```
 
