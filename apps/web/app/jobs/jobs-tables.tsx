@@ -2,7 +2,14 @@
 
 import { useMemo, useState } from 'react'
 import type { BackgroundJobView, JobScheduleView } from '../../lib/jobs-admin-api'
+import usePersistentChoice from '../use-persistent-choice'
 import { retryDeadJobAction } from './actions'
+
+const STATUS_FILTERS = ['all', 'QUEUED', 'RUNNING', 'SUCCEEDED', 'DEAD'] as const
+const SORTS = ['recent', 'attempts', 'project', 'kind'] as const
+
+type StatusFilter = typeof STATUS_FILTERS[number]
+type SortChoice = typeof SORTS[number]
 
 function formatDate(value: string | null): string {
   return value ? new Date(value).toLocaleString() : '—'
@@ -34,8 +41,8 @@ function statusClass(status: string): string {
 
 export default function JobsTables({ jobs, schedules }: { jobs: BackgroundJobView[]; schedules: JobScheduleView[] }) {
   const [query, setQuery] = useState('')
-  const [status, setStatus] = useState<'all' | BackgroundJobView['status']>('all')
-  const [sort, setSort] = useState<'recent' | 'attempts' | 'project' | 'kind'>('recent')
+  const [status, setStatus] = usePersistentChoice<StatusFilter>('argus:jobs:status', 'all', STATUS_FILTERS)
+  const [sort, setSort] = usePersistentChoice<SortChoice>('argus:jobs:sort', 'recent', SORTS)
 
   const normalized = query.trim().toLowerCase()
   const visibleJobs = useMemo(() => jobs
@@ -82,8 +89,8 @@ export default function JobsTables({ jobs, schedules }: { jobs: BackgroundJobVie
         <div className="panel-header resource-toolbar-header">
           <div><h2>Recent jobs</h2><p>{visibleJobs.length} of {jobs.length} executions · payloads stay hidden by design</p></div>
           <div className="resource-toolbar">
-            <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} aria-label="Filter job status"><option value="all">All statuses</option><option value="QUEUED">Queued</option><option value="RUNNING">Running</option><option value="SUCCEEDED">Succeeded</option><option value="DEAD">Dead</option></select>
-            <select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} aria-label="Sort jobs"><option value="recent">Recently updated</option><option value="attempts">Attempts</option><option value="project">Project</option><option value="kind">Job kind</option></select>
+            <select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)} aria-label="Filter job status"><option value="all">All statuses</option><option value="QUEUED">Queued</option><option value="RUNNING">Running</option><option value="SUCCEEDED">Succeeded</option><option value="DEAD">Dead</option></select>
+            <select value={sort} onChange={(event) => setSort(event.target.value as SortChoice)} aria-label="Sort jobs"><option value="recent">Recently updated</option><option value="attempts">Attempts</option><option value="project">Project</option><option value="kind">Job kind</option></select>
           </div>
         </div>
         {visibleJobs.length === 0 ? <div className="empty-state"><strong>No matching background jobs</strong>Change the search or status filter to show other executions.</div> : (
