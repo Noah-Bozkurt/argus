@@ -12,6 +12,16 @@ function formatDate(value: string | null): string {
   return value ? new Date(value).toLocaleString() : '—'
 }
 
+function relativeDate(value: string | null): string {
+  if (!value) return '—'
+  const delta = Date.now() - new Date(value).getTime()
+  const minutes = Math.max(0, Math.floor(delta / 60000))
+  if (minutes < 60) return minutes < 1 ? 'just now' : `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
 function statusClass(status: string): string {
   if (status === 'SUCCEEDED' || status === 'RELEASED') return 'success'
   if (status === 'FAILED' || status === 'ROLLED_BACK' || status === 'CANCELLED') return 'danger'
@@ -30,11 +40,19 @@ export default async function DeploymentsReleasesSection({ projectId }: { projec
   const serviceNames = new Map(services.map((service) => [service.id, service.name]))
   const environmentNames = new Map(environments.map((environment) => [environment.id, environment.name]))
   const repositoryNames = new Map(repositories.map((repository) => [repository.id, `${repository.owner}/${repository.name}`]))
+  const repositoryById = new Map(repositories.map((repository) => [repository.id, repository]))
+  const latestSuccessful = view.deployments.find((deployment) => deployment.status === 'SUCCEEDED') ?? null
 
   return (
     <section>
       <h2>Deployments &amp; releases</h2>
       <p>Argus records immutable deployment and release history. Provider execution is intentionally separate from these lifecycle records.</p>
+
+      <div className="info-grid" style={{ margin: '0 17px 14px' }}>
+        <div className="info-item"><span className="info-label">Latest successful</span><span className="info-value" title={latestSuccessful ? formatDate(latestSuccessful.finished_at ?? latestSuccessful.created_at) : undefined}>{latestSuccessful ? relativeDate(latestSuccessful.finished_at ?? latestSuccessful.created_at) : 'None yet'}</span></div>
+        <div className="info-item"><span className="info-label">Deployments</span><span className="info-value">{view.deployments.length}</span></div>
+        <div className="info-item"><span className="info-label">Releases</span><span className="info-value">{view.releases.length}</span></div>
+      </div>
 
       <h3>Deployments</h3>
       <details className="create-drawer">
@@ -57,41 +75,58 @@ export default async function DeploymentsReleasesSection({ projectId }: { projec
 
       {view.deployments.length === 0 ? <div className="empty-state"><strong>No deployments</strong>Deployment attempts will appear here.</div> : (
         <div className="resource-list" style={{ margin: '0 17px 17px' }}>
-          {view.deployments.map((deployment) => (
-            <article className="resource-card" key={deployment.id}>
-              <div className="resource-card-head">
-                <div><h4>{serviceNames.get(deployment.service_id) ?? deployment.service_id} → {environmentNames.get(deployment.environment_id) ?? deployment.environment_id}</h4><div className="resource-meta">{deployment.source_version ?? 'No version'}{deployment.source_commit_sha ? ` @ ${deployment.source_commit_sha.slice(0, 12)}` : ''}{deployment.repository_id ? ` · ${repositoryNames.get(deployment.repository_id) ?? deployment.repository_id}` : ''}</div></div>
-                <span className={`badge ${statusClass(deployment.status)}`}>{deployment.status}</span>
-              </div>
-              <div className="info-grid" style={{ marginTop: 12 }}>
-                <div className="info-item"><span className="info-label">Provider</span><span className="info-value">{deployment.provider}</span></div>
-                <div className="info-item"><span className="info-label">Created</span><span className="info-value">{formatDate(deployment.created_at)}</span></div>
-                <div className="info-item"><span className="info-label">Started</span><span className="info-value">{formatDate(deployment.started_at)}</span></div>
-                <div className="info-item"><span className="info-label">Finished</span><span className="info-value">{formatDate(deployment.finished_at)}</span></div>
-              </div>
-              {deployment.error_summary ? <div className="callout danger">{deployment.error_summary}</div> : null}
-              {deployment.notes ? <div className="resource-meta">{deployment.notes}</div> : null}
-              {deployment.rollback_of_deployment_id ? <div className="badge warning">Rollback of {deployment.rollback_of_deployment_id.slice(0, 8)}</div> : null}
-              <div className="action-row">
-                {deployment.deployment_url ? <a className="button small" href={deployment.deployment_url} target="_blank" rel="noreferrer">Open deployment ↗</a> : null}
-                {deployment.status === 'QUEUED' || deployment.status === 'RUNNING' ? (
-                  <details className="resource-editor">
-                    <summary className="button small">Update status</summary>
-                    <div className="resource-editor-body">
-                      <form action={async (formData) => { 'use server'; await updateDeploymentStatusAction(projectId, deployment.id, formData) }}>
-                        <div className="form-grid">
-                          <label>Next status<select name="status" defaultValue={deployment.status === 'QUEUED' ? 'RUNNING' : 'SUCCEEDED'}>{deployment.status === 'QUEUED' ? <><option value="RUNNING">Running</option><option value="CANCELLED">Cancelled</option></> : <><option value="SUCCEEDED">Succeeded</option><option value="FAILED">Failed</option><option value="CANCELLED">Cancelled</option></>}</select></label>
-                          <label>Deployment URL<input name="deployment_url" type="url" maxLength={2048} defaultValue={deployment.deployment_url ?? ''} /></label>
-                          <label className="full">Error summary (required when failed)<input name="error_summary" maxLength={1000} /></label>
-                        </div>
-                        <button type="submit">Update deployment</button>
-                      </form>
-                    </div>
-                  </details>
-                ) : null}
-              </div>
-            </article>
-          ))}
+          {view.deployments.map((deployment) => {
+            const repository = deployment.repository_id ? repositoryById.get(deployment.repository_id) : null
+            const environment = environments.find((item) => item.id === deployment.environment_id)
+            return (
+              <article className="resource-card" key={deployment.id}>
+                <div className="resource-card-head">
+                  <div><h4>{serviceNames.get(deployment.service_id) ?? deployment.service_id} → {environmentNames.get(deployment.environment_id) ?? deployment.environment_id}</h4><div className="resource-meta">{deployment.source_version ?? 'No version'}{deployment.source_commit_sha ? ` @ ${deployment.source_commit_sha.slice(0, 12)}` : ''}{deployment.repository_id ? ` · ${repositoryNames.get(deployment.repository_id) ?? deployment.repository_id}` : ''}</div></div>
+                  <div className="action-row">{environment?.environment_type === 'production' ? <span className="badge danger">PROD</span> : null}<span className={`badge ${statusClass(deployment.status)}`}>{deployment.status}</span></div>
+                </div>
+                <div className="info-grid" style={{ marginTop: 12 }}>
+                  <div className="info-item"><span className="info-label">Provider</span><span className="info-value">{deployment.provider}</span></div>
+                  <div className="info-item"><span className="info-label">Created</span><span className="info-value" title={formatDate(deployment.created_at)}>{relativeDate(deployment.created_at)}</span></div>
+                  <div className="info-item"><span className="info-label">Started</span><span className="info-value">{formatDate(deployment.started_at)}</span></div>
+                  <div className="info-item"><span className="info-label">Finished</span><span className="info-value">{formatDate(deployment.finished_at)}</span></div>
+                </div>
+                {deployment.error_summary ? <div className="callout danger">{deployment.error_summary}</div> : null}
+                {deployment.notes ? <div className="resource-meta">{deployment.notes}</div> : null}
+                {deployment.rollback_of_deployment_id ? <div className="badge warning">Rollback of {deployment.rollback_of_deployment_id.slice(0, 8)}</div> : null}
+                <div className="action-row">
+                  {deployment.deployment_url ? <a className="button small" href={deployment.deployment_url} target="_blank" rel="noreferrer">Open deployment ↗</a> : null}
+                  {repository && deployment.source_commit_sha ? <a className="button small" href={`${repository.html_url}/commit/${deployment.source_commit_sha}`} target="_blank" rel="noreferrer">Commit {deployment.source_commit_sha.slice(0, 8)} ↗</a> : null}
+                  {deployment.status === 'SUCCEEDED' && !deployment.rollback_of_deployment_id ? (
+                    <form action={async (formData) => { 'use server'; await createDeploymentAction(projectId, formData) }}>
+                      <input type="hidden" name="service_id" value={deployment.service_id} />
+                      <input type="hidden" name="environment_id" value={deployment.environment_id} />
+                      {deployment.repository_id ? <input type="hidden" name="repository_id" value={deployment.repository_id} /> : null}
+                      {deployment.source_commit_sha ? <input type="hidden" name="source_commit_sha" value={deployment.source_commit_sha} /> : null}
+                      {deployment.source_version ? <input type="hidden" name="source_version" value={deployment.source_version} /> : null}
+                      <input type="hidden" name="rollback_of_deployment_id" value={deployment.id} />
+                      <input type="hidden" name="notes" value={`Rollback record for ${deployment.id.slice(0, 8)}`} />
+                      <button className="small" type="submit">Record rollback</button>
+                    </form>
+                  ) : null}
+                  {deployment.status === 'QUEUED' || deployment.status === 'RUNNING' ? (
+                    <details className="resource-editor">
+                      <summary className="button small">Update status</summary>
+                      <div className="resource-editor-body">
+                        <form action={async (formData) => { 'use server'; await updateDeploymentStatusAction(projectId, deployment.id, formData) }}>
+                          <div className="form-grid">
+                            <label>Next status<select name="status" defaultValue={deployment.status === 'QUEUED' ? 'RUNNING' : 'SUCCEEDED'}>{deployment.status === 'QUEUED' ? <><option value="RUNNING">Running</option><option value="CANCELLED">Cancelled</option></> : <><option value="SUCCEEDED">Succeeded</option><option value="FAILED">Failed</option><option value="CANCELLED">Cancelled</option></>}</select></label>
+                            <label>Deployment URL<input name="deployment_url" type="url" maxLength={2048} defaultValue={deployment.deployment_url ?? ''} /></label>
+                            <label className="full">Error summary (required when failed)<input name="error_summary" maxLength={1000} /></label>
+                          </div>
+                          <button type="submit">Update deployment</button>
+                        </form>
+                      </div>
+                    </details>
+                  ) : null}
+                </div>
+              </article>
+            )
+          })}
         </div>
       )}
 
@@ -116,7 +151,11 @@ export default async function DeploymentsReleasesSection({ projectId }: { projec
             <article className="resource-card" key={release.id}>
               <div className="resource-card-head"><div><h4>{release.name}</h4><div className="resource-meta">Version {release.version} · released {formatDate(release.released_at)}</div></div><span className={`badge ${statusClass(release.status)}`}>{release.status}</span></div>
               {release.notes ? <div className="resource-meta">{release.notes}</div> : null}
-              {release.components.length > 0 ? <div className="resource-list" style={{ marginTop: 12 }}>{release.components.map((component) => <div className="resource-card" key={component.id}><div className="resource-card-head"><strong>{serviceNames.get(component.service_id) ?? component.service_id}</strong><span className="badge">{component.version ?? 'No version'}</span></div><div className="resource-meta">Deployment {component.deployment_id ? component.deployment_id.slice(0, 8) : 'none'} · commit {component.commit_sha?.slice(0, 12) ?? '—'}</div></div>)}</div> : null}
+              {release.components.length > 0 ? <div className="resource-list" style={{ marginTop: 12 }}>{release.components.map((component) => {
+                const componentDeployment = component.deployment_id ? view.deployments.find((deployment) => deployment.id === component.deployment_id) : null
+                const componentRepository = componentDeployment?.repository_id ? repositoryById.get(componentDeployment.repository_id) : null
+                return <div className="resource-card" key={component.id}><div className="resource-card-head"><strong>{serviceNames.get(component.service_id) ?? component.service_id}</strong><span className="badge">{component.version ?? 'No version'}</span></div><div className="resource-meta">Deployment {component.deployment_id ? component.deployment_id.slice(0, 8) : 'none'} · commit {component.commit_sha?.slice(0, 12) ?? '—'}{componentRepository && component.commit_sha ? <> · <a href={`${componentRepository.html_url}/commit/${component.commit_sha}`} target="_blank" rel="noreferrer">open commit ↗</a></> : null}</div></div>
+              })}</div> : null}
 
               {release.status === 'DRAFT' ? (
                 <details className="resource-editor">
