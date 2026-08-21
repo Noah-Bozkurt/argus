@@ -227,6 +227,11 @@ Enrollment flow:
 
 The Agent reports heartbeats and snapshots, polls typed commands, calls the local privileged Helper and returns command results.
 
+Package operations retain redacted APT output and expose their current phase in the server activity
+view. The Servers UI consumes targeted event streams instead of refreshing the entire page. On a
+control-plane host, an owner can schedule the existing transactional Argus updater from the System
+page; local recovery continues to use `argusctl`.
+
 ## Agent/Helper trust boundary
 
 The Agent is the network-facing managed-node component. It is not root.

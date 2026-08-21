@@ -391,6 +391,9 @@ mod tests {
                 findings: vec![],
             },
             backups: BackupState::default(),
+            mounts: vec![],
+            network: vec![],
+            top_processes: vec![],
             captured_at: Utc::now(),
         }
     }

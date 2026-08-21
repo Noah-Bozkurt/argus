@@ -1,0 +1,56 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import type { CommandHistoryItem, ServerView } from '../../../../lib/api'
+
+function stateClass(status: string) {
+  if (status === 'SUCCEEDED') return 'success'
+  if (status === 'FAILED' || status === 'UNKNOWN' || status === 'EXPIRED') return 'danger'
+  return 'info'
+}
+
+export default function LiveOperations({ initialServer, initialCommands }: { initialServer: ServerView; initialCommands: CommandHistoryItem[] }) {
+  const [server, setServer] = useState(initialServer)
+  const [commands, setCommands] = useState(initialCommands)
+  const [connection, setConnection] = useState<'live' | 'reconnecting' | 'stale'>('reconnecting')
+
+  useEffect(() => {
+    let lastMessage = Date.now()
+    const source = new EventSource(`/api/servers/${initialServer.server_id}/events`)
+    source.addEventListener('snapshot', (event) => {
+      const data = JSON.parse((event as MessageEvent).data) as { server: ServerView; commands: CommandHistoryItem[] }
+      setServer(data.server)
+      setCommands(data.commands)
+      lastMessage = Date.now()
+      setConnection('live')
+    })
+    source.onerror = () => {
+      if (Date.now() - lastMessage > 20_000) setConnection('stale')
+    }
+    const staleTimer = window.setInterval(() => {
+      if (Date.now() - lastMessage > 20_000) setConnection('stale')
+    }, 5_000)
+    return () => { source.close(); window.clearInterval(staleTimer) }
+  }, [initialServer.server_id])
+
+  return <section className="detail-card live-operations" id="activity">
+    <div className="detail-card-header"><div><h2>Live operations</h2><p>Utilization and privileged command progress update without refreshing this page.</p></div><span className={`badge ${connection === 'live' ? 'success' : connection === 'stale' ? 'danger' : 'warning'}`}><span className={`status-dot ${connection === 'live' ? 'online' : connection === 'stale' ? 'danger' : 'warning'}`} />{connection}</span></div>
+    <div className="detail-card-body">
+      <div className="live-metric-strip">
+        <div><span>CPU</span><strong>{server.snapshot ? `${server.snapshot.cpu_percent.toFixed(1)}%` : '—'}</strong></div>
+        <div><span>Memory</span><strong>{server.snapshot ? `${server.snapshot.ram_percent.toFixed(1)}%` : '—'}</strong></div>
+        <div><span>Disk</span><strong>{server.snapshot ? `${server.snapshot.disk_percent.toFixed(1)}%` : '—'}</strong></div>
+        <div><span>Agent</span><strong>{server.online ? 'Online' : 'Offline'}</strong></div>
+      </div>
+      {commands.length === 0 ? <div className="empty-state"><strong>No commands yet</strong>Operations will appear here.</div> : <ol className="timeline">{commands.slice(0, 12).map((item) => {
+        const target = item.command.command_type.service ?? item.command.command_type.container ?? item.command.command_type.backup ?? item.command.command_type.profile ?? ''
+        return <li className="timeline-item operation-item" key={item.command.id}>
+          <div className="timeline-title">{item.command.command_type.kind} {target}</div>
+          <div className="timeline-meta"><span className={`badge ${stateClass(item.command.status)}`}>{item.command.status}</span>{item.phase ? <span className="operation-phase">{item.phase.toLowerCase()}</span> : null}</div>
+          {item.error_code ? <div className="timeline-message text-danger">{item.error_code}: {item.error_message ?? ''}</div> : null}
+          {item.output ? <details className="operation-log"><summary className="button small">Full log</summary><div className="operation-log-toolbar"><span>Captured command output</span>{item.output_truncated ? <span className="badge warning">Truncated</span> : <span className="badge success">Complete</span>}</div><pre>{item.output}</pre></details> : null}
+        </li>
+      })}</ol>}
+    </div>
+  </section>
+}

@@ -15,44 +15,43 @@ use std::{
 
 impl Installer {
     pub(crate) fn preflight(&self) -> Result<()> {
-        lifecycle::require_root().context("installer must run as root")?;
-        let os = parse_os_release()?;
-        let id = os.get("ID").map(String::as_str).unwrap_or("");
-        if id != "ubuntu" && id != "debian" {
-            bail!("Argus currently supports Ubuntu or Debian only");
-        }
-        let architecture = output("dpkg", &["--print-architecture"])?;
-        if architecture != "amd64" {
-            bail!("Argus currently supports amd64 only");
-        }
-        if self.mode == InstallMode::ControlPlane && !self.compose_file().exists() {
-            let sockets = output("ss", &["-ltnH"])?;
-            for port in [80, 443] {
-                if sockets.lines().any(|line| {
-                    line.split_whitespace()
-                        .nth(3)
-                        .is_some_and(|local| local.ends_with(&format!(":{port}")))
-                }) {
-                    bail!(
-                        "TCP port {port} is already in use; free the port before installing Argus"
-                    );
+        let os = self.ui.working("Validating operating system, architecture and ports", || {
+            lifecycle::require_root().context("installer must run as root")?;
+            let os = parse_os_release()?;
+            let id = os.get("ID").map(String::as_str).unwrap_or("");
+            if id != "ubuntu" && id != "debian" { bail!("Argus currently supports Ubuntu or Debian only"); }
+            let architecture = output("dpkg", &["--print-architecture"])?;
+            if architecture != "amd64" { bail!("Argus currently supports amd64 only"); }
+            if self.mode == InstallMode::ControlPlane && !self.compose_file().exists() {
+                let sockets = output("ss", &["-ltnH"])?;
+                for port in [80, 443] {
+                    if sockets.lines().any(|line| line.split_whitespace().nth(3).is_some_and(|local| local.ends_with(&format!(":{port}")))) {
+                        bail!("TCP port {port} is already in use; free the port before installing Argus");
+                    }
                 }
             }
-        }
-        self.apt(&["update"])?;
-        self.apt(&[
-            "install",
-            "-y",
-            "--no-install-recommends",
-            "ca-certificates",
-            "curl",
-            "jq",
-            "openssl",
-            "iproute2",
-            "ufw",
-            "unattended-upgrades",
-        ])?;
-        self.ensure_docker(&os)?;
+            Ok(os)
+        })?;
+        self.ui
+            .working("Refreshing package repositories", || self.apt(&["update"]))?;
+        self.ui.working("Installing required host packages", || {
+            self.apt(&[
+                "install",
+                "-y",
+                "--no-install-recommends",
+                "ca-certificates",
+                "curl",
+                "jq",
+                "openssl",
+                "iproute2",
+                "ufw",
+                "unattended-upgrades",
+            ])
+        })?;
+        self.ui
+            .working("Installing or validating Docker Engine", || {
+                self.ensure_docker(&os)
+            })?;
         Ok(())
     }
 
@@ -63,19 +62,30 @@ impl Installer {
     }
 
     pub(crate) fn finish_command(&self, mut command: Command, label: &str) -> Result<()> {
-        if !self.ui.verbose {
-            command.stdout(Stdio::null()).stderr(Stdio::piped());
-        }
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
         let output = command.output().with_context(|| format!("run {label}"))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stdout.is_empty() {
+            self.ui.record(&format!("[{label} stdout]\n{stdout}"));
+        }
+        if !stderr.is_empty() {
+            self.ui.record(&format!("[{label} stderr]\n{stderr}"));
+        }
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stderr = stderr.trim().to_string();
             if stderr.is_empty() {
                 bail!("{label} failed with {}", output.status);
             }
             bail!("{label} failed: {stderr}");
         }
-        if self.ui.verbose && !output.stdout.is_empty() {
-            print!("{}", String::from_utf8_lossy(&output.stdout));
+        if self.ui.verbose {
+            if !stdout.is_empty() {
+                print!("{stdout}");
+            }
+            if !stderr.is_empty() {
+                eprint!("{stderr}");
+            }
         }
         Ok(())
     }

@@ -68,12 +68,15 @@ async fn execute_request(
         }
         HelperRequest::StartService { service } => api.start_service(&service).await.map(|_| None),
         HelperRequest::StopService { service } => api.stop_service(&service).await.map(|_| None),
-        HelperRequest::PackagesRefresh => api.refresh_packages().await.map(|_| None),
-        HelperRequest::PackagesUpgradeSecurity => {
-            api.upgrade_security_packages().await.map(|_| None)
-        }
-        HelperRequest::PackagesUpgradeAll => api.upgrade_all_packages().await.map(|_| None),
+        HelperRequest::PackagesRefresh => api.refresh_packages().await.map(Some),
+        HelperRequest::PackagesUpgradeSecurity => api.upgrade_security_packages().await.map(Some),
+        HelperRequest::PackagesUpgradeAll => api.upgrade_all_packages().await.map(Some),
         HelperRequest::SystemReboot => api.reboot().await.map(|_| None),
+        HelperRequest::ArgusUpdate {
+            operation_id,
+            version,
+        } => api.argus_update(&operation_id, &version).await.map(Some),
+        HelperRequest::ArgusUpdateLog => api.argus_update_log().await.map(Some),
         HelperRequest::Journal { service, lines } => api.journal(&service, lines).await.map(Some),
         HelperRequest::DockerList => api.docker_list().await.map(Some),
         HelperRequest::DockerStart { container } => {
