@@ -37,6 +37,19 @@ enum Action {
     },
 }
 
+fn resolve_content_domain_input(main_domain: &str, default: &str, entered: &str) -> Result<String> {
+    let content_domain = if entered.trim().is_empty() {
+        default.to_string()
+    } else {
+        entered.trim().to_ascii_lowercase()
+    };
+    validate_domain(&content_domain)?;
+    if content_domain == main_domain {
+        bail!("Web and content domains must differ");
+    }
+    Ok(content_domain)
+}
+
 impl Installer {
     fn prompt_content_domain(&self, config: &mut ControlConfig) -> Result<()> {
         if config.existing_install
@@ -48,16 +61,7 @@ impl Installer {
 
         let default = config.content_domain.clone();
         let entered = lifecycle::prompt_line(&format!("Content domain [{default}]: "))?;
-        if entered.is_empty() {
-            return Ok(());
-        }
-
-        let content_domain = entered.to_ascii_lowercase();
-        validate_domain(&content_domain)?;
-        if content_domain == config.domain {
-            bail!("Web and content domains must differ");
-        }
-        config.content_domain = content_domain;
+        config.content_domain = resolve_content_domain_input(&config.domain, &default, &entered)?;
         Ok(())
     }
 
@@ -131,7 +135,10 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::installer_shared::{InstallMode, is_revision};
+    use super::{
+        installer_shared::{InstallMode, is_revision},
+        resolve_content_domain_input,
+    };
 
     #[test]
     fn revision_validation_is_strict() {
@@ -148,5 +155,39 @@ mod tests {
         );
         assert_eq!(InstallMode::parse("agent").unwrap(), InstallMode::Agent);
         assert!(InstallMode::parse("server").is_err());
+    }
+
+    #[test]
+    fn empty_content_domain_input_keeps_content_subdomain_default() {
+        assert_eq!(
+            resolve_content_domain_input(
+                "argus.example.com",
+                "content.argus.example.com",
+                ""
+            )
+            .unwrap(),
+            "content.argus.example.com"
+        );
+    }
+
+    #[test]
+    fn custom_content_domain_is_normalized_and_must_differ_from_web_domain() {
+        assert_eq!(
+            resolve_content_domain_input(
+                "argus.example.com",
+                "content.argus.example.com",
+                "CMS.EXAMPLE.COM"
+            )
+            .unwrap(),
+            "cms.example.com"
+        );
+        assert!(
+            resolve_content_domain_input(
+                "argus.example.com",
+                "content.argus.example.com",
+                "argus.example.com"
+            )
+            .is_err()
+        );
     }
 }
