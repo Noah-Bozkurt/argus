@@ -148,17 +148,7 @@ fn ensure_no_remote_agents(install_dir: &Path) -> Result<()> {
     let output = compose_output(
         install_dir,
         &[
-            "exec",
-            "-T",
-            "postgres",
-            "psql",
-            "-At",
-            "-U",
-            "argus",
-            "-d",
-            "argus",
-            "-c",
-            &sql,
+            "exec", "-T", "postgres", "psql", "-At", "-U", "argus", "-d", "argus", "-c", &sql,
         ],
     )
     .context("check managed agents before domain change")?;
@@ -318,8 +308,7 @@ fn rollback_domain_change(install_dir: &Path, env: &[u8], caddy: &[u8]) -> Resul
     let caddy_file = install_dir.join("Caddyfile");
     fs::write(&env_file, env).with_context(|| format!("restore {}", env_file.display()))?;
     fs::set_permissions(&env_file, fs::Permissions::from_mode(0o600))?;
-    fs::write(&caddy_file, caddy)
-        .with_context(|| format!("restore {}", caddy_file.display()))?;
+    fs::write(&caddy_file, caddy).with_context(|| format!("restore {}", caddy_file.display()))?;
     fs::set_permissions(&caddy_file, fs::Permissions::from_mode(0o640))?;
     recreate_domain_services(install_dir).context("restore domain-dependent services")
 }
