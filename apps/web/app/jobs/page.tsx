@@ -43,17 +43,17 @@ export default async function JobsPage() {
         <div className="panel-header"><div><h2>Schedules</h2><p>Recurring work configured by its owning feature</p></div></div>
         {view.schedules.length === 0 ? <div className="empty-state"><strong>No schedules configured</strong>Feature-owned schedules will appear here.</div> : (
           <div className="table-wrap" style={{ border: 0, borderRadius: 0 }}>
-            <table>
+            <table className="responsive-table">
               <thead><tr><th>Job</th><th>Scope</th><th>Resource</th><th>Interval</th><th>Status</th><th>Next run</th></tr></thead>
               <tbody>
                 {view.schedules.map((schedule) => (
                   <tr key={schedule.id}>
                     <td><strong>{schedule.job_kind}</strong></td>
-                    <td>{schedule.project_name ?? 'Workspace'}</td>
-                    <td><code>{schedule.resource_key || 'default'}</code></td>
-                    <td>{formatInterval(schedule.interval_seconds)}</td>
-                    <td><span className={`badge ${schedule.enabled ? 'success' : ''}`}>{schedule.enabled ? 'Enabled' : 'Disabled'}</span></td>
-                    <td>{formatDate(schedule.next_run_at)}</td>
+                    <td data-label="Scope">{schedule.project_name ?? 'Workspace'}</td>
+                    <td data-label="Resource"><code>{schedule.resource_key || 'default'}</code></td>
+                    <td data-label="Interval">{formatInterval(schedule.interval_seconds)}</td>
+                    <td data-label="Status"><span className={`badge ${schedule.enabled ? 'success' : ''}`}>{schedule.enabled ? 'Enabled' : 'Disabled'}</span></td>
+                    <td data-label="Next run">{formatDate(schedule.next_run_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -66,7 +66,7 @@ export default async function JobsPage() {
         <div className="panel-header"><div><h2>Recent jobs</h2><p>Latest {view.jobs.length} executions; payloads stay hidden by design</p></div></div>
         {view.jobs.length === 0 ? <div className="empty-state"><strong>No background jobs yet</strong>Executions will appear here when work is queued.</div> : (
           <div className="table-wrap" style={{ border: 0, borderRadius: 0 }}>
-            <table>
+            <table className="responsive-table">
               <thead><tr><th>Job</th><th>Project</th><th>Resource</th><th>Status</th><th>Attempts</th><th>Run at</th><th>Action</th></tr></thead>
               <tbody>
                 {view.jobs.map((job) => (
@@ -75,12 +75,12 @@ export default async function JobsPage() {
                       <strong>{job.job_kind}</strong>
                       {job.last_error_message ? <div className="text-danger" style={{ marginTop: 4 }}>{job.last_error_code ?? 'EXECUTION_FAILED'} · {job.last_error_message}</div> : null}
                     </td>
-                    <td>{job.project_name ?? 'Workspace'}</td>
-                    <td><code>{job.resource_key || 'default'}</code></td>
-                    <td><span className={`badge ${statusClass(job.status)}`}>{job.status}</span></td>
-                    <td>{job.attempts}/{job.max_attempts}</td>
-                    <td>{formatDate(job.run_at)}</td>
-                    <td>{job.status === 'DEAD' ? <form action={async () => { 'use server'; await retryDeadJobAction(job.id) }}><button className="small" type="submit">Retry</button></form> : <span className="muted">—</span>}</td>
+                    <td data-label="Project">{job.project_name ?? 'Workspace'}</td>
+                    <td data-label="Resource"><code>{job.resource_key || 'default'}</code></td>
+                    <td data-label="Status"><span className={`badge ${statusClass(job.status)}`}>{job.status}</span></td>
+                    <td data-label="Attempts">{job.attempts}/{job.max_attempts}</td>
+                    <td data-label="Run at">{formatDate(job.run_at)}</td>
+                    <td data-label="Action">{job.status === 'DEAD' ? <form action={async () => { 'use server'; await retryDeadJobAction(job.id) }}><button className="small" type="submit">Retry</button></form> : <span className="muted">—</span>}</td>
                   </tr>
                 ))}
               </tbody>

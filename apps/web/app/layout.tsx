@@ -2,6 +2,8 @@ import type { ReactNode } from 'react'
 import AppShell from './app-shell'
 import './globals.css'
 import './feature-panels.css'
+import './ui-polish.css'
+import './ui-resource-editors.css'
 
 // The operator UI reads runtime-only Argus credentials and live control-plane data.
 // Never prerender it into the image at build time.
