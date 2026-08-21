@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 use cli::lifecycle;
 
@@ -7,7 +7,7 @@ mod installer_control;
 mod installer_host;
 mod installer_shared;
 
-use installer_shared::{InstallMode, Installer, select_mode};
+use installer_shared::{ControlConfig, InstallMode, Installer, select_mode, validate_domain};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -38,15 +38,40 @@ enum Action {
 }
 
 impl Installer {
+    fn prompt_content_domain(&self, config: &mut ControlConfig) -> Result<()> {
+        if config.existing_install
+            || std::env::var_os("ARGUS_CONTENT_DOMAIN").is_some()
+            || !lifecycle::interactive_available()
+        {
+            return Ok(());
+        }
+
+        let default = config.content_domain.clone();
+        let entered = lifecycle::prompt_line(&format!("Content domain [{default}]: "))?;
+        if entered.is_empty() {
+            return Ok(());
+        }
+
+        let content_domain = entered.to_ascii_lowercase();
+        validate_domain(&content_domain)?;
+        if content_domain == config.domain {
+            bail!("Web and content domains must differ");
+        }
+        config.content_domain = content_domain;
+        Ok(())
+    }
+
     fn run(&mut self) -> Result<()> {
         self.ui.title();
         self.ui
             .working("Checking host requirements", || self.preflight())?;
 
-        let credentials = self
-            .ui
+        // Collect interactive input before starting the spinner so terminal prompts remain visible.
+        let credentials = lifecycle::collect_registry_credentials(&self.config_dir, None)?;
+        self.ui
             .working("Authenticating with the Argus registry", || {
-                self.authenticate_registry()
+                lifecycle::docker_login(&credentials, &self.docker_config)?;
+                lifecycle::save_registry_credentials(&self.config_dir, &credentials)
             })?;
 
         if self.mode == InstallMode::Agent {
@@ -56,11 +81,9 @@ impl Installer {
             return Ok(());
         }
 
-        let mut config = self
-            .ui
-            .working("Collecting control-plane configuration", || {
-                self.load_control_config(&credentials)
-            })?;
+        // Configuration contains interactive prompts, so it must not run behind a spinner.
+        let mut config = self.load_control_config(&credentials)?;
+        self.prompt_content_domain(&mut config)?;
         self.ui
             .detail(&format!("Installing Argus for {}", config.domain));
 
