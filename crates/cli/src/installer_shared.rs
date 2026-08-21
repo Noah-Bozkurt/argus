@@ -1,10 +1,10 @@
-use anyhow::{bail, Context, Result};
-use cli::lifecycle::{self, env_path, prompt_line, prompt_secret, temp_dir, DEFAULT_CONFIG_DIR, DEFAULT_INSTALL_DIR, DEFAULT_STATE_DIR};
+use anyhow::{bail, Result};
+use cli::lifecycle::{self, env_path, prompt_line, temp_dir, DEFAULT_CONFIG_DIR, DEFAULT_INSTALL_DIR, DEFAULT_LOG_DIR, DEFAULT_STATE_DIR};
 use std::{
     collections::BTreeMap,
     env, fs,
     io::{IsTerminal, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{atomic::{AtomicBool, Ordering}, Arc},
     thread,
     time::Duration,
@@ -29,21 +29,10 @@ impl Ui {
         if self.color { format!("\x1b[{code}m{text}\x1b[0m") } else { text.to_string() }
     }
 
-    pub(crate) fn title(&self) {
-        println!("{}\n", self.paint("1;36", "Argus installer"));
-    }
-
-    pub(crate) fn detail(&self, message: &str) {
-        println!("{}", self.paint("2", &format!("    {message}")));
-    }
-
-    pub(crate) fn warning(&self, message: &str) {
-        eprintln!("{} {message}", self.paint("33", "  !"));
-    }
-
-    pub(crate) fn success_title(&self, message: &str) {
-        println!("{}", self.paint("1;32", message));
-    }
+    pub(crate) fn title(&self) { println!("{}\n", self.paint("1;36", "Argus installer")); }
+    pub(crate) fn detail(&self, message: &str) { println!("{}", self.paint("2", &format!("    {message}"))); }
+    pub(crate) fn warning(&self, message: &str) { eprintln!("{} {message}", self.paint("33", "  !")); }
+    pub(crate) fn success_title(&self, message: &str) { println!("{}", self.paint("1;32", message)); }
 
     pub(crate) fn working<T>(&self, message: &str, work: impl FnOnce() -> Result<T>) -> Result<T> {
         if self.verbose || !std::io::stdout().is_terminal() {
@@ -107,18 +96,28 @@ pub(crate) fn select_mode(requested: Option<String>) -> Result<InstallMode> {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ControlConfig {
-    pub(crate) values: BTreeMap<String, String>,
+    pub(crate) registry: String,
+    pub(crate) version: String,
+    pub(crate) domain: String,
+    pub(crate) content_domain: String,
+    pub(crate) basic_auth_user: String,
+    pub(crate) basic_auth_password: String,
+    pub(crate) postgres_password: String,
+    pub(crate) web_api_token: String,
+    pub(crate) worker_token: String,
+    pub(crate) content_sync_token: String,
+    pub(crate) payload_secret: String,
+    pub(crate) org_id: String,
+    pub(crate) user_id: String,
+    pub(crate) bootstrap_project_id: String,
+    pub(crate) bootstrap_environment_id: String,
+    pub(crate) server_id: String,
+    pub(crate) github_token: String,
+    pub(crate) rust_log: String,
     pub(crate) operator_email: String,
     pub(crate) org_name: String,
-    pub(crate) generated_password: bool,
-    pub(crate) existing: bool,
-}
-
-impl ControlConfig {
-    pub(crate) fn get(&self, key: &str) -> Result<&str> {
-        self.values.get(key).map(String::as_str).with_context(|| format!("missing {key}"))
-    }
-    pub(crate) fn set(&mut self, key: &str, value: String) { self.values.insert(key.to_string(), value); }
+    pub(crate) generated_basic_password: bool,
+    pub(crate) existing_install: bool,
 }
 
 pub(crate) struct Installer {
@@ -127,6 +126,7 @@ pub(crate) struct Installer {
     pub(crate) install_dir: PathBuf,
     pub(crate) config_dir: PathBuf,
     pub(crate) state_dir: PathBuf,
+    pub(crate) log_dir: PathBuf,
     pub(crate) docker_config: PathBuf,
 }
 
@@ -137,6 +137,7 @@ impl Installer {
             install_dir: env_path("ARGUS_INSTALL_DIR", DEFAULT_INSTALL_DIR),
             config_dir: env_path("ARGUS_CONFIG_DIR", DEFAULT_CONFIG_DIR),
             state_dir: env_path("ARGUS_STATE_DIR", DEFAULT_STATE_DIR),
+            log_dir: env_path("ARGUS_LOG_DIR", DEFAULT_LOG_DIR),
             docker_config: temp_dir("argus-installer-docker")?,
         })
     }
@@ -147,6 +148,18 @@ impl Installer {
 
 impl Drop for Installer {
     fn drop(&mut self) { let _ = fs::remove_dir_all(&self.docker_config); }
+}
+
+pub(crate) fn parse_os_release() -> Result<BTreeMap<String, String>> {
+    let path = Path::new("/etc/os-release");
+    if !path.is_file() { bail!("/etc/os-release is required"); }
+    let mut values = BTreeMap::new();
+    for line in fs::read_to_string(path)?.lines() {
+        if let Some((key, value)) = line.split_once('=') {
+            values.insert(key.to_string(), value.trim_matches(|c| c == '\'' || c == '"').to_string());
+        }
+    }
+    Ok(values)
 }
 
 pub(crate) fn validate_domain(value: &str) -> Result<()> {
@@ -181,14 +194,4 @@ pub(crate) fn value_or_secret(values: &BTreeMap<String, String>, key: &str, leng
 
 pub(crate) fn value_or_uuid(values: &BTreeMap<String, String>, key: &str) -> String {
     env::var(key).ok().or_else(|| values.get(key).cloned()).filter(|v| !v.is_empty()).unwrap_or_else(|| Uuid::new_v4().to_string())
-}
-
-pub(crate) fn prompt_password(existing: Option<String>) -> Result<(String, bool)> {
-    if let Some(value) = env::var("ARGUS_BASIC_AUTH_PASSWORD").ok().or(existing) { return Ok((value, false)); }
-    if !lifecycle::interactive_available() { return Ok((new_secret(24), true)); }
-    let first = prompt_secret("Browser password (Enter to generate): ")?;
-    if first.is_empty() { return Ok((new_secret(24), true)); }
-    let second = prompt_secret("Confirm browser password: ")?;
-    if first != second { bail!("passwords do not match"); }
-    Ok((first, false))
 }
