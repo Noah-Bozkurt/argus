@@ -228,4 +228,11 @@ mod tests {
             assert!(purge_data_from_answer(answer), "{answer}");
         }
     }
+
+    #[test]
+    fn uninstall_confirmation_is_intentionally_case_sensitive() {
+        assert_eq!("YES", "YES");
+        assert_ne!("yes", "YES");
+        assert_ne!("Yes", "YES");
+    }
 }
