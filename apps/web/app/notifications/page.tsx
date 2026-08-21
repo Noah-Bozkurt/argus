@@ -90,9 +90,20 @@ export default async function NotificationsPage() {
 
           {rules.length === 0 ? <div className="empty-state"><strong>No notification rules yet</strong>Create a rule to turn selected events into operator notifications.</div> : <div className="stack">{rules.map((rule) => (
             <article key={rule.id} style={{ padding: 14, border: '1px solid var(--border)', borderRadius: 8, background: '#0e1117' }}>
-              <div className="row-title">{rule.name}<span className={`badge ${rule.enabled ? 'success' : ''}`}>{rule.enabled ? 'Enabled' : 'Disabled'}</span><span className={`badge ${severityClass(rule.severity)}`}>{rule.severity}</span></div>
-              <div className="row-subtitle" style={{ marginBottom: 12 }}>{rule.event_pattern} · {rule.project_id ? projects.find((project) => project.id === rule.project_id)?.name ?? rule.project_id : 'All projects'}{rule.data_field ? ` · ${rule.data_field} = ${rule.data_value}` : ''}</div>
-              <details>
+              <div className="resource-card-head">
+                <div><div className="row-title">{rule.name}<span className={`badge ${rule.enabled ? 'success' : ''}`}>{rule.enabled ? 'Enabled' : 'Muted'}</span><span className={`badge ${severityClass(rule.severity)}`}>{rule.severity}</span></div><div className="row-subtitle">{rule.event_pattern} · {rule.project_id ? projects.find((project) => project.id === rule.project_id)?.name ?? rule.project_id : 'All projects'}{rule.data_field ? ` · ${rule.data_field} = ${rule.data_value}` : ''}</div></div>
+                <form action={async (formData) => { 'use server'; await updateNotificationRuleAction(rule.id, formData) }}>
+                  <input type="hidden" name="name" value={rule.name} />
+                  <input type="hidden" name="project_id" value={rule.project_id ?? ''} />
+                  <input type="hidden" name="event_pattern" value={rule.event_pattern} />
+                  <input type="hidden" name="severity" value={rule.severity} />
+                  <input type="hidden" name="data_field" value={rule.data_field ?? ''} />
+                  <input type="hidden" name="data_value" value={rule.data_value ?? ''} />
+                  {!rule.enabled ? <input type="hidden" name="enabled" value="on" /> : null}
+                  <button className="small" type="submit">{rule.enabled ? 'Mute rule' : 'Enable rule'}</button>
+                </form>
+              </div>
+              <details style={{ marginTop: 12 }}>
                 <summary className="button small">Edit rule</summary>
                 <div style={{ marginTop: 12 }}>
                   <form action={async (formData) => { 'use server'; await updateNotificationRuleAction(rule.id, formData) }}>
