@@ -6,6 +6,9 @@ use std::{
     net::{IpAddr, ToSocketAddrs},
     os::unix::fs::PermissionsExt,
     path::Path,
+    process::Command,
+    thread,
+    time::Duration,
 };
 use uuid::Uuid;
 
@@ -72,6 +75,53 @@ pub fn resolve_domain(value: &str) -> Result<Vec<IpAddr>> {
 
 pub fn require_domain_resolution(value: &str) -> Result<()> {
     resolve_domain(value).map(|_| ())
+}
+
+pub fn caddy_tls_error(logs: &str, domains: &[&str]) -> Option<String> {
+    let mut limited = BTreeMap::new();
+    for line in logs
+        .lines()
+        .filter(|line| line.contains("rateLimited") || line.contains("too many certificates"))
+    {
+        for domain in domains {
+            if !line.contains(domain) {
+                continue;
+            }
+            let retry_after = line
+                .split_once("retry after ")
+                .map(|(_, remainder)| remainder)
+                .and_then(|remainder| {
+                    remainder
+                        .split_once(": see ")
+                        .map(|(value, _)| value)
+                        .or_else(|| remainder.split_once(" (ca=").map(|(value, _)| value))
+                })
+                .map(|value| value.trim_matches(|character| character == '\"' || character == ']'))
+                .unwrap_or("the time specified by Let's Encrypt");
+            let retry_after = retry_after.to_string();
+            limited
+                .entry((*domain).to_string())
+                .and_modify(|current| {
+                    if retry_after > *current {
+                        *current = retry_after.clone();
+                    }
+                })
+                .or_insert(retry_after);
+        }
+    }
+
+    if limited.is_empty() {
+        return None;
+    }
+
+    let details = limited
+        .iter()
+        .map(|(domain, retry_after)| format!("{domain}: {retry_after}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "Let's Encrypt rate-limited TLS certificate issuance ({details}). Do not retry the installer or domain change before the latest listed time; repeated attempts cannot bypass the certificate authority limit"
+    ))
 }
 
 pub fn resolve_domains(domains: &Domains) -> Result<Vec<DomainResolution>> {
@@ -215,10 +265,17 @@ fn apply_installed_domains(install_dir: &Path, domains: &Domains) -> Result<()> 
             .context("validate Compose configuration after domain change")?;
         recreate_domain_services(install_dir)
             .context("recreate domain-dependent Argus services")?;
+        wait_for_domain_https(install_dir, domains).context("verify HTTPS after domain change")?;
         Ok(())
     })();
 
     if let Err(error) = apply_result {
+        let logs =
+            compose_output(install_dir, &["logs", "--tail=200", "caddy"]).unwrap_or_default();
+        let error = match caddy_tls_error(&logs, &[&domains.web, &domains.content]) {
+            Some(message) => error.context(message),
+            None => error,
+        };
         let rollback_result = rollback_domain_change(install_dir, &old_env, &old_caddy);
         return match rollback_result {
             Ok(()) => Err(error.context("domain change failed; previous domains were restored")),
@@ -303,6 +360,43 @@ fn recreate_domain_services(install_dir: &Path) -> Result<()> {
     )
 }
 
+fn https_health_reachable(domain: &str) -> bool {
+    Command::new("curl")
+        .args([
+            "-sS",
+            "--connect-timeout",
+            "5",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            &format!("https://{domain}/healthz"),
+        ])
+        .output()
+        .is_ok_and(|output| output.status.success() && output.stdout == b"200")
+}
+
+fn wait_for_domain_https(install_dir: &Path, domains: &Domains) -> Result<()> {
+    for _ in 0..60 {
+        if https_health_reachable(&domains.web) && https_health_reachable(&domains.content) {
+            return Ok(());
+        }
+
+        let logs =
+            compose_output(install_dir, &["logs", "--tail=200", "caddy"]).unwrap_or_default();
+        if let Some(error) = caddy_tls_error(&logs, &[&domains.web, &domains.content]) {
+            bail!(error);
+        }
+        thread::sleep(Duration::from_secs(2));
+    }
+
+    bail!(
+        "HTTPS health checks did not become reachable for {} and {}; verify DNS and external access to ports 80/443",
+        domains.web,
+        domains.content
+    )
+}
+
 fn rollback_domain_change(install_dir: &Path, env: &[u8], caddy: &[u8]) -> Result<()> {
     let env_file = install_dir.join(".env");
     let caddy_file = install_dir.join("Caddyfile");
@@ -381,5 +475,22 @@ mod tests {
                 "config",
             ]
         );
+    }
+
+    #[test]
+    fn caddy_rate_limit_error_reports_domains_and_retry_times() {
+        let logs = r#"
+{"identifier":"content.example.com","error":"HTTP 429 rateLimited - too many certificates; retry after 2026-08-22 03:15:46 UTC: see https://letsencrypt.org/docs/rate-limits/"}
+{"identifier":"app.example.com","error":"HTTP 429 rateLimited - too many certificates; retry after 2026-08-21 22:04:12 UTC: see https://letsencrypt.org/docs/rate-limits/"}
+"#;
+        let error = caddy_tls_error(logs, &["app.example.com", "content.example.com"]).unwrap();
+        assert!(error.contains("app.example.com: 2026-08-21 22:04:12 UTC"));
+        assert!(error.contains("content.example.com: 2026-08-22 03:15:46 UTC"));
+        assert!(error.contains("Do not retry"));
+    }
+
+    #[test]
+    fn caddy_tls_error_ignores_unrelated_failures() {
+        assert!(caddy_tls_error("connection refused", &["app.example.com"]).is_none());
     }
 }

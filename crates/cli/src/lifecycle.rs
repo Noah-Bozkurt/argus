@@ -485,6 +485,26 @@ pub fn remove_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn preserve_recovery_files(options: &UninstallOptions) -> Result<PathBuf> {
+    let recovery_dir = options.state_dir.join("uninstall-recovery");
+    fs::create_dir_all(&recovery_dir)?;
+    fs::set_permissions(&recovery_dir, fs::Permissions::from_mode(0o700))?;
+    for (source, name) in [
+        (options.install_dir.join(".env"), "runtime.env"),
+        (options.install_dir.join("compose.yaml"), "compose.yaml"),
+        (options.install_dir.join("Caddyfile"), "Caddyfile"),
+        (options.config_dir.join("registry.env"), "registry.env"),
+        (options.config_dir.join("agent.env"), "agent.env"),
+        (options.config_dir.join("helper.env"), "helper.env"),
+        (options.config_dir.join("revision"), "revision"),
+    ] {
+        if source.is_file() {
+            copy_file(&source, &recovery_dir.join(name), 0o600)?;
+        }
+    }
+    Ok(recovery_dir)
+}
+
 pub fn uninstall(options: UninstallOptions) -> Result<()> {
     require_root().context("uninstall must run as root")?;
     if !options.yes {
@@ -493,7 +513,11 @@ pub fn uninstall(options: UninstallOptions) -> Result<()> {
         }
         println!("This will stop Argus and remove its binaries and configuration.");
         if options.purge_data {
-            println!("Docker volumes, state, backups, and logs will also be permanently deleted.");
+            println!();
+            println!(
+                "WARNING: Docker volumes, state, backups, and logs will be permanently deleted."
+            );
+            println!("This cannot be undone without an external backup.");
         }
         let answer = prompt_line("Type UNINSTALL ARGUS to continue: ")?;
         if answer != "UNINSTALL ARGUS" {
@@ -532,6 +556,12 @@ pub fn uninstall(options: UninstallOptions) -> Result<()> {
         run("docker", &refs).context("stop the Argus control-plane stack")?;
     }
 
+    let recovery_dir = if options.purge_data {
+        None
+    } else {
+        Some(preserve_recovery_files(&options).context("preserve recovery configuration")?)
+    };
+
     println!("[argus-uninstall] removing Argus binaries and configuration");
     for path in [
         "/usr/local/bin/argus-agent",
@@ -551,14 +581,26 @@ pub fn uninstall(options: UninstallOptions) -> Result<()> {
         println!("[argus-uninstall] purging Argus state, backups, and logs");
         remove_path(&options.state_dir)?;
         remove_path(&options.log_dir)?;
-        let _ = Command::new("userdel").arg("argus").status();
-        let _ = Command::new("groupdel").arg("argus").status();
+        let _ = Command::new("userdel")
+            .arg("argus")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = Command::new("groupdel")
+            .arg("argus")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
         println!(
             "Argus and its data were removed. This cannot be recovered without an external backup."
         );
     } else {
         println!("Argus was removed. State and Docker volumes were preserved for recovery.");
         println!("Preserved state: {}", options.state_dir.display());
+        if let Some(recovery_dir) = recovery_dir {
+            println!("Recovery configuration: {}", recovery_dir.display());
+            println!("Run the public Argus installer and choose Repair to restore this host.");
+        }
     }
     Ok(())
 }

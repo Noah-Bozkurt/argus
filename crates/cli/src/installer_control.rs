@@ -1,6 +1,9 @@
 use super::installer_shared::{ControlConfig, Installer};
 use anyhow::{Context, Result, bail};
-use cli::lifecycle::{self, output, write_env_file};
+use cli::{
+    domain,
+    lifecycle::{self, output, write_env_file},
+};
 use serde_json::{Value, json};
 use std::{
     env, fs,
@@ -101,7 +104,17 @@ impl Installer {
     }
 
     pub(crate) fn generate_caddy_config(&self, config: &ControlConfig) -> Result<()> {
-        if self.caddy_file().is_file() && env::var("ARGUS_RECONFIGURE_CADDY").as_deref() != Ok("1")
+        self.generate_caddy_config_with(config, false)
+    }
+
+    pub(crate) fn regenerate_caddy_config(&self, config: &ControlConfig) -> Result<()> {
+        self.generate_caddy_config_with(config, true)
+    }
+
+    fn generate_caddy_config_with(&self, config: &ControlConfig, force: bool) -> Result<()> {
+        if !force
+            && self.caddy_file().is_file()
+            && env::var("ARGUS_RECONFIGURE_CADDY").as_deref() != Ok("1")
         {
             self.ui.detail("Preserving existing Caddyfile");
             return Ok(());
@@ -153,7 +166,9 @@ impl Installer {
     }
 
     pub(crate) fn start_control_plane(&self) -> Result<()> {
-        self.compose_status(&["config"])?;
+        // Rendered Compose configuration contains credentials. Validation must stay
+        // quiet even when verbose diagnostics are enabled.
+        self.compose_status(&["config", "--quiet"])?;
         self.compose_status(&["pull"])?;
         self.configure_firewall_if_active()?;
         self.compose_status(&["up", "-d"])?;
@@ -418,6 +433,15 @@ VALUES (:'server_id'::uuid, :'org_id'::uuid, :'project_id'::uuid, :'environment_
         )?;
         lifecycle::run_quiet("curl", &["-fsS", "http://127.0.0.1:8080/health"])?;
         if !self.wait_for_https(&format!("https://{}/healthz", config.domain)) {
+            let logs = self
+                .compose_output(&["logs", "--tail=200", "caddy"])
+                .unwrap_or_default();
+            if let Some(error) = domain::caddy_tls_error(
+                &logs,
+                &[config.domain.as_str(), config.content_domain.as_str()],
+            ) {
+                bail!(error);
+            }
             let _ = self.compose_status(&["logs", "--tail=120", "caddy"]);
             bail!(
                 "Argus HTTPS did not become reachable. Verify DNS for {} and external firewall access to ports 80/443",
@@ -425,6 +449,15 @@ VALUES (:'server_id'::uuid, :'org_id'::uuid, :'project_id'::uuid, :'environment_
             );
         }
         if !self.wait_for_https(&format!("https://{}/healthz", config.content_domain)) {
+            let logs = self
+                .compose_output(&["logs", "--tail=200", "caddy"])
+                .unwrap_or_default();
+            if let Some(error) = domain::caddy_tls_error(
+                &logs,
+                &[config.domain.as_str(), config.content_domain.as_str()],
+            ) {
+                bail!(error);
+            }
             let _ = self.compose_status(&["logs", "--tail=120", "caddy"]);
             bail!(
                 "Payload HTTPS did not become reachable. Verify DNS for {} and external firewall access to ports 80/443",
@@ -459,7 +492,14 @@ VALUES (:'server_id'::uuid, :'org_id'::uuid, :'project_id'::uuid, :'environment_
         println!("Web:      https://{}", config.domain);
         println!("Content:  https://{}", config.content_domain);
         println!("User:     {}", config.basic_auth_user);
-        println!("Password: {}", config.basic_auth_password);
+        println!(
+            "Password: {}",
+            if config.generated_basic_password {
+                "generated and stored securely"
+            } else {
+                "the password you entered"
+            }
+        );
         if config.generated_basic_password {
             println!();
             self.ui.detail(&format!(
@@ -472,6 +512,10 @@ VALUES (:'server_id'::uuid, :'org_id'::uuid, :'project_id'::uuid, :'environment_
         println!();
         self.ui
             .detail("Diagnostics: argusctl status / sudo argusctl smoke");
+        if config.generated_basic_password {
+            self.ui
+                .detail("Show generated login: sudo argusctl credentials");
+        }
         self.ui
             .detail("Update: sudo argusctl update --version main");
     }

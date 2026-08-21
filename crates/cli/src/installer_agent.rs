@@ -10,8 +10,14 @@ use std::{
     time::Duration,
 };
 
+pub(crate) struct ManagedNodeConfig {
+    control_plane_url: String,
+    server_id: String,
+    enrollment_token: String,
+}
+
 impl Installer {
-    pub(crate) fn install_managed_node(&self, credentials: &RegistryCredentials) -> Result<()> {
+    pub(crate) fn collect_managed_node_config(&self) -> Result<ManagedNodeConfig> {
         let setup_code = match env::var("ARGUS_SETUP_CODE")
             .ok()
             .filter(|value| !value.is_empty())
@@ -58,6 +64,23 @@ impl Installer {
         {
             bail!("remote control plane must use HTTPS");
         }
+        Ok(ManagedNodeConfig {
+            control_plane_url,
+            server_id,
+            enrollment_token,
+        })
+    }
+
+    pub(crate) fn install_managed_node(
+        &self,
+        credentials: &RegistryCredentials,
+        setup: &ManagedNodeConfig,
+    ) -> Result<()> {
+        let ManagedNodeConfig {
+            control_plane_url,
+            server_id,
+            enrollment_token,
+        } = setup;
 
         let requested = env::var("ARGUS_VERSION").unwrap_or_else(|_| "main".to_string());
         let initial_image = format!("{}/argus-host-tools:{requested}", credentials.registry);
@@ -81,10 +104,10 @@ impl Installer {
         self.install_host_tools(&image, false)?;
         self.write_helper_env()?;
         self.write_agent_env(
-            &control_plane_url,
-            &server_id,
+            control_plane_url,
+            server_id,
             &env::var("ARGUS_RUST_LOG").unwrap_or_else(|_| "info".to_string()),
-            Some(&enrollment_token),
+            Some(enrollment_token),
         )?;
         lifecycle::run_quiet(
             "systemctl",
@@ -108,12 +131,13 @@ impl Installer {
         }
 
         self.write_agent_env(
-            &control_plane_url,
-            &server_id,
+            control_plane_url,
+            server_id,
             &env::var("ARGUS_RUST_LOG").unwrap_or_else(|_| "info".to_string()),
             None,
         )?;
         lifecycle::run_quiet("systemctl", &["restart", "argus-agent.service"])?;
+        fs::write(self.config_dir.join("revision"), format!("{revision}\n"))?;
         lifecycle::run_quiet(
             "systemctl",
             &["is-active", "--quiet", "argus-helper.service"],

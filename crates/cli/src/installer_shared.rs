@@ -7,9 +7,10 @@ use std::{
     collections::BTreeMap,
     env, fs,
     io::{IsTerminal, Write},
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -21,6 +22,7 @@ use uuid::Uuid;
 pub(crate) struct Ui {
     color: bool,
     pub(crate) verbose: bool,
+    log: Arc<Mutex<Option<fs::File>>>,
 }
 
 impl Ui {
@@ -28,6 +30,55 @@ impl Ui {
         Self {
             color: std::io::stdout().is_terminal() && env::var_os("NO_COLOR").is_none(),
             verbose,
+            log: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub(crate) fn enable_log(&self, log_dir: &Path) -> Result<()> {
+        fs::create_dir_all(log_dir)?;
+        fs::set_permissions(log_dir, fs::Permissions::from_mode(0o700))?;
+        let path = log_dir.join("installer.log");
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(&path)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+        *self.log.lock().expect("installer log lock") = Some(file);
+        self.record("--- Argus installer run started ---");
+        Ok(())
+    }
+
+    fn redact(message: &str) -> String {
+        message
+            .lines()
+            .map(|line| {
+                let lower = line.to_ascii_lowercase();
+                if [
+                    "password",
+                    "token",
+                    "secret",
+                    "authorization",
+                    "database_url",
+                ]
+                .iter()
+                .any(|word| lower.contains(word))
+                {
+                    "[redacted sensitive diagnostic]"
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    pub(crate) fn record(&self, message: &str) {
+        if let Ok(mut guard) = self.log.lock()
+            && let Some(file) = guard.as_mut()
+        {
+            let _ = writeln!(file, "{}", Self::redact(message));
+            let _ = file.flush();
         }
     }
 
@@ -40,12 +91,15 @@ impl Ui {
     }
 
     pub(crate) fn title(&self) {
+        self.record("Argus installer");
         println!("{}\n", self.paint("1;36", "Argus installer"));
     }
     pub(crate) fn detail(&self, message: &str) {
+        self.record(&format!("DETAIL: {message}"));
         println!("{}", self.paint("2", &format!("    {message}")));
     }
     pub(crate) fn warning(&self, message: &str) {
+        self.record(&format!("WARNING: {message}"));
         eprintln!("{} {message}", self.paint("33", "  !"));
     }
     pub(crate) fn success_title(&self, message: &str) {
@@ -53,11 +107,15 @@ impl Ui {
     }
 
     pub(crate) fn working<T>(&self, message: &str, work: impl FnOnce() -> Result<T>) -> Result<T> {
+        self.record(&format!("START: {message}"));
         if self.verbose || !std::io::stdout().is_terminal() {
             println!("{} {message}", self.paint("36", "  ›"));
             let result = work();
             if result.is_ok() {
                 println!("{} {message}", self.paint("32", "  ✓"));
+                self.record(&format!("OK: {message}"));
+            } else if let Err(error) = &result {
+                self.record(&format!("FAILED: {message}: {error:#}"));
             }
             return result;
         }
@@ -88,6 +146,9 @@ impl Ui {
         let _ = std::io::stdout().flush();
         if result.is_ok() {
             println!("{} {message}", self.paint("32", "  ✓"));
+            self.record(&format!("OK: {message}"));
+        } else if let Err(error) = &result {
+            self.record(&format!("FAILED: {message}: {error:#}"));
         }
         result
     }
@@ -97,6 +158,9 @@ impl Ui {
 pub(crate) enum InstallMode {
     ControlPlane,
     Agent,
+    Repair,
+    Update,
+    Uninstall,
 }
 
 impl InstallMode {
@@ -104,7 +168,12 @@ impl InstallMode {
         match value {
             "control-plane" => Ok(Self::ControlPlane),
             "agent" => Ok(Self::Agent),
-            _ => bail!("ARGUS_INSTALL_MODE must be control-plane or agent"),
+            "repair" => Ok(Self::Repair),
+            "update" => Ok(Self::Update),
+            "uninstall" => Ok(Self::Uninstall),
+            _ => bail!(
+                "ARGUS_INSTALL_MODE must be control-plane, agent, repair, update, or uninstall"
+            ),
         }
     }
 }
@@ -114,7 +183,27 @@ pub(crate) fn select_mode(requested: Option<String>) -> Result<InstallMode> {
         return InstallMode::parse(&value);
     }
     if !lifecycle::interactive_available() {
-        bail!("ARGUS_INSTALL_MODE must be control-plane or agent in non-interactive mode");
+        bail!("ARGUS_INSTALL_MODE is required in non-interactive mode");
+    }
+    let install_dir = env_path("ARGUS_INSTALL_DIR", DEFAULT_INSTALL_DIR);
+    let state_dir = env_path("ARGUS_STATE_DIR", DEFAULT_STATE_DIR);
+    if install_dir.join(".env").is_file()
+        || Path::new("/usr/local/bin/argus-agent").is_file()
+        || state_dir.join("agent.json").is_file()
+        || state_dir.join("uninstall-recovery").is_dir()
+    {
+        println!("Existing Argus installation detected.\n");
+        println!("  1. Repair this installation.");
+        println!("  2. Update Argus.");
+        println!("  3. Uninstall Argus.");
+        println!("  4. Cancel.\n");
+        return match prompt_line("Choose [1-4]: ")?.as_str() {
+            "1" => Ok(InstallMode::Repair),
+            "2" => Ok(InstallMode::Update),
+            "3" => Ok(InstallMode::Uninstall),
+            "4" => bail!("operation cancelled"),
+            _ => bail!("invalid choice"),
+        };
     }
     println!("  1. Install an Argus control plane here.");
     println!("  2. Connect this server to an existing Argus instance.\n");
@@ -265,4 +354,23 @@ pub(crate) fn value_or_uuid(values: &BTreeMap<String, String>, key: &str) -> Str
         .or_else(|| values.get(key).cloned())
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| Uuid::new_v4().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn installer_log_redacts_sensitive_lines() {
+        let message = "service failed\nARGUS_WORKER_TOKEN=secret-value\nretry later";
+        let redacted = Ui::redact(message);
+        assert!(redacted.contains("service failed"));
+        assert!(redacted.contains("retry later"));
+        assert!(!redacted.contains("secret-value"));
+    }
+
+    #[test]
+    fn repair_is_an_explicit_install_mode() {
+        assert_eq!(InstallMode::parse("repair").unwrap(), InstallMode::Repair);
+    }
 }

@@ -81,6 +81,26 @@ sudo argusctl smoke
 
 Use this after installation, reboot and update. It performs broader installed-system validation than the local health command.
 
+### One-command diagnosis
+
+```bash
+argusctl doctor
+```
+
+Doctor checks installation files and permissions, Agent and Helper services, the Helper socket, Compose containers, disk capacity, DNS, trusted public HTTPS and the authenticated Agent connection. It keeps checking after failures so one run gives a useful picture of the host.
+
+Use `argusctl doctor --offline` when external network checks are not wanted. `argusctl --json doctor` returns stable machine-readable output.
+
+### Repair
+
+```bash
+sudo argusctl repair
+```
+
+Repair restores the installed revision's binaries, service units and deployment files, then verifies the host. It preserves configuration, IDs, credentials, Caddy data, database volumes and media. If repair fails, the previous files and services are restored.
+
+If `argusctl` cannot run, launch the public installer and choose **Repair this installation**. The downloaded installer provides the same recovery path without relying on the installed CLI.
+
 ### System snapshot
 
 ```bash
@@ -95,11 +115,19 @@ Returns a local JSON snapshot including hostname, OS/kernel, architecture, CPU/R
 argusctl version
 ```
 
+### Retrieve the generated login
+
+The normal installer summary does not print passwords. If Argus generated the initial login password, root can retrieve it explicitly:
+
+```bash
+sudo argusctl credentials
+```
+
+Treat that output like any other credential and do not paste it into diagnostics.
+
 ## Installation behavior
 
-The installer is rerunnable and preserves generated IDs, secrets, data and the installed immutable revision when an existing installation is detected.
-
-A rerun is not an update request. Use:
+The public installer detects an existing installation and offers repair, update or uninstall. It does not silently overwrite an installed host. Repair is not an update request; use:
 
 ```bash
 sudo argusctl update --version main

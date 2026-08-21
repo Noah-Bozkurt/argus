@@ -34,7 +34,9 @@ The bootstrap performs three important steps before the installer runs:
 
 Choose **Install an Argus control plane here** when prompted.
 
-The installer then asks for the information it needs, including the primary Argus domain and private GHCR credentials. The content domain defaults to `content.<primary-domain>` when no custom value is entered. Before the control plane is configured, the installer verifies that both selected domains resolve successfully. The GitHub token is entered silently in the terminal. Registry credentials are stored root-only in `/etc/argus/registry.env` with mode `0600` so later updates can pull the coordinated Argus image set.
+The installer asks for the primary domain, content domain, login details and private GHCR credentials. The content domain defaults to `content.<primary-domain>`. It then opens a review screen: use the arrow keys to move between values and press Enter to edit the selected row. Tokens and passwords remain masked. Nothing is installed until **Install Argus** is selected and the final checks pass.
+
+The GitHub token is entered silently. Registry credentials are stored root-only in `/etc/argus/registry.env` with mode `0600` so later updates and repairs can pull the coordinated Argus image set.
 
 The installer also asks for the initial operator credentials. These seed the first Argus `owner` account used by the first-party login page and the Payload CMS. The older `ARGUS_BASIC_AUTH_*` configuration names are retained for upgrade compatibility, but Caddy no longer performs HTTP Basic Auth and browsers no longer show a native Basic Auth prompt.
 
@@ -52,7 +54,7 @@ The default paths are:
 
 The control plane runs its application services with Docker Compose. The Agent and privileged Helper run as native systemd services.
 
-The installer is rerunnable. Existing generated IDs, secrets, data and the installed immutable revision are preserved. Rerunning the installer is **not** the update mechanism; use `argusctl update` for version changes.
+Running the public installer on an existing host opens a recovery menu instead of silently reinstalling over it. From there you can repair, update or uninstall the existing installation. Repair keeps the installed immutable revision and preserves IDs, secrets, certificates, data and media.
 
 ## Verify the installation
 
@@ -62,12 +64,27 @@ After installation:
 argusctl status
 argusctl health
 argusctl connection
+argusctl doctor
 sudo argusctl smoke
 ```
 
 `argusctl smoke` exercises the installed control plane more broadly than the local service checks and should be the first command used after installation or an update.
 
+`argusctl doctor` is the best starting point when a host is not behaving as expected. It continues through failed checks and reports practical next steps:
+
+```bash
+argusctl doctor
+argusctl doctor --offline
+argusctl --json doctor
+```
+
 Open the configured Argus URL in a browser once the checks are green. Sign in with the operator credentials configured during installation.
+
+If the installer generated the login password, retrieve it explicitly as root so it does not appear in normal installer logs or transcripts:
+
+```bash
+sudo argusctl credentials
+```
 
 ## Add another managed server
 
@@ -114,6 +131,26 @@ To install a specific published revision:
 sudo argusctl update --version <40-character-git-sha>
 ```
 
+Interactive updates show a confirmation before changing the host. Automation must add `--yes`.
+
+## Repair Argus
+
+Use repair when installation files, service units or containers are missing or damaged:
+
+```bash
+sudo argusctl repair
+```
+
+Repair downloads the same immutable revision already installed on the host. It does not regenerate secrets, change domains, replace data or perform an update. Existing files are snapshotted first and restored if the repaired installation does not pass health checks.
+
+If the local CLI or installer binary is missing, use the public installer:
+
+```bash
+curl -fsSL https://install.noahbozkurt.nl/install | sudo bash
+```
+
+Choose **Repair this installation**. For unattended recovery, use `--mode repair` after supplying the required registry environment variables.
+
 ## Manage the control-plane domains
 
 Show the currently configured web and content domains:
@@ -141,6 +178,8 @@ sudo argusctl domain set argus.example.com --content-domain cms.example.com
 ```
 
 `domain set` validates both hostnames and requires both to resolve before it changes `.env` or Caddy configuration. Cloudflare-proxied records are accepted because the check does not compare returned addresses with the origin IP. Argus validates the rendered Caddy configuration, recreates the domain-dependent Web, Content and Caddy services, and restores the previous `.env` and Caddy configuration if the apply step fails.
+
+Interactive domain changes show the old and new values before applying them. Automation must add `--yes`. The command verifies trusted HTTPS on both new domains before reporting success. Certificate-authority rate limits are reported with their retry time, and a failed change restores the previous domains.
 
 Changing the public control-plane hostname while additional managed agents are enrolled is currently blocked. Those agents persist the public control-plane URL locally, and switching the hostname without migrating that state would disconnect them. Automatic managed-agent URL migration should be implemented before this guard is relaxed.
 
@@ -179,6 +218,8 @@ sudo argusctl uninstall --purge-data
 ```
 
 Do not use `--purge-data` unless the installation state and backups are intentionally disposable.
+
+When data is preserved, Argus also writes a root-only recovery bundle under `/var/lib/argus/uninstall-recovery`. Running the public installer again will detect it and offer repair. Purging removes the recovery bundle, database volume, media, backups and logs permanently.
 
 ## Troubleshooting
 

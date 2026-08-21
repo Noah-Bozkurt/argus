@@ -1,8 +1,8 @@
 use super::installer_shared::*;
 use anyhow::{Context, Result, bail};
 use cli::lifecycle::{
-    self, RegistryCredentials, collect_registry_credentials, copy_file, docker_login, output,
-    prompt_line, prompt_secret, read_env_file, save_registry_credentials, temp_dir,
+    self, RegistryCredentials, copy_file, output, prompt_line, prompt_secret, read_env_file,
+    temp_dir,
 };
 use std::{
     collections::BTreeMap,
@@ -14,13 +14,6 @@ use std::{
 };
 
 impl Installer {
-    pub(crate) fn authenticate_registry(&self) -> Result<RegistryCredentials> {
-        let credentials = collect_registry_credentials(&self.config_dir, None)?;
-        docker_login(&credentials, &self.docker_config)?;
-        save_registry_credentials(&self.config_dir, &credentials)?;
-        Ok(credentials)
-    }
-
     pub(crate) fn preflight(&self) -> Result<()> {
         lifecycle::require_root().context("installer must run as root")?;
         let os = parse_os_release()?;
@@ -31,6 +24,20 @@ impl Installer {
         let architecture = output("dpkg", &["--print-architecture"])?;
         if architecture != "amd64" {
             bail!("Argus currently supports amd64 only");
+        }
+        if self.mode == InstallMode::ControlPlane && !self.compose_file().exists() {
+            let sockets = output("ss", &["-ltnH"])?;
+            for port in [80, 443] {
+                if sockets.lines().any(|line| {
+                    line.split_whitespace()
+                        .nth(3)
+                        .is_some_and(|local| local.ends_with(&format!(":{port}")))
+                }) {
+                    bail!(
+                        "TCP port {port} is already in use; free the port before installing Argus"
+                    );
+                }
+            }
         }
         self.apt(&["update"])?;
         self.apt(&[
@@ -46,20 +53,6 @@ impl Installer {
             "unattended-upgrades",
         ])?;
         self.ensure_docker(&os)?;
-        if self.mode == InstallMode::ControlPlane && !self.compose_file().exists() {
-            let sockets = output("ss", &["-ltnH"])?;
-            for port in [80, 443] {
-                if sockets.lines().any(|line| {
-                    line.split_whitespace()
-                        .nth(3)
-                        .is_some_and(|local| local.ends_with(&format!(":{port}")))
-                }) {
-                    bail!(
-                        "TCP port {port} is already in use; free the port before installing Argus"
-                    );
-                }
-            }
-        }
         Ok(())
     }
 
@@ -294,19 +287,28 @@ impl Installer {
         {
             (value, false)
         } else if lifecycle::interactive_available() {
-            let first = prompt_secret("Browser password (Enter to generate): ")?;
-            if first.is_empty() {
-                (new_secret(24), true)
-            } else {
-                let second = prompt_secret("Confirm browser password: ")?;
-                if first != second {
-                    bail!("passwords do not match");
+            loop {
+                let first = prompt_secret("Login password (Enter to generate): ")?;
+                if first.is_empty() {
+                    break (new_secret(24), true);
                 }
-                (first, false)
+                if first.len() < 12 {
+                    self.ui
+                        .warning("Login password must be at least 12 characters.");
+                    continue;
+                }
+                let second = prompt_secret("Confirm login password: ")?;
+                if first == second {
+                    break (first, false);
+                }
+                self.ui.warning("Passwords do not match; try again.");
             }
         } else {
             (new_secret(24), true)
         };
+        if !existing_install && !generated_basic_password && basic_auth_password.len() < 12 {
+            bail!("ARGUS_BASIC_AUTH_PASSWORD must be at least 12 characters");
+        }
         Ok(ControlConfig {
             registry: credentials.registry.clone(),
             version,

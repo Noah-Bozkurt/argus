@@ -1,12 +1,15 @@
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use cli::{domain::require_domain_resolution, lifecycle};
 
 mod installer_agent;
 mod installer_control;
 mod installer_host;
+mod installer_repair;
+mod installer_review;
 mod installer_shared;
 
+use installer_review::review_control_install;
 use installer_shared::{ControlConfig, InstallMode, Installer, select_mode, validate_domain};
 
 #[derive(Debug, Parser)]
@@ -15,8 +18,10 @@ use installer_shared::{ControlConfig, InstallMode, Installer, select_mode, valid
     about = "Install an Argus control plane or managed node"
 )]
 struct Cli {
+    /// Installation path: control-plane, agent, repair, update, or uninstall.
     #[arg(long, env = "ARGUS_INSTALL_MODE")]
     mode: Option<String>,
+    /// Show detailed, secret-safe diagnostics.
     #[arg(long, short = 'v')]
     verbose: bool,
     #[command(subcommand)]
@@ -25,13 +30,18 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Action {
+    /// Validate and store GHCR credentials for future lifecycle operations.
     RegistryLogin {
+        /// GitHub username; the token is entered securely.
         #[arg(long)]
         username: Option<String>,
     },
+    /// Remove Argus, preserving persistent data unless purge is requested.
     Uninstall {
+        /// Skip interactive confirmation.
         #[arg(long)]
         yes: bool,
+        /// Permanently remove data, backups, logs, and Docker volumes.
         #[arg(long)]
         purge_data: bool,
     },
@@ -68,6 +78,11 @@ fn run_uninstall(yes: bool, mut purge_data: bool) -> Result<()> {
         println!("  This will stop Argus and remove its binaries and configuration.");
         println!("  State and Docker volumes can be preserved for recovery.\n");
 
+        if purge_data {
+            println!("  WARNING: Purging permanently deletes all Argus data, backups, logs,");
+            println!("  and Docker volumes. This cannot be undone without an external backup.\n");
+        }
+
         let answer = lifecycle::prompt_line("Type YES to continue: ")?;
         if !uninstall_confirmed(&answer) {
             bail!("uninstall cancelled");
@@ -101,28 +116,74 @@ impl Installer {
     }
 
     fn run(&mut self) -> Result<()> {
+        lifecycle::require_root().context("installer must run as root")?;
+        self.ui.enable_log(&self.log_dir)?;
         self.ui.title();
 
+        if self.mode == InstallMode::Repair {
+            return self.repair_installation();
+        }
+        if self.mode == InstallMode::Update {
+            return lifecycle::run("/usr/local/bin/argusctl", &["update"])
+                .context("start Argus update");
+        }
+        if self.mode == InstallMode::Uninstall {
+            return run_uninstall(false, false);
+        }
+
+        if self.mode == InstallMode::ControlPlane && self.env_file().is_file() {
+            bail!(
+                "an Argus control plane is already installed; use repair, update, or a dedicated configuration command"
+            );
+        }
+        if self.mode == InstallMode::Agent && self.state_dir.join("agent.json").is_file() {
+            bail!("this server is already enrolled; use repair instead of reinstalling it");
+        }
+
         if self.mode == InstallMode::Agent {
-            self.ui
-                .working("Checking host requirements", || self.preflight())?;
             let credentials = lifecycle::collect_registry_credentials(&self.config_dir, None)?;
-            self.ui
-                .working("Authenticating with the Argus registry", || {
-                    lifecycle::docker_login(&credentials, &self.docker_config)?;
-                    lifecycle::save_registry_credentials(&self.config_dir, &credentials)
-                })?;
-            self.ui.working("Installing managed-node bundle", || {
-                self.install_managed_node(&credentials)
-            })?;
+            let setup = self.collect_managed_node_config()?;
+            let fresh_install = !self.state_dir.join("agent.json").exists()
+                && !self.env_file().exists()
+                && !std::path::Path::new("/usr/local/bin/argus-agent").exists();
+            let result = (|| -> Result<()> {
+                self.ui
+                    .working("Checking host requirements", || self.preflight())?;
+                self.ui
+                    .working("Authenticating with the Argus registry", || {
+                        lifecycle::docker_login(&credentials, &self.docker_config)?;
+                        lifecycle::save_registry_credentials(&self.config_dir, &credentials)
+                    })?;
+                self.ui.working("Installing managed-node bundle", || {
+                    self.install_managed_node(&credentials, &setup)
+                })
+            })();
+            if let Err(error) = result {
+                if fresh_install {
+                    self.ui.warning(
+                        "Managed-node installation failed; removing installed Argus components.",
+                    );
+                    if let Err(cleanup_error) =
+                        lifecycle::uninstall(lifecycle::UninstallOptions::from_env(true, true))
+                    {
+                        return Err(error.context(format!(
+                            "automatic rollback also failed: {cleanup_error:#}"
+                        )));
+                    }
+                    self.ui.warning("Automatic rollback completed.");
+                }
+                return Err(error);
+            }
             return Ok(());
         }
 
         // Collect control-plane inputs before host preflight so DNS can fail before apt,
         // Docker setup, registry credential storage, or Argus deployment mutates the host.
-        let credentials = lifecycle::collect_registry_credentials(&self.config_dir, None)?;
+        let mut credentials = lifecycle::collect_registry_credentials(&self.config_dir, None)?;
         let mut config = self.load_control_config(&credentials)?;
         self.prompt_content_domain(&mut config)?;
+        review_control_install(&mut credentials, &mut config)?;
+        config.registry.clone_from(&credentials.registry);
         self.ui.working("Checking DNS resolution", || {
             require_domain_resolution(&config.domain)?;
             require_domain_resolution(&config.content_domain)
@@ -187,9 +248,16 @@ fn main() -> Result<()> {
             let mode = select_mode(cli.mode)?;
             let mut installer = Installer::new(mode, cli.verbose)?;
             installer.run().map_err(|error| {
+                installer
+                    .ui
+                    .record(&format!("INSTALLATION FAILED: {error:#}"));
                 eprintln!("\n  ✗ Installation failed: {error:#}");
                 if !cli.verbose {
                     eprintln!("    Re-run with --verbose for full diagnostics.");
+                }
+                let log = installer.log_dir.join("installer.log");
+                if log.is_file() {
+                    eprintln!("    Redacted log: {}", log.display());
                 }
                 error
             })

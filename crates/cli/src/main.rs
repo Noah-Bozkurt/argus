@@ -1,7 +1,7 @@
 use agent::AgentConfig;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use cli::domain;
+use cli::{domain, lifecycle};
 use serde_json::json;
 use std::{
     io::{self, IsTerminal},
@@ -16,6 +16,8 @@ use tokio::{
 };
 use uuid::Uuid;
 
+mod doctor;
+
 const FIRST_SERVER_SMOKE: &str = include_str!("../../../scripts/first-server-smoke.sh");
 const FIRST_SERVER_UPDATE: &str = include_str!("../../../scripts/update-first-test.sh");
 const INTERRUPTED_UPDATE_RECOVERY: &str =
@@ -26,6 +28,9 @@ const REGISTRY_LOGIN: &str = include_str!("../../../scripts/registry-login.sh");
 #[derive(Debug, Parser)]
 #[command(name = "argusctl", about = "Argus local diagnostics and lifecycle CLI")]
 struct Cli {
+    /// Print machine-readable JSON where supported.
+    #[arg(long)]
+    json: bool,
     #[arg(
         long,
         env = "ARGUS_AGENT_CONFIG",
@@ -38,26 +43,59 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    Status,
-    Health,
-    Connection,
-    Smoke,
-    Update {
-        #[arg(long, default_value = "main")]
-        version: String,
+    /// Run comprehensive, read-only installation diagnostics.
+    Doctor {
+        /// Skip DNS and public HTTPS checks.
+        #[arg(long)]
+        offline: bool,
+        /// Include additional explanatory output.
         #[arg(long, short = 'v')]
         verbose: bool,
     },
-    Uninstall {
+    /// Restore missing or damaged Argus files without changing versions or data.
+    Repair {
+        /// Skip the interactive repair confirmation.
         #[arg(long)]
         yes: bool,
+    },
+    /// Show the stored initial operator login (requires root).
+    Credentials,
+    /// Show local service and enrollment state.
+    Status,
+    /// Check native services, the helper socket, and host collection.
+    Health,
+    /// Verify the Agent can authenticate with its control plane.
+    Connection,
+    /// Run the full installed control-plane smoke test.
+    Smoke,
+    /// Transactionally update Argus to a release tag or immutable revision.
+    Update {
+        /// Release tag or full 40-character Git revision.
+        #[arg(long, default_value = "main")]
+        version: String,
+        /// Show complete, secret-safe update diagnostics.
+        #[arg(long, short = 'v')]
+        verbose: bool,
+        /// Skip the interactive update confirmation.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Remove Argus, preserving persistent data unless purge is requested.
+    Uninstall {
+        /// Skip interactive confirmation (does not imply data purge).
+        #[arg(long)]
+        yes: bool,
+        /// Permanently delete data, backups, logs, and Docker volumes.
         #[arg(long)]
         purge_data: bool,
     },
+    /// Validate and store replacement GHCR credentials.
     RegistryLogin {
+        /// GitHub username; the token is still entered securely.
         #[arg(long)]
         username: Option<String>,
     },
+    /// Inspect or change the public web and content domains.
     Domain {
         #[command(subcommand)]
         command: DomainCommands,
@@ -67,26 +105,37 @@ enum Commands {
         #[arg(long)]
         retry_failed: bool,
     },
+    /// Display local host information.
     System {
         #[command(subcommand)]
         command: SystemCommands,
     },
+    /// Print the argusctl build version.
     Version,
 }
 
 #[derive(Debug, Subcommand)]
 enum DomainCommands {
+    /// Show the configured web and content domains.
     Show,
+    /// Resolve both configured domains through DNS.
     Check,
+    /// Transactionally change both public domains.
     Set {
+        /// New primary web domain.
         domain: String,
+        /// New content domain (defaults to content.<DOMAIN>).
         #[arg(long)]
         content_domain: Option<String>,
+        /// Skip the interactive confirmation.
+        #[arg(long)]
+        yes: bool,
     },
 }
 
 #[derive(Debug, Subcommand)]
 enum SystemCommands {
+    /// Print a JSON host-resource snapshot.
     Info,
 }
 
@@ -439,6 +488,21 @@ async fn run_first_server_update(version: &str, verbose: bool) -> Result<()> {
     }
 }
 
+fn confirm_action(message: &str, yes: bool) -> Result<()> {
+    if yes {
+        return Ok(());
+    }
+    if !lifecycle::interactive_available() {
+        anyhow::bail!("confirmation required; rerun with --yes");
+    }
+    println!("{message}");
+    let answer = lifecycle::prompt_line("Continue? [y/N]: ")?;
+    if !matches!(answer.to_ascii_lowercase().as_str(), "y" | "yes") {
+        anyhow::bail!("operation cancelled");
+    }
+    Ok(())
+}
+
 async fn run_uninstall(yes: bool, purge_data: bool) -> Result<()> {
     let mut env = Vec::new();
     if yes {
@@ -458,24 +522,86 @@ async fn run_registry_login(username: Option<&str>) -> Result<()> {
     run_embedded_script("Argus registry login", REGISTRY_LOGIN, &env).await
 }
 
+async fn run_repair() -> Result<()> {
+    let status = Command::new("/usr/local/bin/argus-installer")
+        .args(["--mode", "repair"])
+        .status()
+        .await
+        .context("start Argus repair; if the installer is missing, run the public installer")?;
+    if !status.success() {
+        anyhow::bail!(
+            "Argus repair failed; run the public installer if the local installer is damaged"
+        );
+    }
+    Ok(())
+}
+
+fn show_credentials() -> Result<()> {
+    lifecycle::require_root().context("stored credentials may only be shown by root")?;
+    let install_dir = lifecycle::env_path("ARGUS_INSTALL_DIR", lifecycle::DEFAULT_INSTALL_DIR);
+    let values = lifecycle::read_env_file(&install_dir.join(".env"))?;
+    let username = values
+        .get("ARGUS_BASIC_AUTH_USER")
+        .context("stored login username is missing")?;
+    let password = values
+        .get("ARGUS_BASIC_AUTH_PASSWORD")
+        .context("stored login password is missing")?;
+    println!("Login username: {username}");
+    println!("Login password: {password}");
+    println!("Keep this output private.");
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Commands::Doctor { offline, verbose } => {
+            let report = doctor::run(offline).await;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                report.print_human(verbose);
+            }
+            if !report.healthy {
+                if cli.json {
+                    std::process::exit(1);
+                }
+                anyhow::bail!("Argus doctor found problems");
+            }
+        }
+        Commands::Repair { yes } => {
+            confirm_action(
+                "Argus will restore its installed files and services without changing data or versions.",
+                yes,
+            )?;
+            run_repair().await?;
+        }
+        Commands::Credentials => show_credentials()?,
         Commands::Status => {
             let config = load(&cli.config).await?;
-            println!(
-                "Agent service: {}",
-                service_state("argus-agent.service").await
-            );
-            println!(
-                "Helper service: {}",
-                service_state("argus-helper.service").await
-            );
-            println!("Agent ID: {}", config.agent_id);
-            println!("Server ID: {}", config.server_id);
-            println!("Control Plane: {}", config.control_plane_url);
-            println!("Helper socket: {}", config.helper_socket.display());
+            let agent = service_state("argus-agent.service").await;
+            let helper = service_state("argus-helper.service").await;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "agent_service": agent,
+                        "helper_service": helper,
+                        "agent_id": config.agent_id,
+                        "server_id": config.server_id,
+                        "control_plane": config.control_plane_url,
+                        "helper_socket": config.helper_socket,
+                    }))?
+                );
+            } else {
+                println!("Agent service: {agent}");
+                println!("Helper service: {helper}");
+                println!("Agent ID: {}", config.agent_id);
+                println!("Server ID: {}", config.server_id);
+                println!("Control Plane: {}", config.control_plane_url);
+                println!("Helper socket: {}", config.helper_socket.display());
+            }
         }
         Commands::Health => {
             let config = load(&cli.config).await?;
@@ -484,13 +610,30 @@ async fn main() -> Result<()> {
             let socket = UnixStream::connect(&config.helper_socket).await.is_ok();
             let snapshot =
                 system::collect_snapshot(config.server_id, env!("CARGO_PKG_VERSION").to_string());
-            println!("Agent: {agent}");
-            println!("Helper: {helper}");
-            println!("Helper socket: {}", if socket { "ok" } else { "failed" });
-            println!(
-                "System collection: {} / {} / {}",
-                snapshot.hostname, snapshot.os, snapshot.kernel
-            );
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "healthy": agent == "active" && helper == "active" && socket,
+                        "agent": agent,
+                        "helper": helper,
+                        "helper_socket": socket,
+                        "system": {
+                            "hostname": snapshot.hostname,
+                            "os": snapshot.os,
+                            "kernel": snapshot.kernel,
+                        }
+                    }))?
+                );
+            } else {
+                println!("Agent: {agent}");
+                println!("Helper: {helper}");
+                println!("Helper socket: {}", if socket { "ok" } else { "failed" });
+                println!(
+                    "System collection: {} / {} / {}",
+                    snapshot.hostname, snapshot.os, snapshot.kernel
+                );
+            }
             if agent != "active" || helper != "active" || !socket {
                 anyhow::bail!("local Argus health check failed");
             }
@@ -515,33 +658,84 @@ async fn main() -> Result<()> {
                     response.status()
                 );
             }
-            println!("control connection: authenticated");
+            if cli.json {
+                println!("{}", json!({"authenticated": true}));
+            } else {
+                println!("control connection: authenticated");
+            }
         }
         Commands::Smoke => run_first_server_smoke().await?,
-        Commands::Update { version, verbose } => run_first_server_update(&version, verbose).await?,
+        Commands::Update {
+            version,
+            verbose,
+            yes,
+        } => {
+            confirm_action(
+                &format!(
+                    "Argus will create a rollback snapshot and update this host to '{version}'."
+                ),
+                yes,
+            )?;
+            run_first_server_update(&version, verbose).await?
+        }
         Commands::Uninstall { yes, purge_data } => run_uninstall(yes, purge_data).await?,
         Commands::RegistryLogin { username } => run_registry_login(username.as_deref()).await?,
         Commands::Domain { command } => match command {
             DomainCommands::Show => {
                 let domains = domain::installed_domains()?;
-                println!("Web domain: {}", domains.web);
-                println!("Content domain: {}", domains.content);
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(
+                            &json!({"web": domains.web, "content": domains.content})
+                        )?
+                    );
+                } else {
+                    println!("Web domain: {}", domains.web);
+                    println!("Content domain: {}", domains.content);
+                }
             }
             DomainCommands::Check => {
-                for resolution in domain::check_installed_domains()? {
-                    let addresses = resolution
-                        .addresses
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    println!("{} -> {addresses}", resolution.domain);
+                let resolutions = domain::check_installed_domains()?;
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(
+                            &resolutions
+                                .iter()
+                                .map(|resolution| json!({
+                                    "domain": resolution.domain,
+                                    "addresses": resolution.addresses,
+                                }))
+                                .collect::<Vec<_>>()
+                        )?
+                    );
+                } else {
+                    for resolution in resolutions {
+                        let addresses = resolution
+                            .addresses
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        println!("{} -> {addresses}", resolution.domain);
+                    }
                 }
             }
             DomainCommands::Set {
                 domain: web_domain,
                 content_domain,
+                yes,
             } => {
+                let old = domain::installed_domains()?;
+                let new = domain::normalize_domains(&web_domain, content_domain.as_deref())?;
+                confirm_action(
+                    &format!(
+                        "Change Argus domains?\n  Web:     {} → {}\n  Content: {} → {}",
+                        old.web, new.web, old.content, new.content
+                    ),
+                    yes,
+                )?;
                 let domains =
                     domain::set_installed_domains(&web_domain, content_domain.as_deref())?;
                 println!("Domain change complete.");
@@ -570,7 +764,13 @@ async fn main() -> Result<()> {
                 }))?
             );
         }
-        Commands::Version => println!("argusctl {}", env!("CARGO_PKG_VERSION")),
+        Commands::Version => {
+            if cli.json {
+                println!("{}", json!({"version": env!("CARGO_PKG_VERSION")}));
+            } else {
+                println!("argusctl {}", env!("CARGO_PKG_VERSION"));
+            }
+        }
     }
     Ok(())
 }
@@ -583,7 +783,9 @@ mod tests {
     fn update_defaults_to_main_discovery_tag() {
         let cli = Cli::try_parse_from(["argusctl", "update"]).expect("parse update command");
         match cli.command {
-            Commands::Update { version, verbose } => {
+            Commands::Update {
+                version, verbose, ..
+            } => {
                 assert_eq!(version, "main");
                 assert!(!verbose);
             }
@@ -597,7 +799,9 @@ mod tests {
         let cli = Cli::try_parse_from(["argusctl", "update", "--version", revision])
             .expect("parse pinned update command");
         match cli.command {
-            Commands::Update { version, verbose } => {
+            Commands::Update {
+                version, verbose, ..
+            } => {
                 assert_eq!(version, revision);
                 assert!(!verbose);
             }
@@ -675,7 +879,8 @@ mod tests {
             Commands::Domain {
                 command: DomainCommands::Set {
                     domain,
-                    content_domain: Some(content_domain)
+                    content_domain: Some(content_domain),
+                    ..
                 }
             } if domain == "argus.example.com" && content_domain == "content.argus.example.com"
         ));

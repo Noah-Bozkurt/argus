@@ -33,7 +33,7 @@ On a supported server:
 curl -fsSL https://install.noahbozkurt.nl/install | sudo bash
 ```
 
-The bootstrap downloads the canonical installer and its SHA-256 checksum, verifies it, and then starts the guided installer.
+The bootstrap downloads the native installer, verifies its checksum, and starts the guided setup. Before anything is installed, you can review the values with the arrow keys and press Enter on a row to change it. Passwords and tokens stay masked.
 
 Current requirements:
 
@@ -53,15 +53,20 @@ Useful commands on an installed host:
 argusctl status
 argusctl health
 argusctl connection
+argusctl doctor
 argusctl system info
 argusctl version
 sudo argusctl smoke
+sudo argusctl repair
+sudo argusctl credentials
 sudo argusctl update --version main
 sudo argusctl registry-login
 sudo argusctl uninstall
 ```
 
 `argusctl update` resolves the requested release to an immutable Git revision instead of leaving an installation on a moving `main` tag.
+
+Start with `argusctl doctor` when something does not look right. It checks the local services, containers, DNS, HTTPS and Agent connection in one pass and suggests a next step for each failure. `argusctl repair` restores damaged installation files without changing the installed version or deleting data. If `argusctl` itself is missing or broken, run the public installer again and choose **Repair**.
 
 ## Current limitations
 
