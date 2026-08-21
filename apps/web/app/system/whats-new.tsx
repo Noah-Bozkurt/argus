@@ -29,7 +29,7 @@ export default function WhatsNew({ revision }: { revision: string }) {
         <button className="small" type="button" onClick={() => { window.localStorage.setItem(KEY, revision); setVisible(false) }}>Got it</button>
       </div>
       <div className="detail-card-body">
-        <ul className="compact-list">{highlights.map((highlight) => <li key={highlight}>{highlight}</li>)}</ul>
+        <ul style={{ margin: 0, paddingLeft: 18 }}>{highlights.map((highlight) => <li key={highlight} style={{ margin: '5px 0' }}>{highlight}</li>)}</ul>
       </div>
     </section>
   )
