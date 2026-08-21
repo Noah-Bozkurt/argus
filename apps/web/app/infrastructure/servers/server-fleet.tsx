@@ -3,8 +3,14 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import type { ServerView } from '../../../lib/api'
+import usePersistentChoice from '../../use-persistent-choice'
 
 const FAVORITES_KEY = 'argus:favorites:v1'
+const STATUS_FILTERS = ['all', 'online', 'offline', 'attention'] as const
+const SORTS = ['name', 'heartbeat', 'cpu', 'disk'] as const
+
+type StatusFilter = typeof STATUS_FILTERS[number]
+type SortChoice = typeof SORTS[number]
 
 function Utilization({ value }: { value: number | undefined }) {
   const safe = typeof value === 'number' ? Math.max(0, Math.min(100, value)) : 0
@@ -42,8 +48,8 @@ export default function ServerFleet({ initialServers }: { initialServers: Server
   const [servers, setServers] = useState(initialServers)
   const [live, setLive] = useState(false)
   const [query, setQuery] = useState('')
-  const [status, setStatus] = useState<'all' | 'online' | 'offline' | 'attention'>('all')
-  const [sort, setSort] = useState<'name' | 'heartbeat' | 'cpu' | 'disk'>('name')
+  const [status, setStatus] = usePersistentChoice<StatusFilter>('argus:servers:status', 'all', STATUS_FILTERS)
+  const [sort, setSort] = usePersistentChoice<SortChoice>('argus:servers:sort', 'name', SORTS)
   const [favorites, setFavorites] = useState<string[]>(initialFavorites)
   const [copied, setCopied] = useState<string | null>(null)
 
@@ -108,8 +114,8 @@ export default function ServerFleet({ initialServers }: { initialServers: Server
         <div><h2>Infrastructure fleet</h2><p>{visible.length} shown · {online}/{servers.length} reporting online · {unhealthy} offline</p></div>
         <div className="resource-toolbar">
           <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search servers…" aria-label="Search servers" />
-          <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} aria-label="Filter server status"><option value="all">All statuses</option><option value="online">Online</option><option value="offline">Offline</option><option value="attention">Needs attention</option></select>
-          <select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} aria-label="Sort servers"><option value="name">Name</option><option value="heartbeat">Latest heartbeat</option><option value="cpu">CPU usage</option><option value="disk">Disk usage</option></select>
+          <select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)} aria-label="Filter server status"><option value="all">All statuses</option><option value="online">Online</option><option value="offline">Offline</option><option value="attention">Needs attention</option></select>
+          <select value={sort} onChange={(event) => setSort(event.target.value as SortChoice)} aria-label="Sort servers"><option value="name">Name</option><option value="heartbeat">Latest heartbeat</option><option value="cpu">CPU usage</option><option value="disk">Disk usage</option></select>
           <span className={`badge ${live ? 'success' : 'warning'}`}><span className={`status-dot ${live ? 'online' : 'warning'}`} />{live ? 'Live' : 'Connecting'}</span>
         </div>
       </div>
