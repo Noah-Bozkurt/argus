@@ -1,110 +1,90 @@
 # Argus
 
-Argus is a self-hosted control plane for projects, servers, deployments, monitoring and content.
+Argus is a self-hosted control panel for software projects and the infrastructure behind them. It keeps project work, servers, deployments, monitoring, incidents and content in one place.
 
-It is **project-first** rather than client-first: a project can be personal, experimental, open-source, infrastructure-only or connected to a client. Client-specific functionality is optional and does not sit at the center of the data model.
+Argus is project-first. A project can be personal, internal, open source or client work; client data is optional and does not define the rest of the system.
 
-> **Status:** Argus is under active development and is not production-ready yet. The current deployment path targets a single Ubuntu/Debian amd64 server and still uses a temporary browser-authentication layer around the operator UI.
+> **Status:** Argus is under active development and is not production-ready. The supported control-plane install is currently a single Ubuntu/Debian amd64 host.
 
-## What Argus does
+## Why Argus?
 
-Argus brings the operational parts of a project into one control panel:
+The name comes from **Argus Panoptes**, the many-eyed watchman from Greek mythology. The idea is simple: one place that keeps watch over the different parts of a project.
 
-- **Projects** — repositories, environments, services, tasks, milestones, notes and activity.
-- **Infrastructure** — managed Linux servers, health information and typed operational actions.
-- **Deployments** — Compose stacks, releases, readiness checks, sites and domains.
-- **Operations** — jobs, monitoring, incidents, notifications, dependency information and status pages.
-- **GitHub** — link repositories and surface repository, issue, pull-request and CI state inside a project.
-- **Content** — project-scoped application data and CMS workflows backed by Payload.
-- **Lifecycle** — install, verify, update, diagnose and uninstall with `argusctl`.
+## What works today
 
-The web interface is organized as a modern control panel with global **Overview**, **Projects**, **Servers**, **Jobs** and **Notifications** views. Individual projects are split into **Deploy**, **Infrastructure**, **Observe**, **Work** and **Content** sections.
+- Project workspaces with repositories, environments, services, tasks, milestones and notes.
+- Managed Linux servers with live health data and typed system, Docker/Compose and maintenance operations.
+- Releases, readiness checks, sites and domains.
+- Persisted jobs, monitoring, incidents, notifications, dependencies and public status pages.
+- GitHub repository integration with repository, issue, pull-request and CI state.
+- Payload-backed application data and CMS workflows scoped to projects.
+- First-party Argus login with shared operator/CMS sessions and workspace roles.
+- Host lifecycle tooling through `argusctl`, including health checks, updates, registry login and uninstall.
 
-## Quick start
+The operator UI has global **Overview**, **Projects**, **Servers**, **Jobs** and **Notifications** views. Project work is grouped into **Deploy**, **Infrastructure**, **Observe**, **Work** and **Content**.
 
-The supported install path is the Argus installer site:
+## Install
 
-**https://install.noahbozkurt.nl**
+The public installer is available at **https://install.noahbozkurt.nl**.
 
-On a clean supported server, run:
+On a supported server:
 
 ```bash
 curl -fsSL https://install.noahbozkurt.nl/install | sudo bash
 ```
 
-The bootstrap downloads `install.sh`, downloads its SHA-256 checksum, verifies the installer and only then executes it.
+The bootstrap downloads the canonical installer and its SHA-256 checksum, verifies it, and then starts the guided installer.
 
-### Current host requirements
+Current requirements:
 
-- Ubuntu or Debian
-- amd64
-- root/sudo access
-- Docker-compatible host; the installer installs Docker when needed
-- ports 80 and 443 available for the control plane
-- public DNS for the Argus and content domains
-- a GitHub classic PAT with `read:packages` and access to the private Argus GHCR packages
+- Ubuntu or Debian on amd64;
+- root or sudo access;
+- ports 80 and 443 available for a control-plane install;
+- public DNS for the Argus and content domains;
+- a GitHub classic PAT with `read:packages` access to the private Argus GHCR packages.
 
-The installer guides you through either:
-
-1. **Control plane** — install a complete Argus instance on this server.
-2. **Managed server** — connect another server to an existing Argus control plane using a short-lived setup code generated from the project UI.
-
-See [Installation](docs/installation.md) for the complete flow.
-
-## Using Argus
-
-After installation, open the domain configured during setup and use the control panel.
-
-A typical workflow is:
-
-1. create or open a project;
-2. link its GitHub repository;
-3. create environments and services;
-4. add managed servers when needed;
-5. configure Compose stacks, releases, sites and domains;
-6. add monitoring and incident automation;
-7. use the project Content area for CMS/application data when the project needs it.
-
-For a tour of the UI and common workflows, see [Using Argus](docs/usage.md).
+The installer can either set up a control plane or connect a managed server to an existing Argus instance. See [Installation](docs/installation.md) for the full flow.
 
 ## `argusctl`
 
-The installer places `argusctl` on the host for diagnostics and lifecycle operations.
+Useful commands on an installed host:
 
 ```bash
 argusctl status
 argusctl health
 argusctl connection
-sudo argusctl smoke
 argusctl system info
 argusctl version
-```
-
-Updates and registry credentials:
-
-```bash
+sudo argusctl smoke
 sudo argusctl update --version main
 sudo argusctl registry-login
-```
-
-Uninstall:
-
-```bash
 sudo argusctl uninstall
 ```
 
-Use `sudo argusctl uninstall --purge-data` only when the retained Argus state should also be deleted.
+`argusctl update` resolves the requested release to an immutable Git revision instead of leaving an installation on a moving `main` tag.
+
+## Current limitations
+
+Argus is deliberately narrow while the deployment and security model is hardened:
+
+- the control plane is single-host rather than HA;
+- amd64 is the only supported installation architecture;
+- installation and updates currently require access to the private GHCR packages;
+- per-user identity propagation into all Control API audit attribution is not complete yet;
+- provider provisioning, production secrets management and full time-series observability are not finished.
+
+The old reverse-proxy Basic Auth prompt is no longer used. Human authentication now uses Argus/Payload sessions; see [Authentication](docs/authentication.md) for the current model and its remaining limitations.
 
 ## Repository layout
 
 ```text
 apps/
-  web/          Argus operator control panel
-  content/      Payload-based content service
+  web/          operator control panel
+  content/      Payload content/application-data service
   installer/    static installer site
-crates/         shared Rust libraries, agent/helper and argusctl
-services/       backend services such as the Control API and worker
-deploy/         Compose, systemd and container build assets
+crates/         Rust agent, helper, CLI and shared libraries
+services/       Control API and background worker
+deploy/         Compose, Caddy, systemd and image assets
 docs/           product, operations and development documentation
 scripts/        lifecycle, update, recovery and validation tooling
 install.sh      canonical host installer
@@ -112,23 +92,21 @@ install.sh      canonical host installer
 
 ## Documentation
 
-Start with the [documentation index](docs/README.md).
+Start with [docs/README.md](docs/README.md). The main references are:
 
 - [Installation](docs/installation.md)
 - [Using Argus](docs/usage.md)
+- [Authentication](docs/authentication.md)
 - [Architecture](docs/architecture.md)
-- [Projects & delivery](docs/projects-and-delivery.md)
 - [Operations](docs/operations.md)
 - [Security & recovery](docs/security-and-recovery.md)
 - [Content platform](docs/content-platform.md)
 - [Development](docs/development.md)
 - [Roadmap](docs/roadmap.md)
 
-## Releases and images
+## Releases
 
-Normal CI runs before release images are published. A successful `main` revision produces a coordinated set of SHA-tagged Argus images in GHCR, verifies that complete immutable set, and only then promotes the `main` release pointers.
-
-An installed control plane records the resolved immutable Git commit rather than silently following a moving `main` tag. `main` is a discovery/update target, not the persisted installed version.
+Release images are published only from a successful `main` revision. Argus publishes the coordinated image set under immutable SHA tags before promoting the moving `main` pointers used for update discovery.
 
 ## License
 
