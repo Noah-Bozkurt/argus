@@ -32,6 +32,13 @@ test("bootstrap endpoint downloads and verifies the canonical installer", async 
   assert.match(bootstrap, /bash "\$tmp\/install\.sh"/);
 });
 
+test("bootstrap shell syntax is valid", () => {
+  const result = spawnSync("bash", ["-n", resolve(appDir, "public/install")], {
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test("bootstrap keeps the guided installer interactive while presenting concise progress", async () => {
   const bootstrap = await readFile(resolve(appDir, "public/install"), "utf8");
   assert.match(bootstrap, /<\/dev\/tty/);
@@ -78,4 +85,7 @@ test("guided installer uses hidden PAT authentication without distribution stora
   const updater = await readFile(resolve(rootDir, "scripts/update-first-test.sh"), "utf8");
   assert.match(updater, /REGISTRY_CREDENTIAL_FILE/);
   assert.match(updater, /argusctl registry-login/);
+  assert.match(updater, /progress_start "Downloading update"/);
+  assert.match(updater, /progress_start "Installing update"/);
+  assert.match(updater, /progress_start "Starting Argus services"/);
 });
