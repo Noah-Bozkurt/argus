@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useTransition } from 'react'
+import { useEffect, useTransition, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 
 const REFRESH_INTERVAL_MS = 5_000
 
-export default function ServersTemplate({ children }: { children: React.ReactNode }) {
+export default function ServersTemplate({ children }: { children: ReactNode }) {
   const router = useRouter()
   const [, startTransition] = useTransition()
 
