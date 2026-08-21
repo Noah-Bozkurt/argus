@@ -103,8 +103,8 @@ impl Installer {
             .timeout(Duration::from_secs(30))
             .build()
             .context("build Cloudflare API client")?;
-        let response = runtime()?.block_on(async {
-            client
+        let (status, body) = runtime()?.block_on(async {
+            let response = client
                 .post(ORIGIN_CA_ENDPOINT)
                 .bearer_auth(&config.cloudflare_api_token)
                 .json(&json!({
@@ -113,12 +113,14 @@ impl Installer {
                     "requested_validity": 5475
                 }))
                 .send()
+                .await?;
+            let status = response.status();
+            let body = response
+                .json::<Value>()
                 .await
+                .context("parse Cloudflare response")?;
+            Ok::<_, anyhow::Error>((status, body))
         })?;
-        let status = response.status();
-        let body: Value = runtime()?
-            .block_on(response.json())
-            .context("parse Cloudflare response")?;
         if status != StatusCode::OK || body.get("success").and_then(Value::as_bool) != Some(true) {
             let detail = body.get("errors").cloned().unwrap_or(Value::Null);
             bail!("Cloudflare Origin CA issuance failed ({status}): {detail}");
