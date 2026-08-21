@@ -1,4 +1,4 @@
-use super::installer_shared::{ControlConfig, Installer};
+use super::installer_shared::{ControlConfig, Installer, TlsMode};
 use anyhow::{Context, Result, bail};
 use cli::{
     domain,
@@ -46,6 +46,7 @@ impl Installer {
             )?;
         }
         fs::create_dir_all(&self.config_dir)?;
+        fs::create_dir_all(self.config_dir.join("tls"))?;
         fs::create_dir_all(self.state_dir.join("backups"))?;
         lifecycle::run_quiet(
             "chown",
@@ -99,6 +100,18 @@ impl Installer {
             ("ARGUS_SERVER_ID", config.server_id.as_str()),
             ("ARGUS_GITHUB_TOKEN", config.github_token.as_str()),
             ("ARGUS_RUST_LOG", config.rust_log.as_str()),
+            ("ARGUS_ACME_EMAIL", config.acme_email.as_str()),
+            (
+                "ARGUS_TLS_MODE",
+                match config.tls_mode {
+                    TlsMode::PublicAcme => "public-acme",
+                    TlsMode::CloudflareOrigin => "cloudflare-origin",
+                },
+            ),
+            (
+                "ARGUS_CONFIG_DIR",
+                self.config_dir.to_str().context("config path")?,
+            ),
         ];
         write_env_file(&self.env_file(), &values, 0o600)
     }
@@ -129,7 +142,23 @@ impl Installer {
             &config.basic_auth_password,
         ])?;
         let template = fs::read_to_string(self.install_dir.join("Caddyfile.template"))?;
+        let (global_options, tls) = match config.tls_mode {
+            TlsMode::PublicAcme => (
+                format!(
+                    "{{\n\temail {}\n\tcert_issuer acme https://acme-v02.api.letsencrypt.org/directory\n\tcert_issuer acme https://acme.zerossl.com/v2/DV90\n}}",
+                    config.acme_email
+                ),
+                String::new(),
+            ),
+            TlsMode::CloudflareOrigin => (
+                String::new(),
+                "\ttls /etc/caddy/argus-tls/origin.crt /etc/caddy/argus-tls/origin.key\n"
+                    .to_string(),
+            ),
+        };
         let rendered = template
+            .replace("__ARGUS_GLOBAL_OPTIONS__", &global_options)
+            .replace("__ARGUS_TLS__", &tls)
             .replace("__ARGUS_DOMAIN__", &config.domain)
             .replace("__ARGUS_CONTENT_DOMAIN__", &config.content_domain)
             .replace("__BASIC_AUTH_USER__", &config.basic_auth_user)
@@ -144,6 +173,11 @@ impl Installer {
             "--rm",
             "-v",
             &format!("{}:/etc/caddy/Caddyfile:ro", self.caddy_file().display()),
+            "-v",
+            &format!(
+                "{}:/etc/caddy/argus-tls:ro",
+                self.config_dir.join("tls").display()
+            ),
             "caddy:2-alpine",
             "caddy",
             "validate",

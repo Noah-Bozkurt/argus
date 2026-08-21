@@ -278,6 +278,25 @@ impl Installer {
         if content_domain == domain {
             bail!("Web and content domains must differ");
         }
+        let acme_email = if let Some(value) = env::var("ARGUS_ACME_EMAIL")
+            .ok()
+            .or_else(|| existing_values.get("ARGUS_ACME_EMAIL").cloned())
+        {
+            value
+        } else if lifecycle::interactive_available() {
+            prompt_line("Certificate contact email: ")?
+        } else if existing_install {
+            "operator@argus.local".to_string()
+        } else {
+            bail!("ARGUS_ACME_EMAIL is required for an unattended control-plane install");
+        };
+        if !acme_email.contains('@')
+            || acme_email.starts_with('@')
+            || acme_email.ends_with('@')
+            || acme_email.chars().any(char::is_whitespace)
+        {
+            bail!("certificate contact email is invalid");
+        }
         let basic_auth_user = requested_user
             .or_else(|| existing_values.get("ARGUS_BASIC_AUTH_USER").cloned())
             .unwrap_or_else(|| "argus".to_string());
@@ -339,6 +358,15 @@ impl Installer {
                 .unwrap_or_else(|| "info".to_string()),
             operator_email: env::var("ARGUS_OPERATOR_EMAIL")
                 .unwrap_or_else(|_| "operator@argus.local".to_string()),
+            acme_email,
+            tls_mode: if existing_values.get("ARGUS_TLS_MODE").map(String::as_str)
+                == Some("cloudflare-origin")
+            {
+                TlsMode::CloudflareOrigin
+            } else {
+                TlsMode::PublicAcme
+            },
+            cloudflare_api_token: env::var("ARGUS_CLOUDFLARE_API_TOKEN").unwrap_or_default(),
             org_name: env::var("ARGUS_ORG_NAME").unwrap_or_else(|_| "Argus".to_string()),
             generated_basic_password,
             existing_install,

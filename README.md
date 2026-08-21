@@ -45,6 +45,8 @@ Current requirements:
 
 The installer can either set up a control plane or connect a managed server to an existing Argus instance. See [Installation](docs/installation.md) for the full flow.
 
+For a control plane, the installer asks for a certificate contact email. It normally uses Let's Encrypt and automatically tries ZeroSSL if issuance fails. If both public hostnames are already behind Cloudflare, it can instead create a Cloudflare Origin CA certificate with a scoped Cloudflare API token; the token is used once and is not stored.
+
 ## `argusctl`
 
 Useful commands on an installed host:

@@ -16,6 +16,10 @@ Prepare:
 
 Both domains must already resolve through DNS before a control-plane installation can continue. A records, AAAA records and CNAME chains are supported. Cloudflare-proxied records are also supported: Argus checks that the hostname resolves, not that the returned address equals the origin server's public IP.
 
+The review screen also asks for a certificate contact email. On ordinary DNS records Caddy requests from Let's Encrypt first and falls back to ZeroSSL. When both hostnames expose Cloudflare's managed `/cdn-cgi/trace` endpoint, the installer offers Cloudflare Origin CA. That option needs a scoped API token with `Zone / SSL and Certificates / Edit`; the token is held only for the installation and is not written to `.env`. Keep the Cloudflare SSL/TLS mode on **Full (strict)**. Origin CA certificates are trusted by Cloudflare, not directly by browsers, so disabling the proxy later will produce a certificate warning.
+
+For unattended installs, set `ARGUS_ACME_EMAIL`. You may also set `ARGUS_CLOUDFLARE_API_TOKEN`; it is only used when both domains are positively detected as proxied. If detection is mixed or the token is absent, the installer safely stays with public ACME.
+
 The control-plane installer installs required host packages and Docker when Docker is not already installed. It intentionally refuses unsupported distributions, unsupported architectures and conflicting container stacks instead of modifying them automatically.
 
 ## Install a control plane

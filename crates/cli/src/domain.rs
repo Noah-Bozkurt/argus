@@ -234,7 +234,21 @@ fn apply_installed_domains(install_dir: &Path, domains: &Domains) -> Result<()> 
 
     let template = fs::read_to_string(&caddy_template)
         .with_context(|| format!("read {}", caddy_template.display()))?;
+    if values.get("ARGUS_TLS_MODE").map(String::as_str) == Some("cloudflare-origin") {
+        bail!(
+            "domain changes for Cloudflare Origin CA installations require a replacement Origin CA certificate; switch this installation to public ACME or replace the certificate and key before changing domains"
+        );
+    }
+    let email = values
+        .get("ARGUS_ACME_EMAIL")
+        .map(String::as_str)
+        .unwrap_or("operator@argus.local");
+    let global_options = format!(
+        "{{\n\temail {email}\n\tcert_issuer acme https://acme-v02.api.letsencrypt.org/directory\n\tcert_issuer acme https://acme.zerossl.com/v2/DV90\n}}"
+    );
     let rendered = template
+        .replace("__ARGUS_GLOBAL_OPTIONS__", &global_options)
+        .replace("__ARGUS_TLS__", "")
         .replace("__ARGUS_DOMAIN__", &domains.web)
         .replace("__ARGUS_CONTENT_DOMAIN__", &domains.content);
     if rendered.contains("__ARGUS_DOMAIN__") || rendered.contains("__ARGUS_CONTENT_DOMAIN__") {

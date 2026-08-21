@@ -8,6 +8,7 @@ mod installer_host;
 mod installer_repair;
 mod installer_review;
 mod installer_shared;
+mod installer_tls;
 
 use installer_review::review_control_install;
 use installer_shared::{ControlConfig, InstallMode, Installer, select_mode, validate_domain};
@@ -188,6 +189,7 @@ impl Installer {
             require_domain_resolution(&config.domain)?;
             require_domain_resolution(&config.content_domain)
         })?;
+        self.configure_tls(&mut config)?;
 
         let install_result = (|| -> Result<()> {
             self.ui
@@ -205,6 +207,7 @@ impl Installer {
             })?;
             self.ui.working("Configuring Argus services", || {
                 self.ensure_argus_user()?;
+                self.provision_tls(&config)?;
                 self.write_runtime_env(&config)?;
                 self.generate_caddy_config(&config)
             })?;

@@ -1,4 +1,6 @@
-use super::installer_shared::{ControlConfig, new_secret, validate_basic_user, validate_domain};
+use super::installer_shared::{
+    ControlConfig, TlsMode, new_secret, validate_basic_user, validate_domain,
+};
 use anyhow::{Context, Result, bail};
 use cli::lifecycle::{self, RegistryCredentials, prompt_line, prompt_secret};
 use std::{
@@ -7,8 +9,8 @@ use std::{
     process::{Command, Stdio},
 };
 
-const INSTALL: usize = 6;
-const CANCEL: usize = 7;
+const INSTALL: usize = 7;
+const CANCEL: usize = 8;
 
 struct TerminalMode {
     tty: File,
@@ -61,6 +63,7 @@ fn rows(credentials: &RegistryCredentials, config: &ControlConfig) -> Vec<String
         "GitHub token:     •••••••••••• configured".to_string(),
         format!("Primary domain:   {}", config.domain),
         format!("Content domain:   {}", config.content_domain),
+        format!("Certificate email: {}", config.acme_email),
         format!("Login username:   {}", config.basic_auth_user),
         format!(
             "Login password:   •••••••••••• {}",
@@ -121,12 +124,12 @@ fn select_row_fallback(credentials: &RegistryCredentials, config: &ControlConfig
     for (index, row) in rows(credentials, config).iter().enumerate() {
         println!("  {}. {row}", index + 1);
     }
-    let answer = prompt_line("\nChoose a value to edit, install, or cancel [1-8]: ")?;
+    let answer = prompt_line("\nChoose a value to edit, install, or cancel [1-9]: ")?;
     let selected = answer
         .parse::<usize>()
-        .context("enter a number from 1 to 8")?;
-    if !(1..=8).contains(&selected) {
-        bail!("enter a number from 1 to 8");
+        .context("enter a number from 1 to 9")?;
+    if !(1..=9).contains(&selected) {
+        bail!("enter a number from 1 to 9");
     }
     Ok(selected - 1)
 }
@@ -193,6 +196,15 @@ pub(crate) fn review_control_install(
                 }
             }
             4 => {
+                let value = prompt_line("Certificate email: ")?;
+                if !value.contains('@') || value.starts_with('@') || value.ends_with('@') {
+                    eprintln!("Enter a valid email address.");
+                    let _ = prompt_line("Press Enter to continue.");
+                } else {
+                    config.acme_email = value;
+                }
+            }
+            5 => {
                 let value = prompt_line("Login username: ")?;
                 if let Err(error) = validate_basic_user(&value) {
                     eprintln!("{error}");
@@ -201,7 +213,7 @@ pub(crate) fn review_control_install(
                     config.basic_auth_user = value;
                 }
             }
-            5 => {
+            6 => {
                 let first = prompt_secret("Login password (Enter to generate): ")?;
                 if first.is_empty() {
                     config.basic_auth_password = new_secret(24);
@@ -258,6 +270,9 @@ mod tests {
             github_token: String::new(),
             rust_log: "info".to_string(),
             operator_email: "operator@argus.local".to_string(),
+            acme_email: "admin@example.com".to_string(),
+            tls_mode: TlsMode::PublicAcme,
+            cloudflare_api_token: String::new(),
             org_name: "Argus".to_string(),
             generated_basic_password: false,
             existing_install: false,

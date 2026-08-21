@@ -215,6 +215,12 @@ pub(crate) fn select_mode(requested: Option<String>) -> Result<InstallMode> {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) enum TlsMode {
+    PublicAcme,
+    CloudflareOrigin,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct ControlConfig {
     pub(crate) registry: String,
     pub(crate) version: String,
@@ -235,6 +241,9 @@ pub(crate) struct ControlConfig {
     pub(crate) github_token: String,
     pub(crate) rust_log: String,
     pub(crate) operator_email: String,
+    pub(crate) acme_email: String,
+    pub(crate) tls_mode: TlsMode,
+    pub(crate) cloudflare_api_token: String,
     pub(crate) org_name: String,
     pub(crate) generated_basic_password: bool,
     pub(crate) existing_install: bool,

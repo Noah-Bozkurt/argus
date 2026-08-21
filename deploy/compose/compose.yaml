@@ -149,6 +149,7 @@ services:
       - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${ARGUS_CONFIG_DIR:-/etc/argus}/tls:/etc/caddy/argus-tls:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:

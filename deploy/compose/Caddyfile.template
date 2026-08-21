@@ -1,4 +1,7 @@
+__ARGUS_GLOBAL_OPTIONS__
+
 __ARGUS_DOMAIN__ {
+__ARGUS_TLS__
 	encode zstd gzip
 
 	@agent path /enrollment/complete /agent/*
@@ -17,6 +20,7 @@ __ARGUS_DOMAIN__ {
 }
 
 __ARGUS_CONTENT_DOMAIN__ {
+__ARGUS_TLS__
 	encode zstd gzip
 
 	@public path /public/* /api/media/file/*
