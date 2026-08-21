@@ -111,6 +111,7 @@ pub fn set_installed_domains(web: &str, content: Option<&str>) -> Result<Domains
     resolve_domains(&domains)?;
 
     let install_dir = lifecycle::env_path("ARGUS_INSTALL_DIR", DEFAULT_INSTALL_DIR);
+    ensure_no_remote_agents(&install_dir)?;
     apply_installed_domains(&install_dir, &domains)?;
     Ok(domains)
 }
@@ -133,6 +134,44 @@ fn installed_domains_at(install_dir: &Path) -> Result<Domains> {
         .cloned()
         .context("ARGUS_CONTENT_DOMAIN is missing from the installed environment")?;
     normalize_domains(&web, Some(&content))
+}
+
+fn ensure_no_remote_agents(install_dir: &Path) -> Result<()> {
+    let values = lifecycle::read_env_file(&install_dir.join(".env"))?;
+    let local_server_id = values
+        .get("ARGUS_SERVER_ID")
+        .context("ARGUS_SERVER_ID is missing from the installed environment")?;
+    let sql = format!(
+        "SELECT COUNT(*) FROM agents WHERE server_id <> '{}'::uuid;",
+        local_server_id.replace('\'', "''")
+    );
+    let output = compose_output(
+        install_dir,
+        &[
+            "exec",
+            "-T",
+            "postgres",
+            "psql",
+            "-At",
+            "-U",
+            "argus",
+            "-d",
+            "argus",
+            "-c",
+            &sql,
+        ],
+    )
+    .context("check managed agents before domain change")?;
+    let remote_agents = output
+        .trim()
+        .parse::<u64>()
+        .context("parse managed agent count")?;
+    if remote_agents > 0 {
+        bail!(
+            "domain change would disconnect {remote_agents} managed agent(s); remote agent URL migration is not implemented yet"
+        );
+    }
+    Ok(())
 }
 
 fn apply_installed_domains(install_dir: &Path, domains: &Domains) -> Result<()> {
@@ -246,6 +285,12 @@ fn run_compose(install_dir: &Path, args: &[&str]) -> Result<()> {
     let args = compose_args(install_dir, args);
     let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
     lifecycle::run_quiet("docker", &refs)
+}
+
+fn compose_output(install_dir: &Path, args: &[&str]) -> Result<String> {
+    let args = compose_args(install_dir, args);
+    let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    lifecycle::output("docker", &refs)
 }
 
 fn recreate_domain_services(install_dir: &Path) -> Result<()> {
