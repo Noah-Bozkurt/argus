@@ -50,6 +50,10 @@ fn resolve_content_domain_input(main_domain: &str, default: &str, entered: &str)
     Ok(content_domain)
 }
 
+fn uninstall_confirmed(answer: &str) -> bool {
+    answer == "YES"
+}
+
 fn purge_data_from_answer(answer: &str) -> bool {
     matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
@@ -65,7 +69,7 @@ fn run_uninstall(yes: bool, mut purge_data: bool) -> Result<()> {
         println!("  State and Docker volumes can be preserved for recovery.\n");
 
         let answer = lifecycle::prompt_line("Type YES to continue: ")?;
-        if answer != "YES" {
+        if !uninstall_confirmed(&answer) {
             bail!("uninstall cancelled");
         }
 
@@ -165,7 +169,7 @@ fn main() -> Result<()> {
 mod tests {
     use super::{
         installer_shared::{InstallMode, is_revision},
-        purge_data_from_answer, resolve_content_domain_input,
+        purge_data_from_answer, resolve_content_domain_input, uninstall_confirmed,
     };
 
     #[test]
@@ -220,6 +224,14 @@ mod tests {
     }
 
     #[test]
+    fn uninstall_requires_literal_uppercase_yes() {
+        assert!(uninstall_confirmed("YES"));
+        for answer in ["", "yes", "Yes", " YES ", "Y"] {
+            assert!(!uninstall_confirmed(answer), "{answer}");
+        }
+    }
+
+    #[test]
     fn uninstall_purge_prompt_defaults_to_preserving_data() {
         for answer in ["", "n", "N", "no", "anything else"] {
             assert!(!purge_data_from_answer(answer), "{answer}");
@@ -227,12 +239,5 @@ mod tests {
         for answer in ["y", "Y", "yes", "YES", " yes "] {
             assert!(purge_data_from_answer(answer), "{answer}");
         }
-    }
-
-    #[test]
-    fn uninstall_confirmation_is_intentionally_case_sensitive() {
-        assert_eq!("YES", "YES");
-        assert_ne!("yes", "YES");
-        assert_ne!("Yes", "YES");
     }
 }
