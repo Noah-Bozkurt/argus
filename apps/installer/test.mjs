@@ -76,6 +76,14 @@ test("native installer owns interactive registry authentication", async () => {
   assert.match(installer, /Install an Argus control plane or managed node/);
 });
 
+test("native installer keeps interactive prompts visible and guides uninstall", async () => {
+  const installer = await readFile(resolve(rootDir, "crates/cli/src/installer.rs"), "utf8");
+  assert.match(installer, /Type YES to continue:/);
+  assert.match(installer, /permanently remove all Argus data, backups, logs, and Docker volumes/);
+  assert.match(installer, /Content domain \[\{default\}\]:/);
+  assert.match(installer, /rerun with --yes/);
+});
+
 test("legacy lifecycle scripts are only native compatibility shims", async () => {
   const [registry, uninstall] = await Promise.all([
     readFile(resolve(rootDir, "scripts/registry-login.sh"), "utf8"),
@@ -103,9 +111,33 @@ test("public site stays a generic install command", async () => {
     readFile(resolve(appDir, "public/index.html"), "utf8"),
     readFile(resolve(appDir, "public/app.js"), "utf8"),
   ]);
-  assert.doesNotMatch(html, /GitHub username|Argus domain|<form/);
+  assert.doesNotMatch(html, /GitHub username|<form/);
   assert.match(script, /\/install/);
   assert.doesNotMatch(script, /ARGUS_REGISTRY_TOKEN|read -rsp/);
+});
+
+test("installer portal explains the real deployment and published revision", async () => {
+  const [html, script] = await Promise.all([
+    readFile(resolve(appDir, "public/index.html"), "utf8"),
+    readFile(resolve(appDir, "public/app.js"), "utf8"),
+  ]);
+
+  for (const expected of [
+    "Install Argus on your server",
+    "Server requirements",
+    "What Argus installs",
+    "Installation modes",
+    "/opt/argus/",
+    "/etc/argus/",
+    "argusctl smoke",
+    "read:packages",
+  ]) {
+    assert.match(html, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
+  assert.match(script, /fetch\("\/manifest\.json"/);
+  assert.match(script, /manifest\.revision\.slice\(0, 12\)/);
+  assert.match(script, /navigator\.clipboard\.writeText/);
 });
 
 test("updater still retains transactional progress and registry rotation guidance", async () => {

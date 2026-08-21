@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 use cli::lifecycle;
 
@@ -7,7 +7,7 @@ mod installer_control;
 mod installer_host;
 mod installer_shared;
 
-use installer_shared::{InstallMode, Installer, select_mode};
+use installer_shared::{ControlConfig, InstallMode, Installer, select_mode, validate_domain};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -37,16 +37,79 @@ enum Action {
     },
 }
 
+fn resolve_content_domain_input(main_domain: &str, default: &str, entered: &str) -> Result<String> {
+    let content_domain = if entered.trim().is_empty() {
+        default.to_string()
+    } else {
+        entered.trim().to_ascii_lowercase()
+    };
+    validate_domain(&content_domain)?;
+    if content_domain == main_domain {
+        bail!("Web and content domains must differ");
+    }
+    Ok(content_domain)
+}
+
+fn uninstall_confirmed(answer: &str) -> bool {
+    answer == "YES"
+}
+
+fn purge_data_from_answer(answer: &str) -> bool {
+    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+fn run_uninstall(yes: bool, mut purge_data: bool) -> Result<()> {
+    if !yes {
+        if !lifecycle::interactive_available() {
+            bail!("confirmation required; rerun with --yes");
+        }
+
+        println!("Argus uninstall\n");
+        println!("  This will stop Argus and remove its binaries and configuration.");
+        println!("  State and Docker volumes can be preserved for recovery.\n");
+
+        let answer = lifecycle::prompt_line("Type YES to continue: ")?;
+        if !uninstall_confirmed(&answer) {
+            bail!("uninstall cancelled");
+        }
+
+        if !purge_data {
+            let answer = lifecycle::prompt_line(
+                "Also permanently remove all Argus data, backups, logs, and Docker volumes? [y/N]: ",
+            )?;
+            purge_data = purge_data_from_answer(&answer);
+        }
+    }
+
+    lifecycle::uninstall(lifecycle::UninstallOptions::from_env(true, purge_data))
+}
+
 impl Installer {
+    fn prompt_content_domain(&self, config: &mut ControlConfig) -> Result<()> {
+        if config.existing_install
+            || std::env::var_os("ARGUS_CONTENT_DOMAIN").is_some()
+            || !lifecycle::interactive_available()
+        {
+            return Ok(());
+        }
+
+        let default = config.content_domain.clone();
+        let entered = lifecycle::prompt_line(&format!("Content domain [{default}]: "))?;
+        config.content_domain = resolve_content_domain_input(&config.domain, &default, &entered)?;
+        Ok(())
+    }
+
     fn run(&mut self) -> Result<()> {
         self.ui.title();
         self.ui
             .working("Checking host requirements", || self.preflight())?;
 
-        let credentials = self
-            .ui
+        // Collect interactive input before starting the spinner so terminal prompts remain visible.
+        let credentials = lifecycle::collect_registry_credentials(&self.config_dir, None)?;
+        self.ui
             .working("Authenticating with the Argus registry", || {
-                self.authenticate_registry()
+                lifecycle::docker_login(&credentials, &self.docker_config)?;
+                lifecycle::save_registry_credentials(&self.config_dir, &credentials)
             })?;
 
         if self.mode == InstallMode::Agent {
@@ -56,11 +119,9 @@ impl Installer {
             return Ok(());
         }
 
-        let mut config = self
-            .ui
-            .working("Collecting control-plane configuration", || {
-                self.load_control_config(&credentials)
-            })?;
+        // Configuration contains interactive prompts, so it must not run behind a spinner.
+        let mut config = self.load_control_config(&credentials)?;
+        self.prompt_content_domain(&mut config)?;
         self.ui
             .detail(&format!("Installing Argus for {}", config.domain));
 
@@ -89,9 +150,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.action {
         Some(Action::RegistryLogin { username }) => lifecycle::registry_login(username.as_deref()),
-        Some(Action::Uninstall { yes, purge_data }) => {
-            lifecycle::uninstall(lifecycle::UninstallOptions::from_env(yes, purge_data))
-        }
+        Some(Action::Uninstall { yes, purge_data }) => run_uninstall(yes, purge_data),
         None => {
             let mode = select_mode(cli.mode)?;
             let mut installer = Installer::new(mode, cli.verbose)?;
@@ -108,7 +167,10 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::installer_shared::{InstallMode, is_revision};
+    use super::{
+        installer_shared::{InstallMode, is_revision},
+        purge_data_from_answer, resolve_content_domain_input, uninstall_confirmed,
+    };
 
     #[test]
     fn revision_validation_is_strict() {
@@ -125,5 +187,53 @@ mod tests {
         );
         assert_eq!(InstallMode::parse("agent").unwrap(), InstallMode::Agent);
         assert!(InstallMode::parse("server").is_err());
+    }
+
+    #[test]
+    fn empty_content_domain_input_keeps_content_subdomain_default() {
+        assert_eq!(
+            resolve_content_domain_input("argus.example.com", "content.argus.example.com", "")
+                .unwrap(),
+            "content.argus.example.com"
+        );
+    }
+
+    #[test]
+    fn custom_content_domain_is_normalized_and_must_differ_from_web_domain() {
+        assert_eq!(
+            resolve_content_domain_input(
+                "argus.example.com",
+                "content.argus.example.com",
+                "CMS.EXAMPLE.COM"
+            )
+            .unwrap(),
+            "cms.example.com"
+        );
+        assert!(
+            resolve_content_domain_input(
+                "argus.example.com",
+                "content.argus.example.com",
+                "argus.example.com"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn uninstall_requires_literal_uppercase_yes() {
+        assert!(uninstall_confirmed("YES"));
+        for answer in ["", "yes", "Yes", " YES ", "Y"] {
+            assert!(!uninstall_confirmed(answer), "{answer}");
+        }
+    }
+
+    #[test]
+    fn uninstall_purge_prompt_defaults_to_preserving_data() {
+        for answer in ["", "n", "N", "no", "anything else"] {
+            assert!(!purge_data_from_answer(answer), "{answer}");
+        }
+        for answer in ["y", "Y", "yes", "YES", " yes "] {
+            assert!(purge_data_from_answer(answer), "{answer}");
+        }
     }
 }
