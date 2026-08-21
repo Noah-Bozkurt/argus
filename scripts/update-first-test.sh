@@ -482,10 +482,40 @@ arm_target_start() {
 }
 
 render_target_caddyfile() {
-  local hash rendered_caddyfile
+  local hash rendered_caddyfile tls_mode acme_email
   hash="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext "$ARGUS_BASIC_AUTH_PASSWORD")"
   rendered_caddyfile="$TARGET_TMP/Caddyfile.rendered"
-  cp "$TARGET_TMP/Caddyfile.template" "$rendered_caddyfile"
+  tls_mode="${ARGUS_TLS_MODE:-public-acme}"
+  acme_email="${ARGUS_ACME_EMAIL:-operator@argus.local}"
+
+  case "$tls_mode" in
+    public-acme)
+      awk -v email="$acme_email" '
+        $0 == "__ARGUS_GLOBAL_OPTIONS__" {
+          print "{"
+          print "\temail " email
+          print "\tcert_issuer acme https://acme-v02.api.letsencrypt.org/directory"
+          print "\tcert_issuer acme https://acme.zerossl.com/v2/DV90"
+          print "}"
+          next
+        }
+        $0 == "__ARGUS_TLS__" { next }
+        { print }
+      ' "$TARGET_TMP/Caddyfile.template" >"$rendered_caddyfile"
+      ;;
+    cloudflare-origin)
+      awk '
+        $0 == "__ARGUS_GLOBAL_OPTIONS__" { next }
+        $0 == "__ARGUS_TLS__" {
+          print "\ttls /etc/caddy/argus-tls/origin.crt /etc/caddy/argus-tls/origin.key"
+          next
+        }
+        { print }
+      ' "$TARGET_TMP/Caddyfile.template" >"$rendered_caddyfile"
+      ;;
+    *) die "unsupported ARGUS_TLS_MODE in installed environment: $tls_mode" ;;
+  esac
+
   sed -i \
     -e "s|__ARGUS_DOMAIN__|${ARGUS_DOMAIN}|g" \
     -e "s|__ARGUS_CONTENT_DOMAIN__|${ARGUS_CONTENT_DOMAIN}|g" \
