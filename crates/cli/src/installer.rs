@@ -74,9 +74,10 @@ fn run_uninstall(yes: bool, mut purge_data: bool) -> Result<()> {
         }
 
         if !purge_data {
-            let answer = lifecycle::prompt_line(
-                "Also permanently remove all Argus data, backups, logs, and Docker volumes? [y/N]: ",
-            )?;
+            println!();
+            println!("  WARNING: Purging permanently deletes all Argus data, backups, logs,");
+            println!("  and Docker volumes. This cannot be undone without an external backup.");
+            let answer = lifecycle::prompt_line("Purge all Argus data? [y/N]: ")?;
             purge_data = purge_data_from_answer(&answer);
         }
     }
@@ -127,32 +128,51 @@ impl Installer {
             require_domain_resolution(&config.content_domain)
         })?;
 
-        self.ui
-            .working("Checking host requirements", || self.preflight())?;
-        self.ui
-            .working("Authenticating with the Argus registry", || {
-                lifecycle::docker_login(&credentials, &self.docker_config)?;
-                lifecycle::save_registry_credentials(&self.config_dir, &credentials)
-            })?;
-        self.ui
-            .detail(&format!("Installing Argus for {}", config.domain));
+        let install_result = (|| -> Result<()> {
+            self.ui
+                .working("Checking host requirements", || self.preflight())?;
+            self.ui
+                .working("Authenticating with the Argus registry", || {
+                    lifecycle::docker_login(&credentials, &self.docker_config)?;
+                    lifecycle::save_registry_credentials(&self.config_dir, &credentials)
+                })?;
+            self.ui
+                .detail(&format!("Installing Argus for {}", config.domain));
 
-        self.ui.working("Downloading and verifying Argus", || {
-            self.pull_host_bundle(&mut config, true)
-        })?;
-        self.ui.working("Configuring Argus services", || {
-            self.ensure_argus_user()?;
-            self.write_runtime_env(&config)?;
-            self.generate_caddy_config(&config)
-        })?;
-        self.ui.working("Starting the control plane", || {
-            self.start_control_plane()?;
-            self.bootstrap_control_plane(&config)?;
-            self.enroll_local_agent(&config)
-        })?;
-        self.ui.working("Verifying installation health", || {
-            self.verify_installation(&config)
-        })?;
+            self.ui.working("Downloading and verifying Argus", || {
+                self.pull_host_bundle(&mut config, true)
+            })?;
+            self.ui.working("Configuring Argus services", || {
+                self.ensure_argus_user()?;
+                self.write_runtime_env(&config)?;
+                self.generate_caddy_config(&config)
+            })?;
+            self.ui.working("Starting the control plane", || {
+                self.start_control_plane()?;
+                self.bootstrap_control_plane(&config)?;
+                self.enroll_local_agent(&config)
+            })?;
+            self.ui.working("Verifying installation health", || {
+                self.verify_installation(&config)
+            })
+        })();
+
+        if let Err(error) = install_result {
+            if !config.existing_install {
+                self.ui
+                    .warning("Fresh installation failed; removing installed Argus components.");
+                if let Err(cleanup_error) =
+                    lifecycle::uninstall(lifecycle::UninstallOptions::from_env(true, true))
+                {
+                    return Err(
+                        error.context(format!("automatic rollback also failed: {cleanup_error:#}"))
+                    );
+                }
+                self.ui.warning("Automatic rollback completed.");
+            }
+            return Err(error);
+        }
+
         self.print_summary(&config);
         Ok(())
     }

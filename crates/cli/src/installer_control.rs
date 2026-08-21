@@ -417,14 +417,14 @@ VALUES (:'server_id'::uuid, :'org_id'::uuid, :'project_id'::uuid, :'environment_
             &["is-active", "--quiet", "argus-agent.service"],
         )?;
         lifecycle::run_quiet("curl", &["-fsS", "http://127.0.0.1:8080/health"])?;
-        if !self.wait_for_https(&format!("https://{}/", config.domain)) {
+        if !self.wait_for_https(&format!("https://{}/healthz", config.domain)) {
             let _ = self.compose_status(&["logs", "--tail=120", "caddy"]);
             bail!(
                 "Argus HTTPS did not become reachable. Verify DNS for {} and external firewall access to ports 80/443",
                 config.domain
             );
         }
-        if !self.wait_for_https(&format!("https://{}/", config.content_domain)) {
+        if !self.wait_for_https(&format!("https://{}/healthz", config.content_domain)) {
             let _ = self.compose_status(&["logs", "--tail=120", "caddy"]);
             bail!(
                 "Payload HTTPS did not become reachable. Verify DNS for {} and external firewall access to ports 80/443",
