@@ -85,6 +85,28 @@
   background: rgba(117, 144, 255, .09);
 }
 
+.notification-button {
+  position: relative;
+}
+
+.notification-count {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 17px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
+  border: 2px solid #0b0e14;
+  border-radius: 999px;
+  background: #e05d67;
+  color: white;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 @media (max-width: 760px) {
   .resource-toolbar-header { align-items: stretch; }
   .resource-toolbar { width: 100%; justify-content: stretch; }
