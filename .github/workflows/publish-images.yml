@@ -1,4 +1,4 @@
-name: Publish Argus Images
+name: Publish Argus release
 
 on:
   workflow_run:
@@ -14,77 +14,49 @@ permissions:
   packages: write
 
 concurrency:
-  group: argus-images-main
+  group: argus-release-main
   cancel-in-progress: false
 
 jobs:
-  publish-immutable-images:
+  build-immutable-release:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main'
     runs-on: [self-hosted, linux, x64]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - image: argus-web
-            dockerfile: deploy/docker/web.Dockerfile
-          - image: argus-content
-            dockerfile: deploy/docker/content.Dockerfile
-          - image: argus-control-api
-            dockerfile: deploy/docker/control-api.Dockerfile
-          - image: argus-worker
-            dockerfile: deploy/docker/worker.Dockerfile
-          - image: argus-host-tools
-            dockerfile: deploy/docker/host-tools.Dockerfile
     steps:
-      - name: Check out tested revision
+      - name: Check out release-gated revision
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Set up Docker Buildx
+      - name: Set up Docker Buildx once
         uses: docker/setup-buildx-action@v3
 
-      - name: Sign in to GHCR
+      - name: Sign in to GHCR once
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and publish immutable image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          push: true
-          platforms: linux/amd64
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
-          tags: ghcr.io/noah-bozkurt/${{ matrix.image }}:${{ github.event.workflow_run.head_sha }}
-          labels: |
-            org.opencontainers.image.title=${{ matrix.image }}
-            org.opencontainers.image.source=${{ github.event.workflow_run.repository.html_url }}
-            org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
-            org.opencontainers.image.version=${{ github.event.workflow_run.head_sha }}
+      - name: Build and push complete immutable release
+        env:
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: docker buildx bake --push
 
-  verify-published-artifacts:
-    name: Verify immutable release
-    needs: publish-immutable-images
+  verify-immutable-release:
+    needs: build-immutable-release
     runs-on: [self-hosted, linux, x64]
     steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
       - name: Sign in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Verify complete SHA-tagged release
         env:
           TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -93,17 +65,21 @@ jobs:
           for image in argus-web argus-content argus-control-api argus-worker argus-host-tools
           do
             echo "Verifying ${image}:${TESTED_SHA}"
-            docker buildx imagetools inspect \
-              "ghcr.io/noah-bozkurt/${image}:${TESTED_SHA}" >/dev/null
+            docker buildx imagetools inspect "ghcr.io/noah-bozkurt/${image}:${TESTED_SHA}" >/dev/null
           done
 
-  promote-release:
-    name: Promote verified release
-    needs: verify-published-artifacts
+  deploy-installer-pages:
+    needs: verify-immutable-release
     runs-on: [self-hosted, linux, x64]
+    env:
+      TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Check out tested revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Sign in to GHCR
         uses: docker/login-action@v3
@@ -112,6 +88,60 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract tested native installer from host-tools
+        run: |
+          set -euo pipefail
+          image="ghcr.io/noah-bozkurt/argus-host-tools:${TESTED_SHA}"
+          docker pull "$image" >/dev/null
+          revision="$(docker image inspect "$image" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+          [[ "$revision" == "$TESTED_SHA" ]]
+          cid="$(docker create "$image")"
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          docker cp "$cid:/out/argus-installer" "$RUNNER_TEMP/argus-installer"
+          chmod 0755 "$RUNNER_TEMP/argus-installer"
+          [[ -s "$RUNNER_TEMP/argus-installer" ]]
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build Pages deployment from tested binary
+        env:
+          ARGUS_RELEASE_REVISION: ${{ github.event.workflow_run.head_sha }}
+          ARGUS_INSTALLER_BINARY: ${{ runner.temp }}/argus-installer
+        run: |
+          node apps/installer/build.mjs
+          bash -n apps/installer/dist/install
+          test -s apps/installer/dist/manifest.json
+          test -s apps/installer/dist/bin/argus-installer-x86_64
+
+      - name: Deploy tested installer to Cloudflare Pages
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        run: >-
+          pnpm dlx wrangler@3.90.0 pages deploy apps/installer/dist
+          --project-name=argus-installer --branch=main
+
+      - name: Report missing Pages configuration
+        if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
+        run: echo "Native installer site is built but CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID are not configured."
+
+  promote-release:
+    needs:
+      - verify-immutable-release
+      - deploy-installer-pages
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Sign in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Promote application images
         env:
           TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -124,21 +154,17 @@ jobs:
               --tag "ghcr.io/noah-bozkurt/${image}:main" \
               "ghcr.io/noah-bozkurt/${image}:${TESTED_SHA}"
           done
-
       - name: Promote host-tools release pointer last
         env:
           TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          set -euo pipefail
-          docker buildx imagetools create \
-            --tag ghcr.io/noah-bozkurt/argus-host-tools:main \
-            "ghcr.io/noah-bozkurt/argus-host-tools:${TESTED_SHA}"
-
+        run: >-
+          docker buildx imagetools create
+          --tag ghcr.io/noah-bozkurt/argus-host-tools:main
+          ghcr.io/noah-bozkurt/argus-host-tools:${TESTED_SHA}
       - name: Verify promoted release tags
         run: |
           set -euo pipefail
           for image in argus-web argus-content argus-control-api argus-worker argus-host-tools
           do
-            docker buildx imagetools inspect \
-              "ghcr.io/noah-bozkurt/${image}:main" >/dev/null
+            docker buildx imagetools inspect "ghcr.io/noah-bozkurt/${image}:main" >/dev/null
           done
