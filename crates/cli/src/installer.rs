@@ -50,6 +50,36 @@ fn resolve_content_domain_input(main_domain: &str, default: &str, entered: &str)
     Ok(content_domain)
 }
 
+fn purge_data_from_answer(answer: &str) -> bool {
+    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+fn run_uninstall(yes: bool, mut purge_data: bool) -> Result<()> {
+    if !yes {
+        if !lifecycle::interactive_available() {
+            bail!("confirmation required; rerun with --yes");
+        }
+
+        println!("Argus uninstall\n");
+        println!("  This will stop Argus and remove its binaries and configuration.");
+        println!("  State and Docker volumes can be preserved for recovery.\n");
+
+        let answer = lifecycle::prompt_line("Type YES to continue: ")?;
+        if answer != "YES" {
+            bail!("uninstall cancelled");
+        }
+
+        if !purge_data {
+            let answer = lifecycle::prompt_line(
+                "Also permanently remove all Argus data, backups, logs, and Docker volumes? [y/N]: ",
+            )?;
+            purge_data = purge_data_from_answer(&answer);
+        }
+    }
+
+    lifecycle::uninstall(lifecycle::UninstallOptions::from_env(true, purge_data))
+}
+
 impl Installer {
     fn prompt_content_domain(&self, config: &mut ControlConfig) -> Result<()> {
         if config.existing_install
@@ -116,9 +146,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.action {
         Some(Action::RegistryLogin { username }) => lifecycle::registry_login(username.as_deref()),
-        Some(Action::Uninstall { yes, purge_data }) => {
-            lifecycle::uninstall(lifecycle::UninstallOptions::from_env(yes, purge_data))
-        }
+        Some(Action::Uninstall { yes, purge_data }) => run_uninstall(yes, purge_data),
         None => {
             let mode = select_mode(cli.mode)?;
             let mut installer = Installer::new(mode, cli.verbose)?;
@@ -137,7 +165,7 @@ fn main() -> Result<()> {
 mod tests {
     use super::{
         installer_shared::{InstallMode, is_revision},
-        resolve_content_domain_input,
+        purge_data_from_answer, resolve_content_domain_input,
     };
 
     #[test]
@@ -189,5 +217,15 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn uninstall_purge_prompt_defaults_to_preserving_data() {
+        for answer in ["", "n", "N", "no", "anything else"] {
+            assert!(!purge_data_from_answer(answer), "{answer}");
+        }
+        for answer in ["y", "Y", "yes", "YES", " yes "] {
+            assert!(purge_data_from_answer(answer), "{answer}");
+        }
     }
 }
