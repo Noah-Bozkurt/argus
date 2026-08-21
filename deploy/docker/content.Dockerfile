@@ -2,8 +2,17 @@ FROM node:22-bookworm-slim AS build
 
 WORKDIR /workspace
 RUN npm install --global pnpm@9.15.4
-COPY . .
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/web/package.json apps/web/package.json
+COPY apps/content/package.json apps/content/package.json
+COPY apps/installer/package.json apps/installer/package.json
+COPY packages/protocol-ts/package.json packages/protocol-ts/package.json
+COPY packages/ui/package.json packages/ui/package.json
 RUN pnpm install --frozen-lockfile
+
+COPY apps/content apps/content
+COPY packages packages
 
 # Payload loads its configuration during `next build`. These values exist only in
 # the build stage so no production credential is baked into the runtime image.

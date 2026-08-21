@@ -43,7 +43,7 @@ export default function LoginPage({
             Password
             <input name="password" type="password" autoComplete="current-password" required />
           </label>
-          <button type="submit">Sign in</button>
+          <button className="primary" type="submit">Sign in</button>
         </form>
 
         <p className="login-footnote">Sessions expire automatically and can be revoked by signing out.</p>

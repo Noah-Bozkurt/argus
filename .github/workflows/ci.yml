@@ -248,6 +248,10 @@ jobs:
           grep -Fq 'ARGUS_UPDATE_RECOVERY_RETRY_FAILED' scripts/recover-interrupted-update.sh
           grep -Fq 'recover-update --retry-failed' scripts/recover-interrupted-update.sh
           grep -Fq 'pg_restore --list' scripts/recover-interrupted-update.sh
+          grep -Fq 'up -d --no-deps --force-recreate caddy' scripts/update-first-test.sh
+          grep -Fq 'up -d --no-deps --force-recreate caddy' scripts/recover-interrupted-update.sh
+          grep -Fq 'Caddyfile.rendered' scripts/update-first-test.sh
+          grep -Fq "grep -Eq '__[A-Z0-9_]+__'" scripts/update-first-test.sh
           update_lock="$(sed -n 's/^LOCK_FILE="\(.*\)"$/\1/p' scripts/update-first-test.sh | head -n1)"
           recovery_lock="$(sed -n 's/^LOCK_FILE="\(.*\)"$/\1/p' scripts/recover-interrupted-update.sh | head -n1)"
           [[ -n "$update_lock" ]]

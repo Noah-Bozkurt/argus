@@ -3,11 +3,16 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::json;
 use std::{
+    io::{self, IsTerminal},
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
 };
-use tokio::{io::AsyncWriteExt, net::UnixStream, process::Command};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::UnixStream,
+    process::Command,
+};
 use uuid::Uuid;
 
 const FIRST_SERVER_SMOKE: &str = include_str!("../../../scripts/first-server-smoke.sh");
@@ -39,6 +44,8 @@ enum Commands {
     Update {
         #[arg(long, default_value = "main")]
         version: String,
+        #[arg(long, short = 'v')]
+        verbose: bool,
     },
     Uninstall {
         #[arg(long)]
@@ -65,6 +72,212 @@ enum Commands {
 #[derive(Debug, Subcommand)]
 enum SystemCommands {
     Info,
+}
+
+struct UpdateUi {
+    color: bool,
+    post_start: bool,
+    download_announced: bool,
+    rollback_started: bool,
+    rollback_completed: bool,
+    finished: bool,
+}
+
+impl UpdateUi {
+    fn new() -> Self {
+        Self {
+            color: io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
+            post_start: false,
+            download_announced: false,
+            rollback_started: false,
+            rollback_completed: false,
+            finished: false,
+        }
+    }
+
+    fn paint(&self, code: &str, text: &str) -> String {
+        if self.color {
+            format!("\x1b[{code}m{text}\x1b[0m")
+        } else {
+            text.to_string()
+        }
+    }
+
+    fn begin(&self, requested: &str) {
+        println!("{}", self.paint("1;36", "Argus update"));
+        self.detail(&format!("Requested version: {requested}"));
+        println!();
+    }
+
+    fn step(&self, message: &str) {
+        println!("{} {message}", self.paint("36", "  ›"));
+    }
+
+    fn success(&self, message: &str) {
+        println!("{} {message}", self.paint("32", "  ✓"));
+    }
+
+    fn warning(&self, message: &str) {
+        eprintln!("{} {message}", self.paint("33", "  !"));
+    }
+
+    fn error(&self, message: &str) {
+        eprintln!("{} {message}", self.paint("31", "  ✗"));
+    }
+
+    fn detail(&self, message: &str) {
+        println!("{}", self.paint("2", &format!("    {message}")));
+    }
+
+    fn short_revision(revision: &str) -> &str {
+        revision.get(..12).unwrap_or(revision)
+    }
+
+    fn handle_line(&mut self, line: &str) {
+        let line = line.trim();
+        if line.is_empty() {
+            return;
+        }
+
+        if let Some(revision) = line.strip_prefix("[argus-update] current installed revision: ") {
+            self.step(&format!(
+                "Checking current installation ({})",
+                Self::short_revision(revision)
+            ));
+            return;
+        }
+        if line == "[argus-update] verifying current installation before update" {
+            return;
+        }
+        if line.starts_with("Argus first-server smoke test passed:") {
+            if self.post_start {
+                self.success("Updated installation is healthy");
+            } else {
+                self.success("Current installation is healthy");
+            }
+            return;
+        }
+        if line.starts_with("[argus-update] resolving target '") {
+            self.step("Checking for updates");
+            return;
+        }
+        if line.starts_with("[argus-update] pre-fetching ") {
+            if !self.download_announced {
+                self.download_announced = true;
+                self.step("Downloading update");
+            }
+            return;
+        }
+        if let Some(revision) = line.strip_prefix("[argus-update] resolved target revision: ") {
+            self.success(&format!(
+                "Update downloaded ({})",
+                Self::short_revision(revision)
+            ));
+            return;
+        }
+        if let Some(revision) =
+            line.strip_prefix("[argus-update] already running requested revision ")
+        {
+            self.success(&format!(
+                "Already up to date ({})",
+                Self::short_revision(revision)
+            ));
+            self.finished = true;
+            return;
+        }
+        if line.starts_with("[argus-update] storage preflight: ") {
+            self.step("Checking backup storage");
+            return;
+        }
+        if line == "[argus-update] quiescing native Agent/Helper and control-plane writers" {
+            self.success("Backup storage is sufficient");
+            self.step("Stopping Argus services");
+            return;
+        }
+        if line == "[argus-update] creating consistent PostgreSQL backup" {
+            self.step("Creating rollback backup");
+            return;
+        }
+        if line == "[argus-update] installing target deployment assets and native binaries" {
+            self.step("Installing update");
+            return;
+        }
+        if let Some(revision) = line.strip_prefix("[argus-update] starting target control plane ") {
+            self.post_start = true;
+            self.step(&format!(
+                "Starting Argus {}",
+                Self::short_revision(revision)
+            ));
+            return;
+        }
+        if self.post_start && line == "[argus-smoke] validating deployed configuration" {
+            self.step("Verifying updated installation");
+            return;
+        }
+        if let Some(change) = line.strip_prefix("[argus-update] update succeeded: ") {
+            let change = change
+                .split(" -> ")
+                .map(Self::short_revision)
+                .collect::<Vec<_>>()
+                .join(" → ");
+            println!();
+            self.success(&format!("Update complete: {change}"));
+            self.finished = true;
+            return;
+        }
+        if let Some(path) = line.strip_prefix("[argus-update] rollback snapshot retained at ") {
+            self.detail(&format!("Rollback snapshot: {path}"));
+            return;
+        }
+        if let Some(message) = line.strip_prefix("[argus-update] warning: ") {
+            if message.starts_with("update failed; automatically rolling back transaction ") {
+                self.rollback_started = true;
+                println!();
+                self.warning("Update failed; restoring the previous version");
+            } else if message.starts_with("rollback completed successfully; restored revision ") {
+                self.rollback_completed = true;
+                let revision = message
+                    .trim_start_matches("rollback completed successfully; restored revision ");
+                self.success(&format!(
+                    "Rollback completed ({})",
+                    Self::short_revision(revision)
+                ));
+            } else {
+                self.warning(message);
+            }
+            return;
+        }
+        if let Some(message) = line.strip_prefix("[argus-update] error: ") {
+            self.error(message);
+            return;
+        }
+        if let Some(message) = line.strip_prefix("[argus-smoke] FAIL: ") {
+            self.error(message);
+            return;
+        }
+
+        let lower = line.to_ascii_lowercase();
+        if lower.starts_with("error:")
+            || lower.starts_with("error response from daemon")
+            || lower.contains("permission denied")
+        {
+            self.error(line);
+        }
+    }
+
+    fn finish_failure(&self) {
+        if !self.finished {
+            println!();
+            if self.rollback_completed {
+                self.error("Update did not complete; the previous version was restored");
+            } else if self.rollback_started {
+                self.error("Update and automatic rollback did not complete cleanly");
+            } else {
+                self.error("Update failed");
+            }
+            self.detail("Re-run with --verbose for full diagnostics");
+        }
+    }
 }
 
 async fn service_state(name: &str) -> String {
@@ -118,6 +331,70 @@ async fn run_embedded_script(name: &str, script: &str, env: &[(&str, &str)]) -> 
     Ok(())
 }
 
+async fn run_concise_update_script(version: &str) -> Result<()> {
+    let name = "transactional Argus update";
+    let mut command = Command::new("bash");
+    command
+        .arg("-s")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("ARGUS_TARGET_VERSION", version);
+
+    let mut child = command.spawn().with_context(|| format!("start {name}"))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .with_context(|| format!("open {name} stdin"))?;
+    stdin
+        .write_all(FIRST_SERVER_UPDATE.as_bytes())
+        .await
+        .with_context(|| format!("write {name}"))?;
+    drop(stdin);
+
+    let stdout = child
+        .stdout
+        .take()
+        .with_context(|| format!("capture {name} stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .with_context(|| format!("capture {name} stderr"))?;
+    let mut stdout = BufReader::new(stdout).lines();
+    let mut stderr = BufReader::new(stderr).lines();
+    let mut stdout_open = true;
+    let mut stderr_open = true;
+    let mut ui = UpdateUi::new();
+    ui.begin(version);
+
+    while stdout_open || stderr_open {
+        tokio::select! {
+            line = stdout.next_line(), if stdout_open => {
+                match line.with_context(|| format!("read {name} stdout"))? {
+                    Some(line) => ui.handle_line(&line),
+                    None => stdout_open = false,
+                }
+            }
+            line = stderr.next_line(), if stderr_open => {
+                match line.with_context(|| format!("read {name} stderr"))? {
+                    Some(line) => ui.handle_line(&line),
+                    None => stderr_open = false,
+                }
+            }
+        }
+    }
+
+    let status = child
+        .wait()
+        .await
+        .with_context(|| format!("wait for {name}"))?;
+    if !status.success() {
+        ui.finish_failure();
+        anyhow::bail!("{name} failed");
+    }
+    Ok(())
+}
+
 async fn run_first_server_smoke() -> Result<()> {
     run_embedded_script("first-server smoke test", FIRST_SERVER_SMOKE, &[]).await
 }
@@ -132,14 +409,18 @@ async fn run_update_recovery(retry_failed: bool) -> Result<()> {
     .await
 }
 
-async fn run_first_server_update(version: &str) -> Result<()> {
+async fn run_first_server_update(version: &str, verbose: bool) -> Result<()> {
     run_update_recovery(false).await?;
-    run_embedded_script(
-        "transactional Argus update",
-        FIRST_SERVER_UPDATE,
-        &[("ARGUS_TARGET_VERSION", version)],
-    )
-    .await
+    if verbose {
+        run_embedded_script(
+            "transactional Argus update",
+            FIRST_SERVER_UPDATE,
+            &[("ARGUS_TARGET_VERSION", version)],
+        )
+        .await
+    } else {
+        run_concise_update_script(version).await
+    }
 }
 
 async fn run_uninstall(yes: bool, purge_data: bool) -> Result<()> {
@@ -221,7 +502,7 @@ async fn main() -> Result<()> {
             println!("control connection: authenticated");
         }
         Commands::Smoke => run_first_server_smoke().await?,
-        Commands::Update { version } => run_first_server_update(&version).await?,
+        Commands::Update { version, verbose } => run_first_server_update(&version, verbose).await?,
         Commands::Uninstall { yes, purge_data } => run_uninstall(yes, purge_data).await?,
         Commands::RegistryLogin { username } => run_registry_login(username.as_deref()).await?,
         Commands::RecoverUpdate { retry_failed } => run_update_recovery(retry_failed).await?,
@@ -258,7 +539,10 @@ mod tests {
     fn update_defaults_to_main_discovery_tag() {
         let cli = Cli::try_parse_from(["argusctl", "update"]).expect("parse update command");
         match cli.command {
-            Commands::Update { version } => assert_eq!(version, "main"),
+            Commands::Update { version, verbose } => {
+                assert_eq!(version, "main");
+                assert!(!verbose);
+            }
             _ => panic!("expected update command"),
         }
     }
@@ -269,9 +553,22 @@ mod tests {
         let cli = Cli::try_parse_from(["argusctl", "update", "--version", revision])
             .expect("parse pinned update command");
         match cli.command {
-            Commands::Update { version } => assert_eq!(version, revision),
+            Commands::Update { version, verbose } => {
+                assert_eq!(version, revision);
+                assert!(!verbose);
+            }
             _ => panic!("expected update command"),
         }
+    }
+
+    #[test]
+    fn update_verbose_flag_is_parseable() {
+        let cli = Cli::try_parse_from(["argusctl", "update", "--verbose"])
+            .expect("parse verbose update command");
+        assert!(matches!(
+            cli.command,
+            Commands::Update { verbose: true, .. }
+        ));
     }
 
     #[test]
@@ -316,5 +613,14 @@ mod tests {
         assert!(
             matches!(cli.command, Commands::RegistryLogin { username: Some(value) } if value == "octocat")
         );
+    }
+
+    #[test]
+    fn update_ui_shortens_full_revisions() {
+        assert_eq!(
+            UpdateUi::short_revision("0123456789abcdef0123456789abcdef01234567"),
+            "0123456789ab"
+        );
+        assert_eq!(UpdateUi::short_revision("main"), "main");
     }
 }

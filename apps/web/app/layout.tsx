@@ -3,6 +3,8 @@ import { currentSessionToken, getWorkspaceUser } from '../lib/auth'
 import AppShell from './app-shell'
 import './globals.css'
 import './feature-panels.css'
+import './ui-polish.css'
+import './ui-resource-editors.css'
 import './auth.css'
 
 // The operator UI reads runtime-only Argus credentials and live control-plane data.

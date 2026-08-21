@@ -417,20 +417,30 @@ arm_target_start() {
 }
 
 render_target_caddyfile() {
-  local hash
+  local hash rendered_caddyfile
   hash="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext "$ARGUS_BASIC_AUTH_PASSWORD")"
-  cp "$TARGET_TMP/Caddyfile.template" "$CADDY_FILE"
+  rendered_caddyfile="$TARGET_TMP/Caddyfile.rendered"
+  cp "$TARGET_TMP/Caddyfile.template" "$rendered_caddyfile"
   sed -i \
     -e "s|__ARGUS_DOMAIN__|${ARGUS_DOMAIN}|g" \
     -e "s|__ARGUS_CONTENT_DOMAIN__|${ARGUS_CONTENT_DOMAIN}|g" \
     -e "s|__BASIC_AUTH_USER__|${ARGUS_BASIC_AUTH_USER}|g" \
     -e "s|__BASIC_AUTH_HASH__|${hash}|g" \
-    "$CADDY_FILE"
-  chmod 0640 "$CADDY_FILE"
+    "$rendered_caddyfile"
+
+  if grep -Eq '__[A-Z0-9_]+__' "$rendered_caddyfile"; then
+    die "rendered Caddyfile still contains an unresolved placeholder"
+  fi
 
   docker run --rm \
-    -v "$CADDY_FILE:/etc/caddy/Caddyfile:ro" \
+    -v "$rendered_caddyfile:/etc/caddy/Caddyfile:ro" \
     caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile >/dev/null
+
+  # Copy the already-rendered content over the existing file. Unlike sed -i,
+  # cp preserves the destination inode, so an existing Caddy bind mount never
+  # observes the unrendered template or remains pinned to a stale inode.
+  cp "$rendered_caddyfile" "$CADDY_FILE"
+  chmod 0640 "$CADDY_FILE"
 }
 
 install_target_files() {
@@ -497,8 +507,10 @@ start_target() {
     return 1
   fi
 
+  # Recreate Caddy to pick up any deployment-level changes as well as the
+  # newly validated configuration.
+  compose up -d --no-deps --force-recreate caddy
   compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
-  compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null
 
   systemctl enable --now argus-helper.service
   systemctl enable --now argus-agent.service
@@ -589,10 +601,19 @@ rollback_transaction() {
   compose up -d --remove-orphans
   local compose_status=$?
   local health_status=1
+  local caddy_status=1
   if [[ "$compose_status" -eq 0 ]]; then
     wait_control_plane_health
     health_status=$?
-    compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
+    if [[ "$health_status" -eq 0 ]]; then
+      # restore_installed_files may also replace the bind-mounted file inode.
+      compose up -d --no-deps --force-recreate caddy
+      caddy_status=$?
+      if [[ "$caddy_status" -eq 0 ]]; then
+        compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
+        caddy_status=$?
+      fi
+    fi
   fi
 
   systemctl enable --now argus-helper.service
@@ -601,12 +622,12 @@ rollback_transaction() {
   local agent_status=$?
 
   local smoke_status=1
-  if [[ "$files_status" -eq 0 && "$db_status" -eq 0 && "$compose_status" -eq 0 && "$health_status" -eq 0 && "$helper_status" -eq 0 && "$agent_status" -eq 0 ]]; then
+  if [[ "$files_status" -eq 0 && "$db_status" -eq 0 && "$compose_status" -eq 0 && "$health_status" -eq 0 && "$caddy_status" -eq 0 && "$helper_status" -eq 0 && "$agent_status" -eq 0 ]]; then
     /usr/local/bin/argusctl smoke
     smoke_status=$?
   fi
 
-  if [[ "$files_status" -eq 0 && "$db_status" -eq 0 && "$compose_status" -eq 0 && "$health_status" -eq 0 && "$helper_status" -eq 0 && "$agent_status" -eq 0 && "$smoke_status" -eq 0 ]]; then
+  if [[ "$files_status" -eq 0 && "$db_status" -eq 0 && "$compose_status" -eq 0 && "$health_status" -eq 0 && "$caddy_status" -eq 0 && "$helper_status" -eq 0 && "$agent_status" -eq 0 && "$smoke_status" -eq 0 ]]; then
     if write_transaction_result ROLLED_BACK; then
       warn "rollback completed successfully; restored revision $CURRENT_REVISION"
       return 0

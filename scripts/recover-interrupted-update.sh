@@ -367,6 +367,9 @@ recover_transaction() {
     compose_current logs --tail=160 control-api postgres || true
     die "restored Control API did not become healthy"
   }
+  # restore_installed_files can replace the Caddyfile inode while the old
+  # container still has it bind-mounted. Recreate Caddy before validation.
+  compose_current up -d --no-deps --force-recreate caddy
   compose_current exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
   verify_rollback_revision
   finalize_native_runtime_if_manual
