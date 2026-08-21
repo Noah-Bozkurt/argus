@@ -1,19 +1,39 @@
-# Argus Documentation
+# Argus documentation
 
-This directory contains the canonical documentation for Argus. Older milestone-by-milestone notes have been consolidated so the docs describe the system as it exists now rather than preserving one file for every historical PR.
+These are the canonical docs for the current Argus codebase. They should describe what is on `main`, including its current limitations, rather than preserve old implementation milestones as current instructions.
 
-## Documents
+## Start here
 
-- [Architecture](architecture.md) — system boundaries, runtime components, data ownership, events and command flow.
-- [Projects & Delivery](projects-and-delivery.md) — projects, repositories, services, environments, deployments, sites, domains and release/readiness concepts.
+- [Installation](installation.md) — install a control plane, connect managed servers, verify an installation, update and uninstall.
+- [Using Argus](usage.md) — navigation and the main project/infrastructure workflows.
+- [Authentication](authentication.md) — login, shared sessions, workspace roles and the current identity boundary.
+- [Roadmap](roadmap.md) — implemented scope, known limits and near-term work.
+
+## Reference
+
+- [Architecture](architecture.md) — runtime components, trust boundaries, data ownership, events and command flow.
+- [Projects & Delivery](projects-and-delivery.md) — projects, repositories, services, environments, deployments, sites and domains.
 - [Operations](operations.md) — server management, Docker/Compose, maintenance, monitoring, jobs, incidents, notifications and status pages.
-- [Security & Recovery](security-and-recovery.md) — trust boundaries, privileged execution, firewall enforcement, desired state, backups and transactional restore.
-- [Content Platform](content-platform.md) — Payload application data, project synchronization, CMS drafts/publication, migrations and public content access.
-- [Development](development.md) — workspace layout, local development, checks, configuration and migration workflow.
-- [Roadmap](roadmap.md) — what is implemented, the first-server-test gate and what remains planned.
+- [Security & Recovery](security-and-recovery.md) — privileged execution, firewall controls, desired state, backups and transactional recovery.
+- [Content Platform](content-platform.md) — Payload-backed application data, CMS workflows, media, forms and public content access.
+- [Development](development.md) — workspace layout, local development, checks, configuration and migrations.
 
-## Documentation rule
+## Installer
 
-New functionality should update the relevant canonical document instead of creating another `*-v1.md` milestone file. Add a new document only when a topic is genuinely large enough to remain independently useful.
+The product-facing installer URL is:
 
-The root [README](../README.md) is deliberately non-technical and should link here for implementation details.
+```text
+https://install.noahbozkurt.nl
+```
+
+The normal bootstrap command is:
+
+```bash
+curl -fsSL https://install.noahbozkurt.nl/install | sudo bash
+```
+
+The Cloudflare Pages hostname behind the installer is an implementation detail and should not be used in user-facing instructions.
+
+## Keeping the docs current
+
+When behavior changes, update the relevant canonical document in the same change. Prefer changing an existing document over adding another milestone-specific file, and do not document functionality from an unmerged branch as if it already exists on `main`.

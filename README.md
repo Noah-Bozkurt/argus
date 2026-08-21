@@ -1,35 +1,112 @@
 # Argus
 
-Argus is a private platform for keeping projects, infrastructure and the software running on it in one place.
+Argus is a self-hosted control panel for software projects and the infrastructure behind them. It keeps project work, servers, deployments, monitoring, incidents and content in one place.
 
-It is designed around **projects**, not customers. A project can be personal, experimental, open-source, infrastructure-only or connected to a client. Client features are an optional layer rather than a requirement for the rest of the platform.
+Argus is project-first. A project can be personal, internal, open source or client work; client data is optional and does not define the rest of the system.
 
-Argus brings together the things that otherwise tend to end up spread across hosting dashboards, SSH sessions, deployment tools, monitoring services, status pages and content systems: projects, servers, services, releases, websites, domains, monitoring, incidents, recovery and application/content data.
+> **Status:** Argus is under active development and is not production-ready. The supported control-plane install is currently a single Ubuntu/Debian amd64 host.
 
-## Why “Argus”?
+## Why Argus?
 
-The name is inspired by **Argus Panoptes**, the many-eyed watchman from Greek mythology. The idea fits the project: Argus keeps watch over many different parts of a project and gives them one shared view instead of treating each system as a separate island.
+The name comes from **Argus Panoptes**, the many-eyed watchman from Greek mythology. The idea is simple: one place that keeps watch over the different parts of a project.
 
-## Status
+## What works today
 
-Argus is under active development and is not yet considered production-ready. A substantial control-plane, operations and Payload-based content foundation is implemented.
+- Project workspaces with repositories, environments, services, tasks, milestones and notes.
+- Managed Linux servers with live health data and typed system, Docker/Compose and maintenance operations.
+- Releases, readiness checks, sites and domains.
+- Persisted jobs, monitoring, incidents, notifications, dependencies and public status pages.
+- GitHub repository integration with repository, issue, pull-request and CI state.
+- Payload-backed application data and CMS workflows scoped to projects.
+- First-party Argus login with shared operator/CMS sessions and workspace roles.
+- Host lifecycle tooling through `argusctl`, including health checks, updates, registry login and uninstall.
 
-The repository now contains the first reproducible single-server deployment path for Ubuntu/Debian amd64: a Compose-based control plane, native Agent/Helper services, a rerunnable installer, a disposable-host reset path, and CI readiness checks for clean database startup and production application builds. Custom Argus images are designed to publish from `main` only after the normal CI workflow succeeds.
+The operator UI has global **Overview**, **Projects**, **Servers**, **Jobs** and **Notifications** views. Project work is grouped into **Deploy**, **Infrastructure**, **Observe**, **Work** and **Content**.
 
-The next milestone is the first real installation on a clean test server. Every manual workaround found during that test should be treated as an installer or product bug rather than becoming undocumented setup knowledge. See the [Roadmap](docs/roadmap.md) for the exact test sequence and current limitations.
+## Install
+
+The public installer is available at **https://install.noahbozkurt.nl**.
+
+On a supported server:
+
+```bash
+curl -fsSL https://install.noahbozkurt.nl/install | sudo bash
+```
+
+The bootstrap downloads the canonical installer and its SHA-256 checksum, verifies it, and then starts the guided installer.
+
+Current requirements:
+
+- Ubuntu or Debian on amd64;
+- root or sudo access;
+- ports 80 and 443 available for a control-plane install;
+- public DNS for the Argus and content domains;
+- a GitHub classic PAT with `read:packages` access to the private Argus GHCR packages.
+
+The installer can either set up a control plane or connect a managed server to an existing Argus instance. See [Installation](docs/installation.md) for the full flow.
+
+## `argusctl`
+
+Useful commands on an installed host:
+
+```bash
+argusctl status
+argusctl health
+argusctl connection
+argusctl system info
+argusctl version
+sudo argusctl smoke
+sudo argusctl update --version main
+sudo argusctl registry-login
+sudo argusctl uninstall
+```
+
+`argusctl update` resolves the requested release to an immutable Git revision instead of leaving an installation on a moving `main` tag.
+
+## Current limitations
+
+Argus is deliberately narrow while the deployment and security model is hardened:
+
+- the control plane is single-host rather than HA;
+- amd64 is the only supported installation architecture;
+- installation and updates currently require access to the private GHCR packages;
+- per-user identity propagation into all Control API audit attribution is not complete yet;
+- provider provisioning, production secrets management and full time-series observability are not finished.
+
+The old reverse-proxy Basic Auth prompt is no longer used. Human authentication now uses Argus/Payload sessions; see [Authentication](docs/authentication.md) for the current model and its remaining limitations.
+
+## Repository layout
+
+```text
+apps/
+  web/          operator control panel
+  content/      Payload content/application-data service
+  installer/    static installer site
+crates/         Rust agent, helper, CLI and shared libraries
+services/       Control API and background worker
+deploy/         Compose, Caddy, systemd and image assets
+docs/           product, operations and development documentation
+scripts/        lifecycle, update, recovery and validation tooling
+install.sh      canonical host installer
+```
 
 ## Documentation
 
-The README intentionally stays high-level. Implementation details, operating rules and current limitations live in the documentation:
+Start with [docs/README.md](docs/README.md). The main references are:
 
-- [Documentation index](docs/README.md)
+- [Installation](docs/installation.md)
+- [Using Argus](docs/usage.md)
+- [Authentication](docs/authentication.md)
 - [Architecture](docs/architecture.md)
-- [Projects & delivery](docs/projects-and-delivery.md)
 - [Operations](docs/operations.md)
 - [Security & recovery](docs/security-and-recovery.md)
 - [Content platform](docs/content-platform.md)
 - [Development](docs/development.md)
 - [Roadmap](docs/roadmap.md)
+
+## Releases
+
+Release images are published only from a successful `main` revision. Argus publishes the coordinated image set under immutable SHA tags before promoting the moving `main` pointers used for update discovery.
 
 ## License
 
