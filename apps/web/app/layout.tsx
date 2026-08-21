@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react'
 import { currentSessionToken, getWorkspaceUser } from '../lib/auth'
 import AppShell from './app-shell'
+import FormDirtyGuard from './form-dirty-guard'
+import WorkspaceMemory from './workspace-memory'
 import './globals.css'
 import './feature-panels.css'
 import './ui-polish.css'
@@ -25,6 +27,8 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   return (
     <html lang="en">
       <body>
+        <FormDirtyGuard />
+        <WorkspaceMemory />
         <AppShell user={user}>{children}</AppShell>
       </body>
     </html>
