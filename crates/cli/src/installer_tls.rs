@@ -1,6 +1,6 @@
 use super::installer_shared::{ControlConfig, Installer, TlsMode};
 use anyhow::{Context, Result, bail};
-use cli::lifecycle::{self, prompt_line, prompt_secret, write_env_file};
+use cli::lifecycle::{self, prompt_line, prompt_secret, temp_dir, write_env_file};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use std::{fs, os::unix::fs::PermissionsExt, time::Duration};
@@ -12,6 +12,15 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
         .enable_all()
         .build()
         .context("create TLS setup runtime")
+}
+
+fn origin_ca_request(domain: &str, content_domain: &str, csr: &str) -> Value {
+    json!({
+        "csr": csr,
+        "hostnames": [domain, content_domain],
+        "request_type": "origin-ecc",
+        "requested_validity": 5475
+    })
 }
 
 async fn cloudflare_proxied(client: &Client, domain: &str) -> bool {
@@ -103,24 +112,74 @@ impl Installer {
             .timeout(Duration::from_secs(30))
             .build()
             .context("build Cloudflare API client")?;
-        let (status, body) = runtime()?.block_on(async {
-            let response = client
-                .post(ORIGIN_CA_ENDPOINT)
-                .bearer_auth(&config.cloudflare_api_token)
-                .json(&json!({
-                    "hostnames": [&config.domain, &config.content_domain],
-                    "request_type": "origin-ecc",
-                    "requested_validity": 5475
-                }))
-                .send()
-                .await?;
-            let status = response.status();
-            let body = response
-                .json::<Value>()
-                .await
-                .context("parse Cloudflare response")?;
-            Ok::<_, anyhow::Error>((status, body))
-        })?;
+        let work_dir = temp_dir("argus-origin-ca")?;
+        let private_key_path = work_dir.join("origin.key");
+        let csr_path = work_dir.join("origin.csr");
+        let private_key_arg = private_key_path.display().to_string();
+        let csr_arg = csr_path.display().to_string();
+        let subject = format!("/CN={}", config.domain);
+        let subject_alt_names = format!(
+            "subjectAltName=DNS:{},DNS:{}",
+            config.domain, config.content_domain
+        );
+        let issuance = (|| -> Result<(StatusCode, Value, Vec<u8>)> {
+            lifecycle::run_quiet(
+                "openssl",
+                &[
+                    "genpkey",
+                    "-algorithm",
+                    "EC",
+                    "-pkeyopt",
+                    "ec_paramgen_curve:P-256",
+                    "-out",
+                    &private_key_arg,
+                ],
+            )
+            .context("generate Cloudflare Origin CA private key")?;
+            lifecycle::run_quiet(
+                "openssl",
+                &[
+                    "req",
+                    "-new",
+                    "-sha256",
+                    "-key",
+                    &private_key_arg,
+                    "-out",
+                    &csr_arg,
+                    "-subj",
+                    &subject,
+                    "-addext",
+                    &subject_alt_names,
+                ],
+            )
+            .context("generate Cloudflare Origin CA certificate request")?;
+            let csr = fs::read_to_string(&csr_path)
+                .context("read Cloudflare Origin CA certificate request")?;
+            let private_key =
+                fs::read(&private_key_path).context("read Cloudflare Origin CA private key")?;
+            let (status, body) = runtime()?.block_on(async {
+                let response = client
+                    .post(ORIGIN_CA_ENDPOINT)
+                    .bearer_auth(&config.cloudflare_api_token)
+                    .json(&origin_ca_request(
+                        &config.domain,
+                        &config.content_domain,
+                        &csr,
+                    ))
+                    .send()
+                    .await?;
+                let status = response.status();
+                let body = response
+                    .json::<Value>()
+                    .await
+                    .context("parse Cloudflare response")?;
+                Ok::<_, anyhow::Error>((status, body))
+            })?;
+            Ok((status, body, private_key))
+        })();
+        let cleanup = fs::remove_dir_all(&work_dir).context("remove temporary TLS files");
+        let (status, body, private_key) = issuance?;
+        cleanup?;
         if status != StatusCode::OK || body.get("success").and_then(Value::as_bool) != Some(true) {
             let detail = body.get("errors").cloned().unwrap_or(Value::Null);
             bail!("Cloudflare Origin CA issuance failed ({status}): {detail}");
@@ -132,10 +191,6 @@ impl Installer {
             .get("certificate")
             .and_then(Value::as_str)
             .context("Cloudflare response omitted certificate")?;
-        let private_key = result
-            .get("private_key")
-            .and_then(Value::as_str)
-            .context("Cloudflare response omitted private key")?;
         fs::create_dir_all(&tls_dir)?;
         fs::write(tls_dir.join("origin.crt"), certificate)?;
         fs::write(tls_dir.join("origin.key"), private_key)?;
@@ -166,5 +221,22 @@ mod tests {
     #[test]
     fn origin_endpoint_is_https() {
         assert!(ORIGIN_CA_ENDPOINT.starts_with("https://"));
+    }
+
+    #[test]
+    fn origin_request_includes_csr_and_both_hostnames() {
+        let request = origin_ca_request(
+            "app.example.com",
+            "content.example.com",
+            "-----BEGIN CERTIFICATE REQUEST-----",
+        );
+        assert_eq!(
+            request.get("csr").and_then(Value::as_str),
+            Some("-----BEGIN CERTIFICATE REQUEST-----")
+        );
+        assert_eq!(
+            request.get("hostnames"),
+            Some(&json!(["app.example.com", "content.example.com"]))
+        );
     }
 }
