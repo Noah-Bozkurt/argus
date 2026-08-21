@@ -4,6 +4,7 @@ import { getNotificationInbox, getNotificationRules } from '../../lib/notificati
 import {
   acknowledgeNotificationAction,
   createNotificationRuleAction,
+  markAllNotificationsReadAction,
   markNotificationReadAction,
   syncNotificationsAction,
   updateNotificationRuleAction,
@@ -30,9 +31,10 @@ export default async function NotificationsPage() {
           <h1>Notifications</h1>
           <p>Operational events that need awareness or acknowledgement, plus the rules that materialize them.</p>
         </div>
-        <form action={syncNotificationsAction}>
-          <button className="primary" type="submit">Refresh from events</button>
-        </form>
+        <div className="page-actions">
+          {inbox.unread_count > 0 ? <form action={markAllNotificationsReadAction}><button type="submit">Mark all read</button></form> : null}
+          <form action={syncNotificationsAction}><button className="primary" type="submit">Refresh from events</button></form>
+        </div>
       </div>
 
       <div className="stats-grid">
