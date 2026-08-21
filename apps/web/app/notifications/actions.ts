@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import {
   acknowledgeNotification,
   createNotificationRule,
+  getNotificationInbox,
   markNotificationRead,
   syncNotifications,
   updateNotificationRule,
@@ -50,6 +51,14 @@ export async function syncNotificationsAction() {
 
 export async function markNotificationReadAction(notificationId: string) {
   await markNotificationRead(notificationId)
+  revalidatePath('/notifications')
+}
+
+export async function markAllNotificationsReadAction() {
+  const inbox = await getNotificationInbox()
+  for (const notification of inbox.notifications.filter((item) => !item.read_at)) {
+    await markNotificationRead(notification.id)
+  }
   revalidatePath('/notifications')
 }
 
