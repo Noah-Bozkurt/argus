@@ -107,6 +107,43 @@
   line-height: 1;
 }
 
+.operation-filter-bar {
+  justify-content: flex-start;
+  margin: 14px 0;
+}
+
+.compact-density .page-frame {
+  padding-top: 14px;
+}
+
+.compact-density .stats-grid,
+.compact-density .stack,
+.compact-density .feature-stack,
+.compact-density .resource-list {
+  gap: 8px;
+}
+
+.compact-density .stat-card,
+.compact-density .resource-card,
+.compact-density .detail-card-body,
+.compact-density .panel-body {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.compact-density .data-row,
+.compact-density .responsive-table th,
+.compact-density .responsive-table td {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.compact-density .row-subtitle,
+.compact-density .resource-meta,
+.compact-density .timeline-meta {
+  line-height: 1.3;
+}
+
 @media (max-width: 760px) {
   .resource-toolbar-header { align-items: stretch; }
   .resource-toolbar { width: 100%; justify-content: stretch; }
