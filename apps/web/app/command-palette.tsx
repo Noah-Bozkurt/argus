@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 
 type PaletteItem = {
@@ -26,11 +26,12 @@ type Command = {
   description: string
   href?: string
   keywords?: string[]
-  action?: 'copy-url' | 'reload' | 'notifications'
+  action?: 'copy-url' | 'reload' | 'notifications' | 'density'
 }
 
 const FAVORITES_KEY = 'argus:favorites:v1'
 const RECENTS_KEY = 'argus:recents:v1'
+const DENSITY_KEY = 'argus:density:v1'
 
 const navigationCommands: Command[] = [
   { id: 'nav:overview', label: 'Overview', description: 'Control-plane overview', href: '/', keywords: ['home', 'dashboard'] },
@@ -45,6 +46,7 @@ const utilityCommands: Command[] = [
   { id: 'action:copy-url', label: 'Copy current URL', description: 'Copy this Argus page to the clipboard', action: 'copy-url', keywords: ['link', 'clipboard'] },
   { id: 'action:reload', label: 'Reload current page', description: 'Refresh live data for this view', action: 'reload', keywords: ['refresh'] },
   { id: 'action:notifications', label: 'Enable browser notifications', description: 'Ask this browser for notification permission', action: 'notifications', keywords: ['push', 'permission'] },
+  { id: 'action:density', label: 'Toggle compact density', description: 'Fit more operational information on screen', action: 'density', keywords: ['compact', 'dense', 'table'] },
 ]
 
 function readJson<T>(key: string, fallback: T): T {
@@ -83,6 +85,10 @@ function kindLabel(kind: PaletteItem['kind']): string {
   return 'Job'
 }
 
+function applyDensity(value: string | null) {
+  document.body.classList.toggle('compact-density', value === 'compact')
+}
+
 export default function CommandPalette() {
   const pathname = usePathname()
   const router = useRouter()
@@ -106,7 +112,7 @@ export default function CommandPalette() {
       setItems(data.items)
       setPartial(data.partial)
 
-      const current = data.items.find((item) => item.href === pathname)
+      const current = data.items.find((item) => item.kind !== 'job' && item.href === pathname)
       if (current) {
         const next: RecentItem[] = [
           { ...current, visitedAt: Date.now() },
@@ -125,6 +131,7 @@ export default function CommandPalette() {
   useEffect(() => {
     setFavorites(readJson<string[]>(FAVORITES_KEY, []))
     setRecents(readJson<RecentItem[]>(RECENTS_KEY, []))
+    applyDensity(window.localStorage.getItem(DENSITY_KEY))
     void loadItems()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname])
@@ -177,7 +184,7 @@ export default function CommandPalette() {
   }, [open, router])
 
   const dynamicById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items])
-  const currentItem = items.find((item) => item.href === pathname)
+  const currentItem = items.find((item) => item.kind !== 'job' && item.href === pathname)
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -243,10 +250,17 @@ export default function CommandPalette() {
     if (result.action === 'notifications') {
       if ('Notification' in window) await Notification.requestPermission()
       setOpen(false)
+      return
+    }
+    if (result.action === 'density') {
+      const next = document.body.classList.contains('compact-density') ? 'comfortable' : 'compact'
+      window.localStorage.setItem(DENSITY_KEY, next)
+      applyDensity(next)
+      setOpen(false)
     }
   }
 
-  function onPaletteKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+  function onPaletteKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       setSelected((value) => Math.min(results.length - 1, value + 1))
