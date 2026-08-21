@@ -76,6 +76,17 @@ test("native installer owns interactive registry authentication", async () => {
   assert.match(installer, /Install an Argus control plane or managed node/);
 });
 
+test("native installer keeps interactive prompts visible and guides uninstall", async () => {
+  const installer = await readFile(resolve(rootDir, "crates/cli/src/installer.rs"), "utf8");
+  assert.match(installer, /Type YES to continue:/);
+  assert.match(installer, /permanently remove all Argus data, backups, logs, and Docker volumes/);
+  assert.match(installer, /Content domain \[\{default\}\]:/);
+  assert.doesNotMatch(
+    installer,
+    /working\("Authenticating with the Argus registry"[\s\S]*?authenticate_registry\(\)/,
+  );
+});
+
 test("legacy lifecycle scripts are only native compatibility shims", async () => {
   const [registry, uninstall] = await Promise.all([
     readFile(resolve(rootDir, "scripts/registry-login.sh"), "utf8"),
