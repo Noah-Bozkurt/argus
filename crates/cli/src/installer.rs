@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
-use cli::lifecycle;
+use cli::{domain::require_domain_resolution, lifecycle};
 
 mod installer_agent;
 mod installer_control;
@@ -122,6 +122,10 @@ impl Installer {
         // Configuration contains interactive prompts, so it must not run behind a spinner.
         let mut config = self.load_control_config(&credentials)?;
         self.prompt_content_domain(&mut config)?;
+        self.ui.working("Checking DNS resolution", || {
+            require_domain_resolution(&config.domain)?;
+            require_domain_resolution(&config.content_domain)
+        })?;
         self.ui
             .detail(&format!("Installing Argus for {}", config.domain));
 
