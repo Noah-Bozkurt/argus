@@ -101,31 +101,39 @@ impl Installer {
 
     fn run(&mut self) -> Result<()> {
         self.ui.title();
-        self.ui
-            .working("Checking host requirements", || self.preflight())?;
-
-        // Collect interactive input before starting the spinner so terminal prompts remain visible.
-        let credentials = lifecycle::collect_registry_credentials(&self.config_dir, None)?;
-        self.ui
-            .working("Authenticating with the Argus registry", || {
-                lifecycle::docker_login(&credentials, &self.docker_config)?;
-                lifecycle::save_registry_credentials(&self.config_dir, &credentials)
-            })?;
 
         if self.mode == InstallMode::Agent {
+            self.ui
+                .working("Checking host requirements", || self.preflight())?;
+            let credentials = lifecycle::collect_registry_credentials(&self.config_dir, None)?;
+            self.ui
+                .working("Authenticating with the Argus registry", || {
+                    lifecycle::docker_login(&credentials, &self.docker_config)?;
+                    lifecycle::save_registry_credentials(&self.config_dir, &credentials)
+                })?;
             self.ui.working("Installing managed-node bundle", || {
                 self.install_managed_node(&credentials)
             })?;
             return Ok(());
         }
 
-        // Configuration contains interactive prompts, so it must not run behind a spinner.
+        // Collect control-plane inputs before host preflight so DNS can fail before apt,
+        // Docker setup, registry credential storage, or Argus deployment mutates the host.
+        let credentials = lifecycle::collect_registry_credentials(&self.config_dir, None)?;
         let mut config = self.load_control_config(&credentials)?;
         self.prompt_content_domain(&mut config)?;
         self.ui.working("Checking DNS resolution", || {
             require_domain_resolution(&config.domain)?;
             require_domain_resolution(&config.content_domain)
         })?;
+
+        self.ui
+            .working("Checking host requirements", || self.preflight())?;
+        self.ui
+            .working("Authenticating with the Argus registry", || {
+                lifecycle::docker_login(&credentials, &self.docker_config)?;
+                lifecycle::save_registry_credentials(&self.config_dir, &credentials)
+            })?;
         self.ui
             .detail(&format!("Installing Argus for {}", config.domain));
 
