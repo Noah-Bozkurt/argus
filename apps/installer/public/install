@@ -9,10 +9,7 @@ spinner_pid=""
 spinner_message=""
 
 cleanup() {
-  if [[ -n "$spinner_pid" ]]; then
-    kill "$spinner_pid" >/dev/null 2>&1 || true
-    wait "$spinner_pid" 2>/dev/null || true
-  fi
+  clear_spinner
   rm -rf -- "$tmp"
 }
 trap cleanup EXIT
@@ -36,6 +33,16 @@ paint() {
   else
     printf '%s' "$text"
   fi
+}
+
+clear_spinner() {
+  if [[ -n "$spinner_pid" ]]; then
+    kill "$spinner_pid" >/dev/null 2>&1 || true
+    wait "$spinner_pid" 2>/dev/null || true
+    spinner_pid=""
+    [[ -t 1 ]] && printf '\r\033[2K'
+  fi
+  spinner_message=""
 }
 
 start_spinner() {
@@ -90,6 +97,7 @@ concise_install_output() {
   local line passthrough=0
   spinner_pid=""
   spinner_message=""
+  trap clear_spinner EXIT
 
   while IFS= read -r line; do
     if [[ "$passthrough" == "1" ]]; then
@@ -118,7 +126,8 @@ concise_install_output() {
     esac
   done
 
-  [[ -n "$spinner_message" ]] && finish_spinner 1 "$spinner_message"
+  clear_spinner
+  trap - EXIT
 }
 
 printf '%s\n' "$(paint '1;36' 'Argus install')"
