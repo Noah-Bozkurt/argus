@@ -1,6 +1,7 @@
 use agent::AgentConfig;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use cli::domain;
 use serde_json::json;
 use std::{
     io::{self, IsTerminal},
@@ -57,6 +58,10 @@ enum Commands {
         #[arg(long)]
         username: Option<String>,
     },
+    Domain {
+        #[command(subcommand)]
+        command: DomainCommands,
+    },
     #[command(hide = true)]
     RecoverUpdate {
         #[arg(long)]
@@ -67,6 +72,17 @@ enum Commands {
         command: SystemCommands,
     },
     Version,
+}
+
+#[derive(Debug, Subcommand)]
+enum DomainCommands {
+    Show,
+    Check,
+    Set {
+        domain: String,
+        #[arg(long)]
+        content_domain: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -505,6 +521,34 @@ async fn main() -> Result<()> {
         Commands::Update { version, verbose } => run_first_server_update(&version, verbose).await?,
         Commands::Uninstall { yes, purge_data } => run_uninstall(yes, purge_data).await?,
         Commands::RegistryLogin { username } => run_registry_login(username.as_deref()).await?,
+        Commands::Domain { command } => match command {
+            DomainCommands::Show => {
+                let domains = domain::installed_domains()?;
+                println!("Web domain: {}", domains.web);
+                println!("Content domain: {}", domains.content);
+            }
+            DomainCommands::Check => {
+                for resolution in domain::check_installed_domains()? {
+                    let addresses = resolution
+                        .addresses
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    println!("{} -> {addresses}", resolution.domain);
+                }
+            }
+            DomainCommands::Set {
+                domain: web_domain,
+                content_domain,
+            } => {
+                let domains =
+                    domain::set_installed_domains(&web_domain, content_domain.as_deref())?;
+                println!("Domain change complete.");
+                println!("Web domain: {}", domains.web);
+                println!("Content domain: {}", domains.content);
+            }
+        },
         Commands::RecoverUpdate { retry_failed } => run_update_recovery(retry_failed).await?,
         Commands::System {
             command: SystemCommands::Info,
@@ -613,6 +657,28 @@ mod tests {
         assert!(
             matches!(cli.command, Commands::RegistryLogin { username: Some(value) } if value == "octocat")
         );
+    }
+
+    #[test]
+    fn domain_set_accepts_optional_content_domain() {
+        let cli = Cli::try_parse_from([
+            "argusctl",
+            "domain",
+            "set",
+            "argus.example.com",
+            "--content-domain",
+            "content.argus.example.com",
+        ])
+        .expect("parse domain set command");
+        assert!(matches!(
+            cli.command,
+            Commands::Domain {
+                command: DomainCommands::Set {
+                    domain,
+                    content_domain: Some(content_domain)
+                }
+            } if domain == "argus.example.com" && content_domain == "content.argus.example.com"
+        ));
     }
 
     #[test]
