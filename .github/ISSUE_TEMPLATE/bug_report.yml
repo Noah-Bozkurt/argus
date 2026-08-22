@@ -1,0 +1,71 @@
+name: Bug report
+description: Report a reproducible Argus defect
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Do not include secrets or security vulnerabilities. Report vulnerabilities through the private process in SECURITY.md.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Web
+        - Content/Payload
+        - Control API
+        - Worker/jobs
+        - Agent
+        - Helper
+        - argusctl/installer
+        - Deployment/update/rollback
+        - Documentation
+        - Unknown
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Argus revision
+      description: Full revision or `argusctl version` output, with sensitive host details removed.
+      placeholder: 40-character Git SHA
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Include relevant output and environment details. Remove tokens, passwords, domains, IPs, IDs, and production data.
+      render: shell
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact and workaround
+      description: Who is affected, how severe is it, and is there a safe workaround?
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I searched existing issues and pull requests.
+          required: true
+        - label: I removed credentials and sensitive host or customer data.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

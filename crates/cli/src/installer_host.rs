@@ -1,8 +1,7 @@
 use super::installer_shared::*;
 use anyhow::{Context, Result, bail};
 use cli::lifecycle::{
-    self, RegistryCredentials, copy_file, output, prompt_line, prompt_secret, read_env_file,
-    temp_dir,
+    self, RegistryConfig, copy_file, output, prompt_line, prompt_secret, read_env_file, temp_dir,
 };
 use std::{
     collections::BTreeMap,
@@ -167,7 +166,7 @@ impl Installer {
 
     pub(crate) fn docker_command(&self, args: &[&str]) -> Command {
         let mut command = Command::new("docker");
-        command.args(args).env("DOCKER_CONFIG", &self.docker_config);
+        command.args(args);
         command
     }
 
@@ -240,7 +239,7 @@ impl Installer {
 
     pub(crate) fn load_control_config(
         &self,
-        credentials: &RegistryCredentials,
+        credentials: &RegistryConfig,
     ) -> Result<ControlConfig> {
         let requested_version = env::var("ARGUS_VERSION").ok();
         let requested_domain = env::var("ARGUS_DOMAIN").ok();
@@ -405,7 +404,9 @@ impl Installer {
         let requested = config.version.clone();
         let mut image = format!("{}/argus-host-tools:{requested}", config.registry);
         self.docker_status(&["pull", &image]).with_context(|| {
-            format!("could not pull {image}; verify the PAT has read:packages access")
+            format!(
+                "could not pull public image {image}; verify the tag exists and GHCR is reachable"
+            )
         })?;
         let resolved = self.docker_output(&[
             "image",

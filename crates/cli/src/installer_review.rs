@@ -2,15 +2,15 @@ use super::installer_shared::{
     ControlConfig, TlsMode, new_secret, validate_basic_user, validate_domain,
 };
 use anyhow::{Context, Result, bail};
-use cli::lifecycle::{self, RegistryCredentials, prompt_line, prompt_secret};
+use cli::lifecycle::{self, prompt_line, prompt_secret};
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Write},
     process::{Command, Stdio},
 };
 
-const INSTALL: usize = 7;
-const CANCEL: usize = 8;
+const INSTALL: usize = 5;
+const CANCEL: usize = 6;
 
 struct TerminalMode {
     tty: File,
@@ -57,10 +57,8 @@ impl Drop for TerminalMode {
     }
 }
 
-fn rows(credentials: &RegistryCredentials, config: &ControlConfig) -> Vec<String> {
+fn rows(config: &ControlConfig) -> Vec<String> {
     vec![
-        format!("GitHub username:  {}", credentials.username),
-        "GitHub token:     •••••••••••• configured".to_string(),
         format!("Primary domain:   {}", config.domain),
         format!("Content domain:   {}", config.content_domain),
         format!("Certificate email: {}", config.acme_email),
@@ -78,7 +76,7 @@ fn rows(credentials: &RegistryCredentials, config: &ControlConfig) -> Vec<String
     ]
 }
 
-fn select_row(credentials: &RegistryCredentials, config: &ControlConfig) -> Result<usize> {
+fn select_row(config: &ControlConfig) -> Result<usize> {
     let mut terminal = TerminalMode::enter()?;
     let mut selected = 0usize;
     loop {
@@ -86,7 +84,7 @@ fn select_row(credentials: &RegistryCredentials, config: &ControlConfig) -> Resu
             terminal.tty,
             "\x1b[?25l\x1b[2J\x1b[HArgus installation review\n\n"
         )?;
-        for (index, row) in rows(credentials, config).iter().enumerate() {
+        for (index, row) in rows(config).iter().enumerate() {
             if index == selected {
                 writeln!(terminal.tty, "\x1b[36m› {row}\x1b[0m")?;
             } else {
@@ -119,55 +117,37 @@ fn select_row(credentials: &RegistryCredentials, config: &ControlConfig) -> Resu
     }
 }
 
-fn select_row_fallback(credentials: &RegistryCredentials, config: &ControlConfig) -> Result<usize> {
+fn select_row_fallback(config: &ControlConfig) -> Result<usize> {
     println!("\nReview installation\n");
-    for (index, row) in rows(credentials, config).iter().enumerate() {
+    for (index, row) in rows(config).iter().enumerate() {
         println!("  {}. {row}", index + 1);
     }
-    let answer = prompt_line("\nChoose a value to edit, install, or cancel [1-9]: ")?;
+    let answer = prompt_line("\nChoose a value to edit, install, or cancel [1-7]: ")?;
     let selected = answer
         .parse::<usize>()
-        .context("enter a number from 1 to 9")?;
-    if !(1..=9).contains(&selected) {
-        bail!("enter a number from 1 to 9");
+        .context("enter a number from 1 to 7")?;
+    if !(1..=7).contains(&selected) {
+        bail!("enter a number from 1 to 7");
     }
     Ok(selected - 1)
 }
 
-fn choose(credentials: &RegistryCredentials, config: &ControlConfig) -> Result<usize> {
-    select_row(credentials, config).or_else(|_| select_row_fallback(credentials, config))
+fn choose(config: &ControlConfig) -> Result<usize> {
+    select_row(config).or_else(|_| select_row_fallback(config))
 }
 
 fn password_is_valid(value: &str) -> bool {
     value.len() >= 12
 }
 
-pub(crate) fn review_control_install(
-    credentials: &mut RegistryCredentials,
-    config: &mut ControlConfig,
-) -> Result<()> {
+pub(crate) fn review_control_install(config: &mut ControlConfig) -> Result<()> {
     if config.existing_install || !lifecycle::interactive_available() {
         return Ok(());
     }
 
     loop {
-        match choose(credentials, config)? {
+        match choose(config)? {
             0 => {
-                let value = prompt_line("GitHub username: ")?;
-                if lifecycle::valid_github_username(&value) {
-                    credentials.username = value;
-                } else {
-                    eprintln!("Invalid GitHub username. Press Enter to continue.");
-                    let _ = prompt_line("");
-                }
-            }
-            1 => {
-                let value = prompt_secret("GitHub token (leave empty to keep current): ")?;
-                if !value.is_empty() {
-                    credentials.token = value;
-                }
-            }
-            2 => {
                 let old = config.domain.clone();
                 let value = prompt_line("Primary domain: ")?.to_ascii_lowercase();
                 if let Err(error) = validate_domain(&value) {
@@ -183,7 +163,7 @@ pub(crate) fn review_control_install(
                     config.domain = value;
                 }
             }
-            3 => {
+            1 => {
                 let value = prompt_line("Content domain: ")?.to_ascii_lowercase();
                 if let Err(error) = validate_domain(&value) {
                     eprintln!("{error}");
@@ -195,7 +175,7 @@ pub(crate) fn review_control_install(
                     config.content_domain = value;
                 }
             }
-            4 => {
+            2 => {
                 let value = prompt_line("Certificate email: ")?;
                 if !value.contains('@') || value.starts_with('@') || value.ends_with('@') {
                     eprintln!("Enter a valid email address.");
@@ -204,7 +184,7 @@ pub(crate) fn review_control_install(
                     config.acme_email = value;
                 }
             }
-            5 => {
+            3 => {
                 let value = prompt_line("Login username: ")?;
                 if let Err(error) = validate_basic_user(&value) {
                     eprintln!("{error}");
@@ -213,7 +193,7 @@ pub(crate) fn review_control_install(
                     config.basic_auth_user = value;
                 }
             }
-            6 => {
+            4 => {
                 let first = prompt_secret("Login password (Enter to generate): ")?;
                 if first.is_empty() {
                     config.basic_auth_password = new_secret(24);
@@ -245,13 +225,8 @@ mod tests {
 
     #[test]
     fn review_rows_never_contain_secret_values() {
-        let credentials = RegistryCredentials {
-            registry: "ghcr.io/example".to_string(),
-            username: "octocat".to_string(),
-            token: "never-print-this-token".to_string(),
-        };
         let config = ControlConfig {
-            registry: credentials.registry.clone(),
+            registry: "ghcr.io/example".to_string(),
             version: "main".to_string(),
             domain: "app.example.com".to_string(),
             content_domain: "content.example.com".to_string(),
@@ -277,8 +252,7 @@ mod tests {
             generated_basic_password: false,
             existing_install: false,
         };
-        let rendered = rows(&credentials, &config).join("\n");
-        assert!(!rendered.contains(&credentials.token));
+        let rendered = rows(&config).join("\n");
         assert!(!rendered.contains(&config.basic_auth_password));
     }
 

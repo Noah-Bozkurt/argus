@@ -65,14 +65,13 @@ test("bootstrap shell syntax is valid", () => {
   assert.equal(result.status, 0, result.stderr);
 });
 
-test("native installer owns interactive registry authentication", async () => {
+test("native installer uses public registry access", async () => {
   const [lifecycle, installer] = await Promise.all([
     readFile(resolve(rootDir, "crates/cli/src/lifecycle.rs"), "utf8"),
     readFile(resolve(rootDir, "crates/cli/src/installer.rs"), "utf8"),
   ]);
-  assert.match(lifecycle, /open\("\/dev\/tty"\)/);
-  assert.match(lifecycle, /GitHub username:/);
-  assert.match(lifecycle, /classic PAT with read:packages/);
+  assert.match(lifecycle, /DEFAULT_REGISTRY/);
+  assert.doesNotMatch(lifecycle, /docker login|ARGUS_REGISTRY_TOKEN/);
   assert.match(installer, /Install an Argus control plane or managed node/);
 });
 
@@ -84,13 +83,8 @@ test("native installer keeps interactive prompts visible and guides uninstall", 
   assert.match(installer, /rerun with --yes/);
 });
 
-test("legacy lifecycle scripts are only native compatibility shims", async () => {
-  const [registry, uninstall] = await Promise.all([
-    readFile(resolve(rootDir, "scripts/registry-login.sh"), "utf8"),
-    readFile(resolve(rootDir, "scripts/uninstall.sh"), "utf8"),
-  ]);
-  assert.match(registry, /argus-installer/);
-  assert.doesNotMatch(registry, /docker login/);
+test("legacy uninstall script is only a native compatibility shim", async () => {
+  const uninstall = await readFile(resolve(rootDir, "scripts/uninstall.sh"), "utf8");
   assert.match(uninstall, /argus-installer/);
   assert.doesNotMatch(uninstall, /docker compose/);
 });
@@ -130,7 +124,7 @@ test("installer portal explains the real deployment and published revision", asy
     "/opt/argus/",
     "/etc/argus/",
     "argusctl smoke",
-    "read:packages",
+    "No GitHub account or token required",
   ]) {
     assert.match(html, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
@@ -140,10 +134,10 @@ test("installer portal explains the real deployment and published revision", asy
   assert.match(script, /navigator\.clipboard\.writeText/);
 });
 
-test("updater still retains transactional progress and registry rotation guidance", async () => {
+test("updater retains progress and reports public pull failures", async () => {
   const updater = await readFile(resolve(rootDir, "scripts/update-first-test.sh"), "utf8");
-  assert.match(updater, /REGISTRY_CREDENTIAL_FILE/);
-  assert.match(updater, /argusctl registry-login/);
+  assert.doesNotMatch(updater, /docker login|ARGUS_REGISTRY_TOKEN/);
+  assert.match(updater, /failed to pull \$ref \(docker exit \$status\): \$summary/);
   assert.match(updater, /progress_start "Downloading update"/);
   assert.match(updater, /progress_start "Installing update"/);
   assert.match(updater, /progress_start "Starting Argus services"/);

@@ -112,7 +112,6 @@ smoke
 system info
 version
 update
-registry-login
 uninstall
 ```
 

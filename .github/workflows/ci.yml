@@ -115,7 +115,6 @@ jobs:
               - 'scripts/first-server-smoke.sh'
               - 'scripts/update-first-test.sh'
               - 'scripts/recover-interrupted-update.sh'
-              - 'scripts/registry-login.sh'
               - 'scripts/uninstall.sh'
               - 'deploy/**'
               - 'docker-bake.hcl'
@@ -353,10 +352,8 @@ jobs:
           bash -n scripts/test-forms-runtime.sh
           bash -n scripts/update-first-test.sh
           bash -n scripts/recover-interrupted-update.sh
-          bash -n scripts/registry-login.sh
           bash -n scripts/uninstall.sh
           grep -Fq 'argus-installer' install.sh
-          grep -Fq 'argus-installer' scripts/registry-login.sh
           grep -Fq 'argus-installer' scripts/uninstall.sh
           grep -Fq 'pg_dump' scripts/update-first-test.sh
           grep -Fq 'pg_restore' scripts/update-first-test.sh
@@ -607,7 +604,6 @@ jobs:
           bash -n scripts/first-server-smoke.sh
           bash -n scripts/update-first-test.sh
           bash -n scripts/recover-interrupted-update.sh
-          bash -n scripts/registry-login.sh
           bash -n scripts/uninstall.sh
           docker buildx bake --print >/dev/null
       - name: Validate release Compose configuration

@@ -1,7 +1,7 @@
 use anyhow::{Result, bail};
 use cli::lifecycle::{
     self, DEFAULT_CONFIG_DIR, DEFAULT_INSTALL_DIR, DEFAULT_LOG_DIR, DEFAULT_STATE_DIR, env_path,
-    prompt_line, temp_dir,
+    prompt_line,
 };
 use std::{
     collections::BTreeMap,
@@ -312,7 +312,6 @@ pub(crate) struct Installer {
     pub(crate) config_dir: PathBuf,
     pub(crate) state_dir: PathBuf,
     pub(crate) log_dir: PathBuf,
-    pub(crate) docker_config: PathBuf,
 }
 
 impl Installer {
@@ -324,7 +323,6 @@ impl Installer {
             config_dir: env_path("ARGUS_CONFIG_DIR", DEFAULT_CONFIG_DIR),
             state_dir: env_path("ARGUS_STATE_DIR", DEFAULT_STATE_DIR),
             log_dir: env_path("ARGUS_LOG_DIR", DEFAULT_LOG_DIR),
-            docker_config: temp_dir("argus-installer-docker")?,
         })
     }
     pub(crate) fn env_file(&self) -> PathBuf {
@@ -335,12 +333,6 @@ impl Installer {
     }
     pub(crate) fn caddy_file(&self) -> PathBuf {
         self.install_dir.join("Caddyfile")
-    }
-}
-
-impl Drop for Installer {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.docker_config);
     }
 }
 

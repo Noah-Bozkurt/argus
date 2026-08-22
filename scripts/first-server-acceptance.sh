@@ -40,8 +40,8 @@ Commands:
   status           Show which lifecycle checkpoints have completed.
 
 Required environment for install/rerun/update is the same as the normal lifecycle,
-including private-registry credentials where applicable. This runner does not store
-registry credentials or plaintext Argus secrets in its report.
+including the installer inputs required by the selected mode. This runner does not
+store plaintext Argus secrets in its report.
 EOF
 }
 
@@ -288,9 +288,7 @@ stage_update() {
   local before after transaction
   before="$(installed_revision)"
   log "updating acceptance host from $before through discovery target '$UPDATE_VERSION'"
-  ARGUS_REGISTRY_USERNAME="${ARGUS_REGISTRY_USERNAME:-}" \
-  ARGUS_REGISTRY_TOKEN="${ARGUS_REGISTRY_TOKEN:-}" \
-    /usr/local/bin/argusctl update --version "$UPDATE_VERSION"
+  /usr/local/bin/argusctl update --version "$UPDATE_VERSION"
   run_smoke
   after="$(installed_revision)"
   [[ "$after" != "$before" ]] \
@@ -317,8 +315,6 @@ stage_update_rollback() {
   log "deliberately failing the update target '$FAILURE_UPDATE_VERSION' after target-start arming"
   if ARGUS_UPDATE_ACCEPTANCE_FAILURE=after-target-start-armed \
     ARGUS_UPDATE_ACCEPTANCE_CONFIRM_FAILURE=ROLLBACK-TEST-ONLY \
-    ARGUS_REGISTRY_USERNAME="${ARGUS_REGISTRY_USERNAME:-}" \
-    ARGUS_REGISTRY_TOKEN="${ARGUS_REGISTRY_TOKEN:-}" \
       /usr/local/bin/argusctl update --version "$FAILURE_UPDATE_VERSION"; then
     die "failure-injected update unexpectedly succeeded; ensure the discovery target is a newer immutable revision"
   fi

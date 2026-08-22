@@ -39,7 +39,7 @@ The supported installation path currently assumes:
 - native systemd Agent and Helper services;
 - direct HTTP/HTTPS ingress through Caddy;
 - public DNS for separate Argus and content domains;
-- private GHCR access using a GitHub package credential.
+- anonymous access to public, coordinated GHCR releases.
 
 Installation starts at [install.noahbozkurt.nl](https://install.noahbozkurt.nl) and is documented in [Installation](installation.md).
 

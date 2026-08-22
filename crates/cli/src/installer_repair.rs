@@ -55,7 +55,6 @@ impl Installer {
             ("runtime.env", self.install_dir.join(".env")),
             ("compose.yaml", self.install_dir.join("compose.yaml")),
             ("Caddyfile", self.install_dir.join("Caddyfile")),
-            ("registry.env", self.config_dir.join("registry.env")),
             ("cloudflare.env", self.config_dir.join("cloudflare.env")),
             ("agent.env", self.config_dir.join("agent.env")),
             ("helper.env", self.config_dir.join("helper.env")),
@@ -75,7 +74,6 @@ impl Installer {
             self.install_dir.join("compose.yaml"),
             self.install_dir.join("Caddyfile"),
             self.install_dir.join("Caddyfile.template"),
-            self.config_dir.join("registry.env"),
             self.config_dir.join("cloudflare.env"),
             self.config_dir.join("agent.env"),
             self.config_dir.join("helper.env"),
@@ -100,7 +98,7 @@ impl Installer {
         self.verify_installation(config)
     }
 
-    fn repair_managed_node(&self, credentials: &lifecycle::RegistryCredentials) -> Result<()> {
+    fn repair_managed_node(&self, credentials: &lifecycle::RegistryConfig) -> Result<()> {
         let agent_config = self.state_dir.join("agent.json");
         if !agent_config.is_file() {
             bail!(
@@ -152,13 +150,9 @@ impl Installer {
     pub(crate) fn repair_installation(&self) -> Result<()> {
         self.restore_uninstall_recovery()
             .context("restore retained uninstall configuration")?;
-        let credentials = lifecycle::collect_registry_credentials(&self.config_dir, None)?;
+        let credentials = lifecycle::registry_config();
         self.preflight()?;
-        self.ui
-            .working("Authenticating with the Argus registry", || {
-                lifecycle::docker_login(&credentials, &self.docker_config)?;
-                lifecycle::save_registry_credentials(&self.config_dir, &credentials)
-            })?;
+        lifecycle::remove_legacy_registry_credentials(&self.config_dir)?;
         let snapshot = FileSnapshot::capture(self.repair_paths())?;
         let result = if self.env_file().is_file() {
             let mut config = self.load_control_config(&credentials)?;

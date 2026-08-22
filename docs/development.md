@@ -158,8 +158,8 @@ Feature work should use a branch and PR. Required CI must be green before merge.
 
 New features should update one of the canonical documents in `docs/` instead of adding another phase-specific markdown file.
 
-## Installer boundary
+## Installer and lifecycle boundary
 
-There is no supported first-server installer yet. Manual development startup is not the intended test-server experience.
+The supported installer is published at `https://install.noahbozkurt.nl`. It installs or repairs the native Agent, Helper, CLI, systemd units, and coordinated Compose deployment. Lifecycle changes must preserve preflight validation, immutable revision resolution, snapshots, smoke checks, and rollback behavior.
 
-The next deployment milestone is a reproducible installer that prepares a clean test server, configures required services/secrets, applies both Control API and Payload migrations, enrolls the managed node and verifies health. The first real server test should happen **after** that installer exists. See [Roadmap](roadmap.md).
+For installer and update development, see [Installation](installation.md), [Operations](operations.md), and [Security & Recovery](security-and-recovery.md).

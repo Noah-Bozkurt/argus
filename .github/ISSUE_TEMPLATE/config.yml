@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Noah-Bozkurt/argus/security/advisories/new
+    about: Report suspected vulnerabilities privately. Do not create a public issue.
+  - name: Documentation
+    url: https://github.com/Noah-Bozkurt/argus/tree/main/docs
+    about: Review installation, usage, operations, architecture, and development documentation.

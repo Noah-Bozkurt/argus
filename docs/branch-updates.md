@@ -38,20 +38,11 @@ sudo argusctl update --version main
 
 A successful explicit version update clears the remembered branch, so subsequent `sudo argusctl update` commands use `main` again.
 
-## Requirements and authentication
+## Requirements and public source access
 
 Branch updates require Git and Docker Buildx on the control-plane host. Fresh Argus installations provision Docker with the Buildx plugin. The update command fails before deployment mutation if either tool is unavailable.
 
-The saved GitHub credential in `/etc/argus/registry.env` is reused through a temporary `GIT_ASKPASS` helper. The token is not placed in the Git remote URL or command-line arguments. For a private Argus repository, the token must have both:
-
-- permission to read the repository source; and
-- permission to read the Argus packages used by normal registry operations.
-
-Rotate or replace the saved credential with:
-
-```bash
-sudo argusctl registry-login
-```
+Branch source and coordinated images are fetched anonymously from the public GitHub repository and public GHCR packages. `GIT_TERMINAL_PROMPT=0` prevents an update from blocking on an unexpected authentication prompt; inaccessible source or images fail before deployment mutation with the underlying Git or Docker diagnostic.
 
 ## Compatibility boundary
 
