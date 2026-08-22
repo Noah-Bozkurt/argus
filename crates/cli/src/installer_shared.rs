@@ -28,7 +28,11 @@ fn indeterminate_bar(frame: usize) -> String {
         0
     } else {
         let phase = frame % cycle;
-        if phase <= travel { phase } else { cycle - phase }
+        if phase <= travel {
+            phase
+        } else {
+            cycle - phase
+        }
     };
     let mut cells = vec!['░'; PROGRESS_WIDTH];
     for cell in cells.iter_mut().skip(position).take(PROGRESS_PULSE) {
@@ -177,7 +181,11 @@ impl Ui {
                 } else {
                     format!("[{bar}]")
                 };
-                let activity = if elapsed >= 15 { " · still working" } else { "" };
+                let activity = if elapsed >= 15 {
+                    " · still working"
+                } else {
+                    ""
+                };
                 print!(
                     "\r\x1b[2K  {bar} {message_owned} · {}{activity}",
                     elapsed_label(elapsed)
@@ -433,7 +441,10 @@ mod tests {
         assert_eq!(first.chars().count(), PROGRESS_WIDTH);
         assert_eq!(later.chars().count(), PROGRESS_WIDTH);
         assert_ne!(first, later);
-        assert_eq!(first.chars().filter(|cell| *cell == '█').count(), PROGRESS_PULSE);
+        assert_eq!(
+            first.chars().filter(|cell| *cell == '█').count(),
+            PROGRESS_PULSE
+        );
     }
 
     #[test]
