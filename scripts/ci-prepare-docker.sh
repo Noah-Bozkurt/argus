@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if docker info >/dev/null 2>&1; then
-  exit 0
-fi
-
-if ! command -v sudo >/dev/null 2>&1 || ! sudo -n /usr/bin/docker info >/dev/null 2>&1; then
+use_sudo=false
+if /usr/bin/docker info >/dev/null 2>&1; then
+  :
+elif command -v sudo >/dev/null 2>&1 && sudo -n /usr/bin/docker info >/dev/null 2>&1; then
+  use_sudo=true
+else
   echo "Docker is installed but this runner cannot access /var/run/docker.sock." >&2
   id >&2 || true
   stat -c 'docker socket: mode=%a uid=%u gid=%g' /var/run/docker.sock >&2 || true
@@ -16,8 +17,58 @@ wrapper_dir="$RUNNER_TEMP/argus-docker-bin"
 mkdir -p "$wrapper_dir"
 cat >"$wrapper_dir/docker" <<'SH'
 #!/usr/bin/env bash
-exec sudo -n /usr/bin/docker "$@"
+set -euo pipefail
+
+docker_cmd=(/usr/bin/docker)
+if [[ "${ARGUS_CI_DOCKER_USE_SUDO:-false}" == "true" ]]; then
+  docker_cmd=(sudo -n /usr/bin/docker)
+fi
+
+# The GitHub runner itself is containerized. Integration-test Postgres containers
+# share the runner's network namespace so 127.0.0.1:5432 remains local to that
+# runner instead of accidentally referring to the Docker host or another runner.
+if [[ "${1:-}" == "run" && -n "${HOSTNAME:-}" ]]; then
+  args=("$@")
+  is_postgres=false
+  for arg in "${args[@]}"; do
+    if [[ "$arg" == "postgres:16" ]]; then
+      is_postgres=true
+      break
+    fi
+  done
+
+  if [[ "$is_postgres" == "true" ]]; then
+    rewritten=("run")
+    i=1
+    while (( i < ${#args[@]} )); do
+      if [[ "${args[$i]}" == "-p" && $((i + 1)) -lt ${#args[@]} && "${args[$((i + 1))]}" == "127.0.0.1::5432" ]]; then
+        rewritten+=("--network" "container:${HOSTNAME}")
+        i=$((i + 2))
+        continue
+      fi
+      rewritten+=("${args[$i]}")
+      i=$((i + 1))
+    done
+    exec "${docker_cmd[@]}" "${rewritten[@]}"
+  fi
+fi
+
+# Network-namespace Postgres has no published host port. Preserve the interface
+# expected by the existing CI setup by reporting its runner-local endpoint.
+if [[ "${1:-}" == "port" && "${3:-}" == "5432/tcp" ]]; then
+  network_mode="$("${docker_cmd[@]}" inspect "${2:-}" --format '{{.HostConfig.NetworkMode}}' 2>/dev/null || true)"
+  if [[ "$network_mode" == container:* ]]; then
+    printf '127.0.0.1:5432\n'
+    exit 0
+  fi
+fi
+
+exec "${docker_cmd[@]}" "$@"
 SH
 chmod 0755 "$wrapper_dir/docker"
+echo "ARGUS_CI_DOCKER_USE_SUDO=$use_sudo" >> "$GITHUB_ENV"
 echo "$wrapper_dir" >> "$GITHUB_PATH"
-echo "Docker socket requires elevated access; using the runner's passwordless sudo for Docker commands."
+
+if [[ "$use_sudo" == "true" ]]; then
+  echo "Docker socket requires elevated access; using the runner's passwordless sudo for Docker commands."
+fi
