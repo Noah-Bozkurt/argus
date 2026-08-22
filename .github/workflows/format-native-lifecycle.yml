@@ -11,7 +11,7 @@ permissions:
 jobs:
   cleanup:
     if: github.head_ref == 'chore/delete-pr79-branch'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     steps:
       - name: Delete merged branch and cleanup branch
         env:
