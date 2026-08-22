@@ -233,5 +233,9 @@ ENV
   sed -i -e 's|__ARGUS_GLOBAL_OPTIONS__||g' -e 's|__ARGUS_DOMAIN__|argus.example.test|g' -e 's|__ARGUS_CONTENT_DOMAIN__|content.argus.example.test|g' -e 's|__ARGUS_TLS__|tls internal|g' -e 's|__BASIC_AUTH_USER__|argus|g' -e "s|__BASIC_AUTH_HASH__|${hash}|g" "$caddyfile"
   grep -Fq 'path /public/status/*' "$caddyfile"
   grep -Fq 'path /public/* /api/media/file/*' "$caddyfile"
-  docker run --rm -v "$caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
+
+  caddy_container="$(docker create caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile)"
+  trap 'docker rm -f "$caddy_container" >/dev/null 2>&1 || true' EXIT
+  docker cp "$caddyfile" "$caddy_container:/etc/caddy/Caddyfile"
+  docker start -a "$caddy_container"
 )
