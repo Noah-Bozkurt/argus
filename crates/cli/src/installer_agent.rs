@@ -1,6 +1,6 @@
 use super::installer_shared::{Installer, is_revision};
 use anyhow::{Context, Result, bail};
-use cli::lifecycle::{self, RegistryCredentials, prompt_secret};
+use cli::lifecycle::{self, RegistryConfig, prompt_secret};
 use serde_json::Value;
 use std::{
     env, fs,
@@ -73,7 +73,7 @@ impl Installer {
 
     pub(crate) fn install_managed_node(
         &self,
-        credentials: &RegistryCredentials,
+        credentials: &RegistryConfig,
         setup: &ManagedNodeConfig,
     ) -> Result<()> {
         let ManagedNodeConfig {

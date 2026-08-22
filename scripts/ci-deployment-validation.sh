@@ -9,10 +9,8 @@ set -euo pipefail
   bash -n scripts/test-forms-runtime.sh
   bash -n scripts/update-first-test.sh
   bash -n scripts/recover-interrupted-update.sh
-  bash -n scripts/registry-login.sh
   bash -n scripts/uninstall.sh
   grep -Fq 'argus-installer' install.sh
-  grep -Fq 'argus-installer' scripts/registry-login.sh
   grep -Fq 'argus-installer' scripts/uninstall.sh
   grep -Fq 'pg_dump' scripts/update-first-test.sh
   grep -Fq 'pg_restore' scripts/update-first-test.sh

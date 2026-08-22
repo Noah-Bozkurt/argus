@@ -87,7 +87,7 @@
           </div>
           <ol class="setup-flow">
             <li><span>1</span><div><strong>Choose a mode</strong><p>Create a control plane here or connect a managed server.</p></div></li>
-            <li><span>2</span><div><strong>Authenticate packages</strong><p>Enter a GitHub classic PAT with <code>read:packages</code>.</p></div></li>
+            <li><span>2</span><div><strong>Download packages</strong><p>Pull the public, revision-pinned Argus images from GHCR.</p></div></li>
             <li><span>3</span><div><strong>Configure the host</strong><p>For a control plane, provide the main domain and optional content-domain override.</p></div></li>
             <li><span>4</span><div><strong>Verify deployment</strong><p>Argus starts its services and runs installation health checks.</p></div></li>
           </ol>
@@ -105,7 +105,7 @@
             <div role="listitem"><span>Privileges</span><strong>root or sudo</strong></div>
             <div role="listitem"><span>Ingress</span><strong>TCP 80 + 443 available</strong></div>
             <div role="listitem"><span>DNS</span><strong>Main + content domain</strong><small><code>argus.example.com</code><br /><code>content.argus.example.com</code></small></div>
-            <div role="listitem"><span>Private registry</span><strong>GitHub classic PAT</strong><small><code>read:packages</code> access to Argus GHCR images</small></div>
+            <div role="listitem"><span>Container registry</span><strong>Public GHCR access</strong><small>No GitHub account or token required</small></div>
           </div>
         </section>
 
@@ -117,7 +117,7 @@
             </div>
             <div class="file-tree" aria-label="Default Argus installation paths">
               <div><code>/opt/argus/</code><span>Compose files and runtime environment</span></div>
-              <div><code>/etc/argus/</code><span>Host configuration and registry credentials</span></div>
+              <div><code>/etc/argus/</code><span>Host and service configuration</span></div>
               <div><code>/var/lib/argus/</code><span>Persistent host state and backups</span></div>
               <div><code>/var/log/argus/</code><span>Installer and lifecycle logs</span></div>
               <div><code>/usr/local/bin/</code><span><code>argus-agent</code>, <code>argus-helper</code>, <code>argusctl</code></span></div>
@@ -132,8 +132,8 @@
             </div>
             <div class="security-list">
               <div><span class="check">✓</span><div><strong>Verified bootstrap</strong><p>The published installer checksum is validated before execution.</p></div></div>
-              <div><span class="check">✓</span><div><strong>Terminal-only secrets</strong><p>Your registry token is entered silently and is never collected by this page.</p></div></div>
-              <div><span class="check">✓</span><div><strong>Root-only registry storage</strong><p>Validated GHCR credentials are stored in <code>/etc/argus/registry.env</code> with mode <code>0600</code>.</p></div></div>
+              <div><span class="check">✓</span><div><strong>No registry credentials</strong><p>Public Argus images are downloaded without a GitHub account or token.</p></div></div>
+              <div><span class="check">✓</span><div><strong>Revision-pinned images</strong><p>The coordinated image set is resolved and verified against its immutable revision.</p></div></div>
               <div><span class="check">✓</span><div><strong>Rerunnable</strong><p>Existing generated IDs, secrets, data and the installed immutable revision are preserved.</p></div></div>
             </div>
           </div>

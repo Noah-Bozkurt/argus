@@ -237,12 +237,6 @@ Update:
 sudo argusctl update --version main
 ```
 
-Rotate the stored GHCR credential:
-
-```bash
-sudo argusctl registry-login
-```
-
 Uninstall:
 
 ```bash

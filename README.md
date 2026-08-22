@@ -1,55 +1,107 @@
 # Argus
 
-Argus is a self-hosted control panel for software projects and the infrastructure behind them. It keeps project work, servers, deployments, monitoring, incidents and content in one place.
+[![CI](https://github.com/Noah-Bozkurt/argus/actions/workflows/ci.yml/badge.svg)](https://github.com/Noah-Bozkurt/argus/actions/workflows/ci.yml)
+[![Publish images](https://github.com/Noah-Bozkurt/argus/actions/workflows/publish-images.yml/badge.svg)](https://github.com/Noah-Bozkurt/argus/actions/workflows/publish-images.yml)
 
-Argus is project-first. A project can be personal, internal, open source or client work; client data is optional and does not define the rest of the system.
+Argus is a self-hosted, project-first control plane for software work and the infrastructure behind it. It brings projects, servers, deployments, monitoring, incidents, background jobs, and content operations into one operator workspace.
 
-> **Status:** Argus is under active development and is not production-ready. The supported control-plane install is currently a single Ubuntu/Debian amd64 host.
+> [!WARNING]
+> Argus is under active development and is **not production-ready**. The currently supported control-plane deployment is a single Ubuntu/Debian amd64 host.
 
-## Why Argus?
+## Contents
 
-The name comes from **Argus Panoptes**, the many-eyed watchman from Greek mythology. The idea is simple: one place that keeps watch over the different parts of a project.
+- [Why Argus](#why-argus)
+- [Capabilities](#capabilities)
+- [Architecture](#architecture)
+- [Installation](#installation)
+- [Operating Argus](#operating-argus)
+- [Development](#development)
+- [Documentation](#documentation)
+- [Project status](#project-status)
+- [Contributing and security](#contributing-and-security)
+- [License](#license)
 
-## What works today
+## Why Argus
 
-- Project workspaces with repositories, environments, services, tasks, milestones and notes.
-- Managed Linux servers with live health data and typed system, Docker/Compose and maintenance operations.
-- Releases, readiness checks, sites and domains.
-- Persisted jobs, monitoring, incidents, notifications, dependencies and public status pages.
-- GitHub repository integration with repository, issue, pull-request and CI state.
-- Payload-backed application data and CMS workflows scoped to projects.
-- First-party Argus login with shared operator/CMS sessions and workspace roles.
-- Host lifecycle tooling through `argusctl`, including diagnosis, logs, updates, registry login and uninstall.
+The name comes from **Argus Panoptes**, the many-eyed watchman from Greek mythology. Argus applies the same idea to software operations: keep the important parts of a project visible without reducing them to an unstructured collection of remote shell commands.
 
-The operator UI has global **Overview**, **Projects**, **Servers**, **Jobs** and **Notifications** views. Project work is grouped into **Deploy**, **Infrastructure**, **Observe**, **Work** and **Content**.
+The product is deliberately project-first. A project may be personal, internal, open source, or client work; client data is optional metadata rather than the root of the system model.
 
-## Install
+## Capabilities
+
+### Projects and delivery
+
+- Project workspaces with repositories, environments, services, releases, tasks, milestones, and notes.
+- Release readiness, sites, domains, dependencies, and delivery state.
+- GitHub repository integration for issue, pull-request, and CI visibility.
+
+### Infrastructure and operations
+
+- Managed Linux servers with live host and service inventory.
+- Typed Docker, Compose, system, and maintenance operations.
+- Persisted jobs, monitoring, incidents, notifications, and public status pages.
+- Transactional installation, repair, domain changes, updates, smoke verification, and rollback.
+
+### Content and access
+
+- Payload-backed project content and CMS workflows.
+- First-party Argus login, shared operator/CMS sessions, and workspace roles.
+- Separate Web, Control API, Worker, Content, Agent, and privileged Helper boundaries.
+
+The operator UI provides global **Overview**, **Projects**, **Servers**, **Jobs**, and **Notifications** views. Project work is grouped into **Deploy**, **Infrastructure**, **Observe**, **Work**, and **Content**.
+
+## Architecture
+
+```text
+                         public HTTPS
+                              │
+                         Caddy proxy
+                      ┌───────┴────────┐
+                      │                │
+                  Web / UI       Content / CMS
+                      │                │
+                      └──────┬─────────┘
+                             │ loopback/private network
+                        Control API ───── Worker
+                             │               │
+                             └──── PostgreSQL┘
+                             │ authenticated protocol
+                       managed-node Agent
+                             │ local Unix socket
+                       privileged Helper
+```
+
+The control plane runs application services through Docker Compose. Agent and Helper run as native systemd services. PostgreSQL and the Control API are not exposed on public host interfaces. Host actions use typed protocol operations; the Helper is not a general-purpose network shell.
+
+Deployable releases are coordinated sets of Web, Control API, Worker, Content, and Host Tools images carrying the same immutable Git revision. Moving tags such as `main` are discovery aliases, not installed-version identities.
+
+See [`DESIGN.md`](DESIGN.md) for engineering principles and [`docs/architecture.md`](docs/architecture.md) for component and data-flow detail.
+
+## Installation
 
 The public installer is available at **https://install.noahbozkurt.nl**.
-
-On a supported server:
 
 ```bash
 curl -fsSL https://install.noahbozkurt.nl/install | sudo bash
 ```
 
-The bootstrap downloads the native installer, verifies its checksum, and starts the guided setup. Before anything is installed, you can review the values with the arrow keys and press Enter on a row to change it. Passwords and tokens stay masked.
+The bootstrap downloads the native installer, verifies its published checksum, and opens guided terminal setup. It can install a control plane or connect a managed server to an existing Argus instance.
 
-Current requirements:
+### Current requirements
 
-- Ubuntu or Debian on amd64;
-- root or sudo access;
-- ports 80 and 443 available for a control-plane install;
-- public DNS for the Argus and content domains;
-- a GitHub classic PAT with `read:packages` access to the private Argus GHCR packages.
+- Ubuntu or Debian on amd64.
+- Root or sudo access.
+- Public TCP ports 80 and 443 for a control-plane install.
+- DNS for separate Argus and content hostnames.
+- Outbound HTTPS access to GitHub and the public Argus packages on GHCR.
 
-The installer can either set up a control plane or connect a managed server to an existing Argus instance. See [Installation](docs/installation.md) for the full flow.
+The installer uses public registry access and does not require a GitHub package token. Cloudflare Origin CA remains optional and, when selected, uses a separately scoped Cloudflare API token stored root-only.
 
-For a control plane, the installer asks for a certificate contact email. It normally uses Let's Encrypt and automatically tries ZeroSSL if issuance fails. If both public hostnames are already behind Cloudflare, it asks whether to use public ACME or Cloudflare Origin CA. The Cloudflare option needs a scoped API token, stored root-only so Argus can repair a missing certificate later.
+Read [`docs/installation.md`](docs/installation.md) before installing on a non-disposable host.
 
-## `argusctl`
+## Operating Argus
 
-The normal troubleshooting flow is deliberately small:
+Start with the high-level lifecycle commands:
 
 ```bash
 argusctl status
@@ -58,7 +110,7 @@ argusctl logs
 sudo argusctl repair
 ```
 
-Useful lifecycle and targeted commands include:
+Common targeted operations include:
 
 ```bash
 argusctl logs control-plane --tail 200
@@ -68,63 +120,91 @@ argusctl system info
 argusctl version
 sudo argusctl credentials
 sudo argusctl update --version main
-sudo argusctl registry-login
 sudo argusctl uninstall
 ```
 
-`argusctl logs` automatically shows the native Agent/Helper logs and, on a control-plane host, the Compose application logs. Individual sources include `agent`, `helper`, `control-plane`, `web`, `control-api`, `worker`, `content`, `caddy`, `postgres`, `installer` and `update`. Common secret-shaped log lines are redacted before they are printed.
+`argusctl update` resolves a requested moving tag to a full revision, downloads and validates the coordinated image set before mutation, creates rollback state, applies the target, and verifies health. Normal failures identify the phase and underlying cause; add `--verbose` for complete secret-safe diagnostics.
 
-Start with `argusctl status` for a quick overview and `argusctl doctor` when something does not look right. Doctor checks local services, containers, DNS, HTTPS and the Agent connection in one pass and suggests a next step for each failure. Use `argusctl logs` when the diagnosis needs the underlying runtime output, then `argusctl repair` when installed files or services need to be restored.
+The lower-level `health`, `connection`, and `smoke` commands remain available for automation and deep diagnostics. See [`docs/operations.md`](docs/operations.md) for update, backup, recovery, and logging behavior.
 
-The older targeted `health`, `connection` and `smoke` commands remain available for compatibility, scripts and low-level debugging, but they are intentionally not promoted in normal CLI help because their checks are already covered by the primary flow.
+## Development
 
-`argusctl update` resolves the requested release to an immutable Git revision instead of leaving an installation on a moving `main` tag. If `argusctl` itself is missing or broken, run the public installer again and choose **Repair**.
-
-## Current limitations
-
-Argus is deliberately narrow while the deployment and security model is hardened:
-
-- the control plane is single-host rather than HA;
-- amd64 is the only supported installation architecture;
-- installation and updates currently require access to the private GHCR packages;
-- per-user identity propagation into all Control API audit attribution is not complete yet;
-- provider provisioning, production secrets management and full time-series observability are not finished.
-
-The old reverse-proxy Basic Auth prompt is no longer used. Human authentication now uses Argus/Payload sessions; see [Authentication](docs/authentication.md) for the current model and its remaining limitations.
-
-## Repository layout
+Argus is a Rust and TypeScript monorepo.
 
 ```text
 apps/
-  web/          operator control panel
-  content/      Payload content/application-data service
-  installer/    static installer site
-crates/         Rust agent, helper, CLI and shared libraries
-services/       Control API and background worker
-deploy/         Compose, Caddy, systemd and image assets
-docs/           product, operations and development documentation
-scripts/        lifecycle, update, recovery and validation tooling
-install.sh      canonical host installer
+  web/          Next.js operator application
+  content/      Payload/Next.js content service
+  installer/    public installer portal
+crates/
+  agent/        unprivileged managed-node agent
+  helper/       privileged local helper
+  cli/          argusctl and native installer
+  protocol/     shared Agent/Control/Helper types
+  system/       host inventory and system helpers
+services/
+  control-api/  Rust/Axum API and SQL migrations
+  worker/       persisted background-job worker
+deploy/         Compose, Caddy, systemd, and image assets
+docs/           product, architecture, operations, and development docs
+scripts/        lifecycle, smoke, update, rollback, and validation scripts
 ```
+
+### Tooling
+
+- Stable Rust compatible with the workspace.
+- Node.js 20+ and pnpm 9.
+- PostgreSQL 16 for API, worker, migration, and Payload work.
+- Docker with Buildx for image and lifecycle validation.
+- Linux/systemd for Agent and Helper integration testing.
+
+### Baseline checks
+
+```bash
+pnpm install --no-frozen-lockfile
+cargo fmt --all -- --check
+cargo test --workspace
+pnpm --filter @argus/web exec tsc --noEmit
+pnpm --filter @argus/content run typecheck
+node --test apps/installer/test.mjs
+bash -n install.sh scripts/*.sh
+```
+
+Some CI jobs require PostgreSQL, Docker, and production application builds. See [`docs/development.md`](docs/development.md) and [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a pull request.
 
 ## Documentation
 
-Start with [docs/README.md](docs/README.md). The main references are:
+The documentation index is [`docs/README.md`](docs/README.md). Key references:
 
 - [Installation](docs/installation.md)
 - [Using Argus](docs/usage.md)
 - [Authentication](docs/authentication.md)
 - [Architecture](docs/architecture.md)
 - [Operations](docs/operations.md)
-- [Security & recovery](docs/security-and-recovery.md)
+- [Security and recovery](docs/security-and-recovery.md)
 - [Content platform](docs/content-platform.md)
 - [Development](docs/development.md)
 - [Roadmap](docs/roadmap.md)
+- [Changelog](CHANGELOG.md)
 
-## Releases
+## Project status
 
-Release images are published only from a successful `main` revision. Argus publishes the coordinated image set under immutable SHA tags before promoting the moving `main` pointers used for update discovery.
+Current boundaries and known limitations include:
+
+- A single-host control plane rather than HA.
+- amd64-only supported installation.
+- No stable release or semantic-version compatibility promise yet.
+- Incomplete per-user identity propagation in some Control API audit paths.
+- Ongoing work on provider provisioning, production secret management, and time-series observability.
+
+The roadmap is maintained in [`docs/roadmap.md`](docs/roadmap.md). Release images are published only from a successful `main` revision after the complete immutable image set has been verified.
+
+## Contributing and security
+
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before proposing a change. Coding agents should also follow [`AGENTS.md`](AGENTS.md).
+
+Do **not** report vulnerabilities in public issues. Use the private reporting process in [`SECURITY.md`](SECURITY.md).
 
 ## License
 
-Argus is **proprietary, closed-source software**. The repository is private and the project is not licensed for public use, copying, modification or redistribution. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Argus is free and open-source software licensed under the **GNU Affero General Public License v3.0 only**. If you modify Argus and make it available to users over a network, the AGPL requires you to offer those users the corresponding source code. See [`LICENSE`](LICENSE) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

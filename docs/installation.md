@@ -12,7 +12,7 @@ Prepare:
 - DNS for the main Argus domain, for example `argus.example.com`;
 - DNS for a separate content domain, for example `content.argus.example.com`;
 - inbound TCP 80 and 443 available;
-- a GitHub classic PAT with `read:packages` and access to the private Argus GHCR packages.
+- outbound HTTPS access to the public Argus packages on GHCR.
 
 Both domains must already resolve through DNS before a control-plane installation can continue. A records, AAAA records and CNAME chains are supported. Cloudflare-proxied records are also supported: Argus checks that the hostname resolves, not that the returned address equals the origin server's public IP.
 
@@ -38,9 +38,7 @@ The bootstrap performs three important steps before the installer runs:
 
 Choose **Install an Argus control plane here** when prompted.
 
-The installer asks for the primary domain, content domain, login details and private GHCR credentials. The content domain defaults to `content.<primary-domain>`. It then opens a review screen: use the arrow keys to move between values and press Enter to edit the selected row. Tokens and passwords remain masked. Nothing is installed until **Install Argus** is selected and the final checks pass.
-
-The GitHub token is entered silently. Registry credentials are stored root-only in `/etc/argus/registry.env` with mode `0600` so later updates and repairs can pull the coordinated Argus image set.
+The installer asks for the primary domain, content domain and login details. The content domain defaults to `content.<primary-domain>`. It then opens a review screen: use the arrow keys to move between values and press Enter to edit the selected row. Passwords remain masked. Nothing is installed until **Install Argus** is selected and the final checks pass. Coordinated Argus images are pulled anonymously from public GHCR packages.
 
 The installer also asks for the initial operator credentials. These seed the first Argus `owner` account used by the first-party login page and the Payload CMS. The older `ARGUS_BASIC_AUTH_*` configuration names are retained for upgrade compatibility, but Caddy no longer performs HTTP Basic Auth and browsers no longer show a native Basic Auth prompt.
 
@@ -50,7 +48,7 @@ The default paths are:
 
 ```text
 /opt/argus/       control-plane Compose files and runtime environment
-/etc/argus/       host configuration and stored registry credentials
+/etc/argus/       host and service configuration
 /var/lib/argus/   persistent Argus host state and backups
 /var/log/argus/   installer and host-update logs
 /usr/local/bin/   argus-agent, argus-helper and argusctl
@@ -112,7 +110,7 @@ curl -fsSL https://install.noahbozkurt.nl/install | sudo bash
 
 7. Choose **Connect this server to an existing Argus instance**.
 8. Paste the setup code when requested.
-9. Provide the private GHCR credentials when requested so the host tools can be pulled.
+9. The installer pulls the public managed-node host tools from GHCR.
 
 The installer enrolls the Agent, writes its local configuration, removes the one-time enrollment token from the persistent environment and starts `argus-agent.service` and `argus-helper.service`.
 
@@ -200,20 +198,6 @@ sudo argusctl domain set argus.example.com --content-domain cms.example.com
 Interactive domain changes show the old and new values before applying them. Automation must add `--yes`. The command verifies trusted HTTPS on both new domains before reporting success. Certificate-authority rate limits are reported with their retry time, and a failed change restores the previous domains.
 
 Changing the public control-plane hostname while additional managed agents are enrolled is currently blocked. Those agents persist the public control-plane URL locally, and switching the hostname without migrating that state would disconnect them. Automatic managed-agent URL migration should be implemented before this guard is relaxed.
-
-## Rotate GHCR credentials
-
-If the package PAT expires or is replaced:
-
-```bash
-sudo argusctl registry-login
-```
-
-Optionally provide the GitHub username non-interactively on the command line while still entering the token securely:
-
-```bash
-sudo argusctl registry-login --username <github-user>
-```
 
 ## Uninstall
 

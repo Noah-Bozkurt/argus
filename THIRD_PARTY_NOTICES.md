@@ -1,8 +1,8 @@
 # Third-Party Notices
 
-Argus is proprietary software, but it depends on third-party software that is distributed under separate licenses.
+Argus is licensed under the GNU Affero General Public License v3.0 only and depends on third-party software distributed under separate licenses.
 
-The Argus proprietary license applies only to original Argus materials. It does **not** change, replace, or restrict license rights and obligations attached to third-party dependencies, libraries, frameworks, tools, container images, or assets.
+The Argus AGPL license applies to original Argus materials. It does **not** change, replace, or restrict license rights and obligations attached to third-party dependencies, libraries, frameworks, tools, container images, or assets.
 
 ## Dependency sources of truth
 
@@ -38,6 +38,6 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ## Distribution
 
-Before distributing an Argus build outside the organization or authorization scope in which it was created, third-party license obligations must be reviewed for that exact build. Depending on the dependency, those obligations may include retaining copyright notices, license texts, attribution, source offers, or other notices.
+Before distributing an Argus build, third-party license obligations must be reviewed for that exact build. Depending on the dependency, those obligations may include retaining copyright notices, license texts, attribution, source offers, or other notices.
 
 This file is a licensing boundary notice, not an exhaustive reproduction of every third-party license. Lockfiles and manifests should be used to generate an exact dependency/license inventory for a release when distribution begins.

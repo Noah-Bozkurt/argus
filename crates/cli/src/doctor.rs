@@ -175,10 +175,7 @@ pub(crate) async fn run(offline: bool) -> DoctorReport {
         );
     }
 
-    for (label, path) in [
-        ("Runtime configuration", install_dir.join(".env")),
-        ("Registry credentials", config_dir.join("registry.env")),
-    ] {
+    for (label, path) in [("Runtime configuration", install_dir.join(".env"))] {
         if let Ok(metadata) = fs::metadata(&path) {
             let mode = metadata.permissions().mode() & 0o777;
             if mode == 0o600 {

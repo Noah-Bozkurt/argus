@@ -7,7 +7,7 @@ STATE_DIR="${ARGUS_STATE_DIR:-/var/lib/argus}"
 ENV_FILE="$INSTALL_DIR/.env"
 COMPOSE_FILE="$INSTALL_DIR/compose.yaml"
 CADDY_FILE="$INSTALL_DIR/Caddyfile"
-REGISTRY_CREDENTIAL_FILE="${ARGUS_CONFIG_DIR:-/etc/argus}/registry.env"
+LEGACY_REGISTRY_CREDENTIAL_FILE="${ARGUS_CONFIG_DIR:-/etc/argus}/registry.env"
 BACKUP_ROOT="$STATE_DIR/update-backups"
 LOCK_FILE="$STATE_DIR/update.lock"
 SOURCE_REPOSITORY="${ARGUS_SOURCE_REPOSITORY:-https://github.com/Noah-Bozkurt/argus.git}"
@@ -17,7 +17,6 @@ TRANSACTION_FORMAT_VERSION=2
 UPDATE_RUNNER_PROTOCOL_VERSION=1
 BRANCH_UPDATE_PROTOCOL_VERSION=1
 
-DOCKER_CONFIG_DIR=""
 SOURCE_TMP=""
 TARGET_BUNDLE_CONTAINER=""
 TARGET_TMP=""
@@ -114,9 +113,6 @@ cleanup() {
   fi
   if [[ -n "$SOURCE_TMP" ]]; then
     rm -rf "$SOURCE_TMP"
-  fi
-  if [[ -n "$DOCKER_CONFIG_DIR" ]]; then
-    rm -rf "$DOCKER_CONFIG_DIR"
   fi
 }
 trap cleanup EXIT
@@ -306,28 +302,6 @@ preflight_snapshot_space() {
   fi
 }
 
-registry_login() {
-  if [[ -f "$REGISTRY_CREDENTIAL_FILE" ]]; then
-    [[ "$(stat -c %a "$REGISTRY_CREDENTIAL_FILE")" == "600" ]] \
-      || die "$REGISTRY_CREDENTIAL_FILE must have mode 0600"
-    set -a
-    # shellcheck disable=SC1090
-    . "$REGISTRY_CREDENTIAL_FILE"
-    set +a
-  fi
-  [[ -n "${ARGUS_REGISTRY_USERNAME:-}" ]] \
-    || die "registry credentials are missing; run 'sudo argusctl registry-login'"
-  [[ -n "${ARGUS_REGISTRY_TOKEN:-}" ]] \
-    || die "registry credentials are missing; run 'sudo argusctl registry-login'"
-
-  DOCKER_CONFIG_DIR="$(mktemp -d)"
-  chmod 0700 "$DOCKER_CONFIG_DIR"
-  export DOCKER_CONFIG="$DOCKER_CONFIG_DIR"
-  local registry_host="${ARGUS_REGISTRY%%/*}"
-  printf '%s' "$ARGUS_REGISTRY_TOKEN" \
-    | docker login "$registry_host" -u "$ARGUS_REGISTRY_USERNAME" --password-stdin >/dev/null
-}
-
 image_revision() {
   local image="$1"
   docker image inspect "$image" \
@@ -347,17 +321,26 @@ image_branch_update_protocol() {
 }
 
 pull_image() {
-  local ref="$1" output
+  local ref="$1" output status summary
 
   if [[ "${ARGUS_UPDATE_VERBOSE:-0}" == "1" ]] || [[ -t 1 ]]; then
-    docker pull "$ref" || die "failed to pull $ref"
+    set +e
+    docker pull "$ref"
+    status=$?
+    set -e
+    (( status == 0 )) || die "failed to pull $ref (docker exit $status)"
     return
   fi
 
-  if ! output="$(docker pull "$ref" 2>&1)"; then
-    [[ -z "$output" ]] || printf '%s\n' "$output" >&2
-    die "failed to pull $ref"
-  fi
+  set +e
+  output="$(docker pull "$ref" 2>&1)"
+  status=$?
+  set -e
+  (( status == 0 )) && return
+
+  summary="$(printf '%s\n' "$output" | awk 'NF { line=$0 } END { print line }')"
+  summary="${summary:-Docker returned no diagnostic output}"
+  die "failed to pull $ref (docker exit $status): $summary"
 }
 
 running_service_image_id() {
@@ -447,27 +430,16 @@ prepare_branch_target() {
   SOURCE_TMP="$(mktemp -d)"
   chmod 0700 "$SOURCE_TMP"
   local checkout="$SOURCE_TMP/repo"
-  local askpass="$SOURCE_TMP/git-askpass"
   local build_log="$SOURCE_TMP/build.log"
   mkdir -p "$checkout"
   chmod 0700 "$checkout"
 
-  cat >"$askpass" <<'EOF'
-#!/usr/bin/env sh
-case "$1" in
-  *Username*) printf '%s\n' "$ARGUS_REGISTRY_USERNAME" ;;
-  *Password*) printf '%s\n' "$ARGUS_REGISTRY_TOKEN" ;;
-  *) exit 1 ;;
-esac
-EOF
-  chmod 0700 "$askpass"
-
   git -C "$checkout" init -q
   git -C "$checkout" remote add origin "$SOURCE_REPOSITORY"
   log "resolving branch '$REQUESTED_BRANCH' from $SOURCE_REPOSITORY"
-  if ! GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
+  if ! GIT_TERMINAL_PROMPT=0 \
     git -C "$checkout" fetch --quiet --depth=1 origin "refs/heads/$REQUESTED_BRANCH"; then
-    die "failed to fetch branch '$REQUESTED_BRANCH'; the stored GitHub token must have read access to the Argus repository"
+    die "failed to fetch public branch '$REQUESTED_BRANCH' from $SOURCE_REPOSITORY"
   fi
   git -C "$checkout" checkout -q --detach FETCH_HEAD
   TARGET_REVISION="$(git -C "$checkout" rev-parse HEAD)"
@@ -904,6 +876,10 @@ restore_installed_files() {
   # shellcheck disable=SC1090
   . "$ENV_FILE"
   set +a
+
+  # Public releases no longer use host-stored GHCR credentials. Retire the
+  # legacy file without sourcing it or exposing its contents.
+  rm -f "$LEGACY_REGISTRY_CREDENTIAL_FILE"
 }
 
 rollback_transaction() {
@@ -1032,6 +1008,10 @@ main() {
   . "$ENV_FILE"
   set +a
 
+  # Public releases no longer use host-stored GHCR credentials. Retire the
+  # legacy file without sourcing it or exposing its contents.
+  rm -f "$LEGACY_REGISTRY_CREDENTIAL_FILE"
+
   : "${ARGUS_REGISTRY:?missing ARGUS_REGISTRY in installed environment}"
   : "${ARGUS_BASIC_AUTH_USER:?missing ARGUS_BASIC_AUTH_USER}"
   : "${ARGUS_BASIC_AUTH_PASSWORD:?missing ARGUS_BASIC_AUTH_PASSWORD}"
@@ -1041,7 +1021,6 @@ main() {
   if [[ -n "$DELEGATED_REVISION" ]]; then
     resolve_current_revision quiet
   else
-    registry_login
     resolve_current_revision
     log "verifying current installation before update"
     /usr/local/bin/argusctl smoke

@@ -31,12 +31,6 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Action {
-    /// Validate and store GHCR credentials for future lifecycle operations.
-    RegistryLogin {
-        /// GitHub username; the token is entered securely.
-        #[arg(long)]
-        username: Option<String>,
-    },
     /// Remove Argus, preserving persistent data unless purge is requested.
     Uninstall {
         /// Skip interactive confirmation.
@@ -146,18 +140,14 @@ impl Installer {
         }
 
         if self.mode == InstallMode::Agent {
-            let credentials = lifecycle::collect_registry_credentials(&self.config_dir, None)?;
+            let credentials = lifecycle::registry_config();
             let setup = self.collect_managed_node_config()?;
             let fresh_install = !self.state_dir.join("agent.json").exists()
                 && !self.env_file().exists()
                 && !std::path::Path::new("/usr/local/bin/argus-agent").exists();
             let result = (|| -> Result<()> {
                 self.preflight()?;
-                self.ui
-                    .working("Authenticating with the Argus registry", || {
-                        lifecycle::docker_login(&credentials, &self.docker_config)?;
-                        lifecycle::save_registry_credentials(&self.config_dir, &credentials)
-                    })?;
+                lifecycle::remove_legacy_registry_credentials(&self.config_dir)?;
                 self.ui.working("Installing managed-node bundle", || {
                     self.install_managed_node(&credentials, &setup)
                 })
@@ -182,11 +172,11 @@ impl Installer {
         }
 
         // Collect control-plane inputs before host preflight so DNS can fail before apt,
-        // Docker setup, registry credential storage, or Argus deployment mutates the host.
-        let mut credentials = lifecycle::collect_registry_credentials(&self.config_dir, None)?;
+        // Docker setup or Argus deployment mutates the host.
+        let credentials = lifecycle::registry_config();
         let mut config = self.load_control_config(&credentials)?;
         self.prompt_content_domain(&mut config)?;
-        review_control_install(&mut credentials, &mut config)?;
+        review_control_install(&mut config)?;
         config.registry.clone_from(&credentials.registry);
         self.ui.working("Checking DNS resolution", || {
             require_domain_resolution(&config.domain)?;
@@ -196,11 +186,7 @@ impl Installer {
 
         let install_result = (|| -> Result<()> {
             self.preflight()?;
-            self.ui
-                .working("Authenticating with the Argus registry", || {
-                    lifecycle::docker_login(&credentials, &self.docker_config)?;
-                    lifecycle::save_registry_credentials(&self.config_dir, &credentials)
-                })?;
+            lifecycle::remove_legacy_registry_credentials(&self.config_dir)?;
             self.ui
                 .detail(&format!("Installing Argus for {}", config.domain));
 
@@ -247,7 +233,6 @@ impl Installer {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.action {
-        Some(Action::RegistryLogin { username }) => lifecycle::registry_login(username.as_deref()),
         Some(Action::Uninstall { yes, purge_data }) => run_uninstall(yes, purge_data),
         None => {
             let mode = select_mode(cli.mode)?;

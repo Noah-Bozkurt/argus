@@ -39,7 +39,7 @@ Default host paths:
 
 ```text
 /opt/argus/       Compose/runtime files
-/etc/argus/       host configuration and registry credentials
+/etc/argus/       host and service configuration
 /var/lib/argus/   persistent state and backups
 /var/log/argus/   installer and host-update logs
 /usr/local/bin/   argus-agent, argus-helper, argusctl
@@ -171,13 +171,7 @@ sudo argusctl update --version main
 
 for a normal update.
 
-The installer stores the validated private-registry login in `/etc/argus/registry.env` with mode `0600`. The token is not written to `/opt/argus/.env`.
-
-To rotate the credential:
-
-```bash
-sudo argusctl registry-login
-```
+The installer and updater pull the public Argus image set anonymously. Current releases do not request or store GitHub package credentials. During upgrade, the updater removes the obsolete `/etc/argus/registry.env` file from older installations without reading or logging its contents.
 
 ## Coordinated image releases
 
@@ -200,6 +194,8 @@ The control plane is updated locally with:
 ```bash
 sudo argusctl update --version main
 ```
+
+Normal mode reports the failing update phase, image reference, Docker exit status and a concise underlying error. Add `--verbose` to stream complete secret-safe Docker diagnostics when investigating registry, network, daemon or storage failures.
 
 or a specific published revision:
 

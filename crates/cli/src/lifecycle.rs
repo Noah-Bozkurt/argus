@@ -17,10 +17,8 @@ pub const DEFAULT_LOG_DIR: &str = "/var/log/argus";
 pub const DEFAULT_REGISTRY: &str = "ghcr.io/noah-bozkurt";
 
 #[derive(Debug, Clone)]
-pub struct RegistryCredentials {
+pub struct RegistryConfig {
     pub registry: String,
-    pub username: String,
-    pub token: String,
 }
 
 #[derive(Debug, Clone)]
@@ -245,148 +243,16 @@ pub fn prompt_secret(prompt: &str) -> Result<String> {
     Ok(value.trim().to_string())
 }
 
-pub fn valid_github_username(value: &str) -> bool {
-    if value.is_empty() || value.len() > 39 || value.contains("--") {
-        return false;
+pub fn registry_config() -> RegistryConfig {
+    RegistryConfig {
+        registry: env::var("ARGUS_REGISTRY").unwrap_or_else(|_| DEFAULT_REGISTRY.to_string()),
     }
-    let bytes = value.as_bytes();
-    let valid_char = |b: u8| b.is_ascii_alphanumeric() || b == b'-';
-    bytes.iter().all(|b| valid_char(*b))
-        && bytes.first().is_some_and(|b| b.is_ascii_alphanumeric())
-        && bytes.last().is_some_and(|b| b.is_ascii_alphanumeric())
 }
 
-pub fn load_registry_credentials(config_dir: &Path) -> Result<Option<RegistryCredentials>> {
-    let path = config_dir.join("registry.env");
-    if !path.exists() {
-        return Ok(None);
-    }
-    let mode = fs::metadata(&path)?.permissions().mode() & 0o777;
-    if mode != 0o600 {
-        bail!("{} must have mode 0600", path.display());
-    }
-    let values = read_env_file(&path)?;
-    let Some(username) = values.get("ARGUS_REGISTRY_USERNAME").cloned() else {
-        return Ok(None);
-    };
-    let Some(token) = values.get("ARGUS_REGISTRY_TOKEN").cloned() else {
-        return Ok(None);
-    };
-    Ok(Some(RegistryCredentials {
-        registry: values
-            .get("ARGUS_REGISTRY")
-            .cloned()
-            .unwrap_or_else(|| DEFAULT_REGISTRY.to_string()),
-        username,
-        token,
-    }))
-}
-
-pub fn collect_registry_credentials(
-    config_dir: &Path,
-    username_override: Option<&str>,
-) -> Result<RegistryCredentials> {
-    let stored = load_registry_credentials(config_dir)?;
-    let registry = env::var("ARGUS_REGISTRY")
-        .ok()
-        .or_else(|| stored.as_ref().map(|item| item.registry.clone()))
-        .unwrap_or_else(|| DEFAULT_REGISTRY.to_string());
-    let username = match username_override
-        .map(ToOwned::to_owned)
-        .or_else(|| env::var("ARGUS_REGISTRY_USERNAME_OVERRIDE").ok())
-        .or_else(|| env::var("ARGUS_REGISTRY_USERNAME").ok())
-        .or_else(|| stored.as_ref().map(|item| item.username.clone()))
-    {
-        Some(value) => value,
-        None => prompt_line("GitHub username: ")?,
-    };
-    if !valid_github_username(&username) {
-        bail!("invalid GitHub username");
-    }
-    let token = match env::var("ARGUS_REGISTRY_TOKEN")
-        .ok()
-        .or_else(|| stored.as_ref().map(|item| item.token.clone()))
-    {
-        Some(value) => value,
-        None => prompt_secret("GitHub token (classic PAT with read:packages): ")?,
-    };
-    if token.is_empty() {
-        bail!("GitHub token is required");
-    }
-    Ok(RegistryCredentials {
-        registry,
-        username,
-        token,
-    })
-}
-
-pub fn docker_login(credentials: &RegistryCredentials, docker_config: &Path) -> Result<()> {
-    fs::create_dir_all(docker_config)?;
-    fs::set_permissions(docker_config, fs::Permissions::from_mode(0o700))?;
-    let registry_host = credentials
-        .registry
-        .split('/')
-        .next()
-        .unwrap_or(&credentials.registry);
-    let mut child = Command::new("docker")
-        .args([
-            "login",
-            registry_host,
-            "-u",
-            &credentials.username,
-            "--password-stdin",
-        ])
-        .env("DOCKER_CONFIG", docker_config)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .spawn()
-        .context("start docker login")?;
-    child
-        .stdin
-        .as_mut()
-        .context("open docker login stdin")?
-        .write_all(credentials.token.as_bytes())?;
-    let status = child.wait().context("wait for docker login")?;
-    if !status.success() {
-        bail!("GHCR login failed; verify the classic PAT has read:packages");
-    }
-    Ok(())
-}
-
-pub fn save_registry_credentials(
-    config_dir: &Path,
-    credentials: &RegistryCredentials,
-) -> Result<()> {
-    let existed = config_dir.exists();
-    fs::create_dir_all(config_dir)?;
-    if !existed {
-        fs::set_permissions(config_dir, fs::Permissions::from_mode(0o750))?;
-    }
-    let values = [
-        ("ARGUS_REGISTRY", credentials.registry.as_str()),
-        ("ARGUS_REGISTRY_USERNAME", credentials.username.as_str()),
-        ("ARGUS_REGISTRY_TOKEN", credentials.token.as_str()),
-    ];
-    write_env_file(&config_dir.join("registry.env"), &values, 0o600)
-}
-
-pub fn registry_login(username_override: Option<&str>) -> Result<()> {
-    require_root().context("registry login must run as root")?;
-    if !command_exists("docker") {
-        bail!("docker is required");
-    }
-    let config_dir = env_path("ARGUS_CONFIG_DIR", DEFAULT_CONFIG_DIR);
-    let credentials = collect_registry_credentials(&config_dir, username_override)?;
-    let docker_config = temp_dir("argus-registry")?;
-    let result = docker_login(&credentials, &docker_config)
-        .and_then(|_| save_registry_credentials(&config_dir, &credentials));
-    let _ = fs::remove_dir_all(&docker_config);
-    result?;
-    println!(
-        "Stored validated GHCR credentials in {} (mode 0600).",
-        config_dir.join("registry.env").display()
-    );
-    Ok(())
+/// Remove credentials used by releases predating public registry access.
+/// Missing files are accepted so this migration is safe to run repeatedly.
+pub fn remove_legacy_registry_credentials(config_dir: &Path) -> Result<()> {
+    remove_path(&config_dir.join("registry.env"))
 }
 
 pub fn read_env_file(path: &Path) -> Result<BTreeMap<String, String>> {
@@ -493,7 +359,6 @@ fn preserve_recovery_files(options: &UninstallOptions) -> Result<PathBuf> {
         (options.install_dir.join(".env"), "runtime.env"),
         (options.install_dir.join("compose.yaml"), "compose.yaml"),
         (options.install_dir.join("Caddyfile"), "Caddyfile"),
-        (options.config_dir.join("registry.env"), "registry.env"),
         (options.config_dir.join("cloudflare.env"), "cloudflare.env"),
         (options.config_dir.join("agent.env"), "agent.env"),
         (options.config_dir.join("helper.env"), "helper.env"),
@@ -611,17 +476,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn github_username_validation_matches_github_rules_used_by_argus() {
-        for valid in ["octocat", "Noah-Bozkurt", "a", "a1-b2"] {
-            assert!(valid_github_username(valid), "{valid}");
-        }
-        for invalid in ["", "-octocat", "octocat-", "octo--cat", "octo_cat", "a b"] {
-            assert!(!valid_github_username(invalid), "{invalid}");
-        }
-    }
-
-    #[test]
-    fn env_quote_round_trip_for_credentials() {
+    fn env_quote_round_trip() {
         for value in [
             "plain",
             "ghp_token",
@@ -632,5 +487,15 @@ mod tests {
             let quoted = quote_env(value);
             assert_eq!(unquote_env(&quoted), value);
         }
+    }
+
+    #[test]
+    fn legacy_registry_credential_removal_is_idempotent() {
+        let dir = temp_dir("argus-public-registry-test").unwrap();
+        fs::write(dir.join("registry.env"), "ARGUS_REGISTRY_TOKEN=secret\n").unwrap();
+        remove_legacy_registry_credentials(&dir).unwrap();
+        remove_legacy_registry_credentials(&dir).unwrap();
+        assert!(!dir.join("registry.env").exists());
+        fs::remove_dir_all(dir).unwrap();
     }
 }

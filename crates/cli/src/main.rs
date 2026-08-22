@@ -27,7 +27,6 @@ const FIRST_SERVER_UPDATE: &str = include_str!("../../../scripts/update-first-te
 const INTERRUPTED_UPDATE_RECOVERY: &str =
     include_str!("../../../scripts/recover-interrupted-update.sh");
 const UNINSTALL: &str = include_str!("../../../scripts/uninstall.sh");
-const REGISTRY_LOGIN: &str = include_str!("../../../scripts/registry-login.sh");
 const UPDATE_PROGRESS_WIDTH: usize = 24;
 const UPDATE_PROGRESS_PULSE: usize = 6;
 
@@ -115,12 +114,6 @@ enum Commands {
         /// Permanently delete data, backups, logs, and Docker volumes.
         #[arg(long)]
         purge_data: bool,
-    },
-    /// Validate and store replacement GHCR credentials.
-    RegistryLogin {
-        /// GitHub username; the token is still entered securely.
-        #[arg(long)]
-        username: Option<String>,
     },
     /// Inspect or change the public web and content domains.
     Domain {
@@ -649,7 +642,7 @@ async fn run_first_server_update(target: &UpdateTarget, verbose: bool) -> Result
         run_embedded_script(
             "transactional Argus update",
             FIRST_SERVER_UPDATE,
-            &[(env_key, env_value)],
+            &[(env_key, env_value), ("ARGUS_UPDATE_VERBOSE", "1")],
         )
         .await
     } else {
@@ -681,14 +674,6 @@ async fn run_uninstall(yes: bool, purge_data: bool) -> Result<()> {
         env.push(("ARGUS_UNINSTALL_PURGE_DATA", "1"));
     }
     run_embedded_script("Argus uninstall", UNINSTALL, &env).await
-}
-
-async fn run_registry_login(username: Option<&str>) -> Result<()> {
-    let mut env = Vec::new();
-    if let Some(value) = username {
-        env.push(("ARGUS_REGISTRY_USERNAME_OVERRIDE", value));
-    }
-    run_embedded_script("Argus registry login", REGISTRY_LOGIN, &env).await
 }
 
 async fn run_repair() -> Result<()> {
@@ -862,7 +847,6 @@ async fn main() -> Result<()> {
             run_first_server_update(&target, verbose).await?
         }
         Commands::Uninstall { yes, purge_data } => run_uninstall(yes, purge_data).await?,
-        Commands::RegistryLogin { username } => run_registry_login(username.as_deref()).await?,
         Commands::Domain { command } => match command {
             DomainCommands::Show => {
                 let domains = domain::installed_domains()?;
@@ -1122,15 +1106,6 @@ mod tests {
                 purge_data: true
             }
         ));
-    }
-
-    #[test]
-    fn registry_login_accepts_a_username_without_a_token_argument() {
-        let cli = Cli::try_parse_from(["argusctl", "registry-login", "--username", "octocat"])
-            .expect("parse registry login command");
-        assert!(
-            matches!(cli.command, Commands::RegistryLogin { username: Some(value) } if value == "octocat")
-        );
     }
 
     #[test]
