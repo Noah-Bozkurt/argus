@@ -10,12 +10,15 @@ CADDY_FILE="$INSTALL_DIR/Caddyfile"
 REGISTRY_CREDENTIAL_FILE="${ARGUS_CONFIG_DIR:-/etc/argus}/registry.env"
 BACKUP_ROOT="$STATE_DIR/update-backups"
 LOCK_FILE="$STATE_DIR/update.lock"
+SOURCE_REPOSITORY="${ARGUS_SOURCE_REPOSITORY:-https://github.com/Noah-Bozkurt/argus.git}"
 COMPLETED_TRANSACTION_RETENTION=3
 SNAPSHOT_FIXED_HEADROOM_BYTES=1073741824
 TRANSACTION_FORMAT_VERSION=2
 UPDATE_RUNNER_PROTOCOL_VERSION=1
+BRANCH_UPDATE_PROTOCOL_VERSION=1
 
 DOCKER_CONFIG_DIR=""
+SOURCE_TMP=""
 TARGET_BUNDLE_CONTAINER=""
 TARGET_TMP=""
 TRANSACTION_DIR=""
@@ -26,13 +29,20 @@ ROLLBACK_IN_PROGRESS=0
 CURRENT_REVISION=""
 TARGET_REVISION=""
 TARGET_RUNNER_PROTOCOL=""
-REQUESTED_VERSION="${ARGUS_TARGET_VERSION:-main}"
+TARGET_BRANCH_PROTOCOL=""
+REQUESTED_VERSION="${ARGUS_TARGET_VERSION:-}"
+REQUESTED_BRANCH="${ARGUS_TARGET_BRANCH:-}"
+PREPARED_REVISION="${ARGUS_UPDATE_PREPARED_REVISION:-}"
 PROGRESS_PID=""
 PROGRESS_MESSAGE=""
 PROGRESS_ENABLED=0
 DELEGATED_REVISION="${ARGUS_UPDATE_DELEGATED_REVISION:-}"
 DELEGATED_RUNNER="${ARGUS_UPDATE_DELEGATED_RUNNER:-}"
 DELEGATED_RUNNER_SHA256="${ARGUS_UPDATE_DELEGATED_RUNNER_SHA256:-}"
+
+if [[ -z "$REQUESTED_VERSION" && -z "$REQUESTED_BRANCH" ]]; then
+  REQUESTED_VERSION="main"
+fi
 
 if [[ ! -t 1 && -w /dev/tty && "${TERM:-}" != "dumb" ]]; then
   PROGRESS_ENABLED=1
@@ -72,10 +82,12 @@ progress_start() {
 
 log() {
   case "$*" in
-    "resolved target revision:"*|"installing target deployment assets and native binaries"|"starting target control plane "*|"update succeeded:"*) progress_stop ;;
+    "building branch "*|"resolved target revision:"*|"installing target deployment assets and native binaries"|"starting target control plane "*|"update succeeded:"*) progress_stop ;;
   esac
   printf '[argus-update] %s\n' "$*"
   case "$*" in
+    "resolving branch "*) progress_start "Downloading branch source" ;;
+    "building branch "*) progress_start "Building branch locally" ;;
     "pre-fetching "*) [[ -n "$PROGRESS_PID" ]] || progress_start "Downloading update" ;;
     "creating consistent PostgreSQL backup") progress_start "Creating rollback backup" ;;
     "installing target deployment assets and native binaries") progress_start "Installing update" ;;
@@ -93,6 +105,9 @@ cleanup() {
   if [[ -n "$TARGET_TMP" ]]; then
     rm -rf "$TARGET_TMP"
   fi
+  if [[ -n "$SOURCE_TMP" ]]; then
+    rm -rf "$SOURCE_TMP"
+  fi
   if [[ -n "$DOCKER_CONFIG_DIR" ]]; then
     rm -rf "$DOCKER_CONFIG_DIR"
   fi
@@ -107,9 +122,28 @@ require_file() {
   [[ -f "$1" ]] || die "required installed file is missing: $1"
 }
 
+validate_update_request() {
+  if [[ -n "$REQUESTED_VERSION" && -n "$REQUESTED_BRANCH" ]]; then
+    die "ARGUS_TARGET_VERSION and ARGUS_TARGET_BRANCH cannot both be set"
+  fi
+  if [[ -z "$REQUESTED_VERSION" && -z "$REQUESTED_BRANCH" ]]; then
+    die "an update version or branch is required"
+  fi
+}
+
 validate_version_tag() {
   [[ "$1" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] \
     || die "invalid image tag/version: $1"
+}
+
+validate_branch_name() {
+  local branch="$1"
+  [[ "$branch" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$ ]] \
+    || die "invalid Git branch name: $branch"
+  [[ "$branch" != *".."* && "$branch" != *"//"* && "$branch" != */ && "$branch" != *.lock ]] \
+    || die "invalid Git branch name: $branch"
+  git check-ref-format "refs/heads/$branch" >/dev/null 2>&1 \
+    || die "invalid Git branch name: $branch"
 }
 
 validate_revision() {
@@ -167,10 +201,18 @@ delegate_to_target_runner() {
     || die "could not checksum the target update runner"
 
   log "delegating update transaction to target runner $TARGET_REVISION"
-  ARGUS_UPDATE_DELEGATED_REVISION="$TARGET_REVISION" \
-  ARGUS_UPDATE_DELEGATED_RUNNER="$runner" \
-  ARGUS_UPDATE_DELEGATED_RUNNER_SHA256="$runner_sha256" \
-    "$runner" update --version "$TARGET_REVISION" --yes --verbose
+  if [[ -n "$REQUESTED_BRANCH" ]]; then
+    ARGUS_UPDATE_DELEGATED_REVISION="$TARGET_REVISION" \
+    ARGUS_UPDATE_DELEGATED_RUNNER="$runner" \
+    ARGUS_UPDATE_DELEGATED_RUNNER_SHA256="$runner_sha256" \
+    ARGUS_UPDATE_PREPARED_REVISION="$TARGET_REVISION" \
+      "$runner" update --branch "$REQUESTED_BRANCH" --yes --verbose
+  else
+    ARGUS_UPDATE_DELEGATED_REVISION="$TARGET_REVISION" \
+    ARGUS_UPDATE_DELEGATED_RUNNER="$runner" \
+    ARGUS_UPDATE_DELEGATED_RUNNER_SHA256="$runner_sha256" \
+      "$runner" update --version "$TARGET_REVISION" --yes --verbose
+  fi
 }
 
 durable_write_text() {
@@ -290,6 +332,12 @@ image_update_runner_protocol() {
     --format '{{ index .Config.Labels "org.argus.update-runner-protocol" }}'
 }
 
+image_branch_update_protocol() {
+  local image="$1"
+  docker image inspect "$image" \
+    --format '{{ index .Config.Labels "org.argus.branch-update-protocol" }}'
+}
+
 pull_image() {
   local ref="$1" output
 
@@ -336,6 +384,21 @@ EOF
   log "current installed revision: $CURRENT_REVISION"
 }
 
+verify_target_images() {
+  local image ref revision
+  for image in argus-web argus-control-api argus-worker argus-content argus-host-tools; do
+    ref="${ARGUS_REGISTRY}/${image}:${TARGET_REVISION}"
+    docker image inspect "$ref" >/dev/null 2>&1 \
+      || die "target image is missing locally: $ref"
+    revision="$(image_revision "$ref")"
+    [[ "$revision" == "$TARGET_REVISION" ]] \
+      || die "$ref does not identify the expected revision $TARGET_REVISION"
+  done
+
+  TARGET_RUNNER_PROTOCOL="$(image_update_runner_protocol "${ARGUS_REGISTRY}/argus-host-tools:${TARGET_REVISION}")"
+  TARGET_BRANCH_PROTOCOL="$(image_branch_update_protocol "${ARGUS_REGISTRY}/argus-host-tools:${TARGET_REVISION}")"
+}
+
 pull_and_verify_target() {
   validate_version_tag "$REQUESTED_VERSION"
   local discovery_image="${ARGUS_REGISTRY}/argus-host-tools:${REQUESTED_VERSION}"
@@ -344,19 +407,91 @@ pull_and_verify_target() {
   TARGET_REVISION="$(image_revision "$discovery_image")"
   validate_revision "$TARGET_REVISION"
 
-  local image ref revision
+  local image ref
   for image in argus-web argus-control-api argus-worker argus-content argus-host-tools; do
     ref="${ARGUS_REGISTRY}/${image}:${TARGET_REVISION}"
     log "pre-fetching $ref"
     pull_image "$ref"
-    revision="$(image_revision "$ref")"
-    [[ "$revision" == "$TARGET_REVISION" ]] \
-      || die "$ref does not identify the expected revision $TARGET_REVISION"
   done
 
-  TARGET_RUNNER_PROTOCOL="$(image_update_runner_protocol "${ARGUS_REGISTRY}/argus-host-tools:${TARGET_REVISION}")"
-
+  verify_target_images
   log "resolved target revision: $TARGET_REVISION"
+}
+
+prepare_branch_target() {
+  command -v git >/dev/null || die "git is required for branch updates"
+  validate_branch_name "$REQUESTED_BRANCH"
+
+  if [[ -n "$PREPARED_REVISION" ]]; then
+    TARGET_REVISION="$PREPARED_REVISION"
+    validate_revision "$TARGET_REVISION"
+    log "using prepared branch build $TARGET_REVISION"
+    verify_target_images
+    [[ "$TARGET_BRANCH_PROTOCOL" == "$BRANCH_UPDATE_PROTOCOL_VERSION" ]] \
+      || die "branch target does not support branch update protocol $BRANCH_UPDATE_PROTOCOL_VERSION; rebase the branch onto the branch-aware updater baseline"
+    log "resolved target revision: $TARGET_REVISION"
+    return
+  fi
+
+  docker buildx version >/dev/null 2>&1 \
+    || die "Docker Buildx is required for branch updates"
+
+  SOURCE_TMP="$(mktemp -d)"
+  chmod 0700 "$SOURCE_TMP"
+  local checkout="$SOURCE_TMP/repo"
+  local askpass="$SOURCE_TMP/git-askpass"
+  local build_log="$SOURCE_TMP/build.log"
+  mkdir -p "$checkout"
+  chmod 0700 "$checkout"
+
+  cat >"$askpass" <<'EOF'
+#!/usr/bin/env sh
+case "$1" in
+  *Username*) printf '%s\n' "$ARGUS_REGISTRY_USERNAME" ;;
+  *Password*) printf '%s\n' "$ARGUS_REGISTRY_TOKEN" ;;
+  *) exit 1 ;;
+esac
+EOF
+  chmod 0700 "$askpass"
+
+  git -C "$checkout" init -q
+  git -C "$checkout" remote add origin "$SOURCE_REPOSITORY"
+  log "resolving branch '$REQUESTED_BRANCH' from $SOURCE_REPOSITORY"
+  if ! GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
+    git -C "$checkout" fetch --quiet --depth=1 origin "refs/heads/$REQUESTED_BRANCH"; then
+    die "failed to fetch branch '$REQUESTED_BRANCH'; the stored GitHub token must have read access to the Argus repository"
+  fi
+  git -C "$checkout" checkout -q --detach FETCH_HEAD
+  TARGET_REVISION="$(git -C "$checkout" rev-parse HEAD)"
+  validate_revision "$TARGET_REVISION"
+
+  require_file "$checkout/docker-bake.hcl"
+  require_file "$checkout/docker-bake.local.hcl"
+  log "building branch '$REQUESTED_BRANCH' at $TARGET_REVISION"
+  if ! (
+    cd "$checkout"
+    REGISTRY="$ARGUS_REGISTRY" RELEASE_SHA="$TARGET_REVISION" \
+      docker buildx bake -f docker-bake.hcl -f docker-bake.local.hcl --load \
+      >"$build_log" 2>&1
+  ); then
+    progress_stop
+    cat "$build_log" >&2 || true
+    die "failed to build branch '$REQUESTED_BRANCH'"
+  fi
+  progress_stop
+
+  verify_target_images
+  [[ "$TARGET_BRANCH_PROTOCOL" == "$BRANCH_UPDATE_PROTOCOL_VERSION" ]] \
+    || die "branch target does not support branch update protocol $BRANCH_UPDATE_PROTOCOL_VERSION; rebase the branch onto the branch-aware updater baseline"
+  log "resolved target revision: $TARGET_REVISION"
+}
+
+prepare_update_target() {
+  if [[ -n "$REQUESTED_BRANCH" ]]; then
+    prepare_branch_target
+  else
+    pull_and_verify_target
+  fi
 }
 
 prepare_target_bundle() {
@@ -387,23 +522,42 @@ prepare_target_bundle() {
   TARGET_BUNDLE_CONTAINER=""
 }
 
-set_env_version() {
-  local path="$1" revision="$2" tmp
+set_env_value() {
+  local path="$1" key="$2" value="$3" tmp
   tmp="$(mktemp "${path}.XXXXXX")"
-  awk -v revision="$revision" '
-    BEGIN { replaced = 0 }
-    /^ARGUS_VERSION=/ {
-      print "ARGUS_VERSION=" revision
+  awk -v key="$key" -v value="$value" '
+    BEGIN { replaced = 0; prefix = key "=" }
+    index($0, prefix) == 1 {
+      print prefix value
       replaced = 1
       next
     }
     { print }
     END {
-      if (!replaced) print "ARGUS_VERSION=" revision
+      if (!replaced) print prefix value
     }
   ' "$path" >"$tmp"
   chmod 0600 "$tmp"
   mv "$tmp" "$path"
+}
+
+set_env_version() {
+  set_env_value "$1" ARGUS_VERSION "$2"
+}
+
+set_env_update_branch() {
+  set_env_value "$1" ARGUS_UPDATE_BRANCH "$2"
+}
+
+apply_update_source_to_env() {
+  if [[ -n "$REQUESTED_BRANCH" ]]; then
+    set_env_update_branch "$ENV_FILE" "$REQUESTED_BRANCH"
+    ARGUS_UPDATE_BRANCH="$REQUESTED_BRANCH"
+  else
+    set_env_update_branch "$ENV_FILE" ""
+    ARGUS_UPDATE_BRANCH=""
+  fi
+  export ARGUS_UPDATE_BRANCH
 }
 
 normalize_installed_version() {
@@ -618,6 +772,7 @@ install_target_files() {
   install -m 0644 "$TARGET_TMP/argus-helper.service" /etc/systemd/system/argus-helper.service
   render_target_caddyfile
   set_env_version "$ENV_FILE" "$TARGET_REVISION"
+  apply_update_source_to_env
   ARGUS_VERSION="$TARGET_REVISION"
   export ARGUS_VERSION
   systemctl daemon-reload
@@ -834,6 +989,7 @@ main() {
   require_root
   validate_acceptance_failure_hook
   validate_delegated_runner
+  validate_update_request
   require_file "$ENV_FILE"
   require_file "$COMPOSE_FILE"
   require_file "$CADDY_FILE"
@@ -867,9 +1023,10 @@ main() {
   /usr/local/bin/argusctl smoke
 
   prune_completed_transactions
-  pull_and_verify_target
+  prepare_update_target
   if [[ "$TARGET_REVISION" == "$CURRENT_REVISION" ]]; then
     normalize_installed_version
+    apply_update_source_to_env
     log "already running requested revision $CURRENT_REVISION"
     return
   fi
@@ -877,12 +1034,22 @@ main() {
   [[ "$TARGET_RUNNER_PROTOCOL" == "$UPDATE_RUNNER_PROTOCOL_VERSION" ]] \
     || die "target host tools do not support update runner protocol $UPDATE_RUNNER_PROTOCOL_VERSION"
 
+  if [[ -n "$REQUESTED_BRANCH" ]]; then
+    [[ "$TARGET_BRANCH_PROTOCOL" == "$BRANCH_UPDATE_PROTOCOL_VERSION" ]] \
+      || die "target host tools do not support branch update protocol $BRANCH_UPDATE_PROTOCOL_VERSION"
+  fi
+
   prepare_target_bundle
   if [[ -n "$DELEGATED_REVISION" ]]; then
-    [[ "$REQUESTED_VERSION" == "$DELEGATED_REVISION" ]] \
-      || die "target update runner was invoked for an unexpected version"
     [[ "$TARGET_REVISION" == "$DELEGATED_REVISION" ]] \
       || die "target update runner revision does not match the verified image set"
+    if [[ -n "$REQUESTED_VERSION" ]]; then
+      [[ "$REQUESTED_VERSION" == "$DELEGATED_REVISION" ]] \
+        || die "target update runner was invoked for an unexpected version"
+    else
+      [[ "$PREPARED_REVISION" == "$DELEGATED_REVISION" ]] \
+        || die "target branch update runner did not receive the prepared revision"
+    fi
     log "target update runner accepted revision $TARGET_REVISION"
     normalize_installed_version
   else
@@ -899,6 +1066,7 @@ TRANSACTION_FORMAT=${TRANSACTION_FORMAT_VERSION}
 FROM_REVISION=${CURRENT_REVISION}
 TO_REVISION=${TARGET_REVISION}
 REQUESTED_VERSION=${REQUESTED_VERSION}
+REQUESTED_BRANCH=${REQUESTED_BRANCH}
 STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
   chmod 0600 "$TRANSACTION_DIR/metadata.env"
@@ -921,6 +1089,9 @@ EOF
   ROLLBACK_READY=0
   write_transaction_result SUCCEEDED
   log "update succeeded: $CURRENT_REVISION -> $TARGET_REVISION"
+  if [[ -n "$REQUESTED_BRANCH" ]]; then
+    log "tracking branch '$REQUESTED_BRANCH' for future updates"
+  fi
   log "rollback snapshot retained at $TRANSACTION_DIR"
   prune_completed_transactions
 }

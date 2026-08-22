@@ -18,6 +18,9 @@ use uuid::Uuid;
 
 mod doctor;
 mod logs;
+mod update_source;
+
+use update_source::UpdateTarget;
 
 const FIRST_SERVER_SMOKE: &str = include_str!("../../../scripts/first-server-smoke.sh");
 const FIRST_SERVER_UPDATE: &str = include_str!("../../../scripts/update-first-test.sh");
@@ -87,11 +90,14 @@ enum Commands {
     #[command(hide = true)]
     /// Run the full installed control-plane smoke test.
     Smoke,
-    /// Transactionally update Argus to a release tag or immutable revision.
+    /// Transactionally update Argus from the registry or directly from a Git branch.
     Update {
-        /// Release tag or full 40-character Git revision.
-        #[arg(long, default_value = "main")]
-        version: String,
+        /// Release tag or full 40-character Git revision. Using this switches back to registry updates.
+        #[arg(long, conflicts_with = "branch")]
+        version: Option<String>,
+        /// Git branch to clone, build locally, deploy transactionally, and remember for future updates.
+        #[arg(long, conflicts_with = "version")]
+        branch: Option<String>,
         /// Show complete, secret-safe update diagnostics.
         #[arg(long, short = 'v')]
         verbose: bool,
@@ -187,9 +193,9 @@ impl UpdateUi {
         }
     }
 
-    fn begin(&self, requested: &str) {
+    fn begin(&self, target: &UpdateTarget) {
         println!("{}", self.paint("1;36", "Argus update"));
-        self.detail(&format!("Requested version: {requested}"));
+        self.detail(&format!("Source: {}", target.display()));
         println!();
     }
 
@@ -241,6 +247,18 @@ impl UpdateUi {
             }
             return;
         }
+        if line.starts_with("[argus-update] resolving branch '") {
+            self.step("Fetching branch source");
+            return;
+        }
+        if line.starts_with("[argus-update] building branch '") {
+            self.step("Building update locally");
+            return;
+        }
+        if line.starts_with("[argus-update] using prepared branch build ") {
+            self.step("Using verified local branch build");
+            return;
+        }
         if line.starts_with("[argus-update] resolving target '") {
             self.step("Checking for updates");
             return;
@@ -254,7 +272,7 @@ impl UpdateUi {
         }
         if let Some(revision) = line.strip_prefix("[argus-update] resolved target revision: ") {
             self.success(&format!(
-                "Update downloaded ({})",
+                "Update ready ({})",
                 Self::short_revision(revision)
             ));
             return;
@@ -402,7 +420,7 @@ async fn run_embedded_script(name: &str, script: &str, env: &[(&str, &str)]) -> 
     stdin
         .write_all(script.as_bytes())
         .await
-        .with_context(|| format!("write {name}"))?;
+        .with_context(|| format!("write {name} stdin"))?;
     drop(stdin);
 
     let status = child
@@ -415,15 +433,16 @@ async fn run_embedded_script(name: &str, script: &str, env: &[(&str, &str)]) -> 
     Ok(())
 }
 
-async fn run_concise_update_script(version: &str) -> Result<()> {
+async fn run_concise_update_script(target: &UpdateTarget) -> Result<()> {
     let name = "transactional Argus update";
+    let (env_key, env_value) = target.env_pair();
     let mut command = Command::new("bash");
     command
         .arg("-s")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .env("ARGUS_TARGET_VERSION", version);
+        .env(env_key, env_value);
 
     let mut child = command.spawn().with_context(|| format!("start {name}"))?;
     let mut stdin = child
@@ -433,7 +452,7 @@ async fn run_concise_update_script(version: &str) -> Result<()> {
     stdin
         .write_all(FIRST_SERVER_UPDATE.as_bytes())
         .await
-        .with_context(|| format!("write {name}"))?;
+        .with_context(|| format!("write {name} stdin"))?;
     drop(stdin);
 
     let stdout = child
@@ -449,7 +468,7 @@ async fn run_concise_update_script(version: &str) -> Result<()> {
     let mut stdout_open = true;
     let mut stderr_open = true;
     let mut ui = UpdateUi::new();
-    ui.begin(version);
+    ui.begin(target);
 
     while stdout_open || stderr_open {
         tokio::select! {
@@ -493,19 +512,20 @@ async fn run_update_recovery(retry_failed: bool) -> Result<()> {
     .await
 }
 
-async fn run_first_server_update(version: &str, verbose: bool) -> Result<()> {
+async fn run_first_server_update(target: &UpdateTarget, verbose: bool) -> Result<()> {
     if std::env::var_os("ARGUS_UPDATE_DELEGATED_REVISION").is_none() {
         run_update_recovery(false).await?;
     }
     if verbose {
+        let (env_key, env_value) = target.env_pair();
         run_embedded_script(
             "transactional Argus update",
             FIRST_SERVER_UPDATE,
-            &[("ARGUS_TARGET_VERSION", version)],
+            &[(env_key, env_value)],
         )
         .await
     } else {
-        run_concise_update_script(version).await
+        run_concise_update_script(target).await
     }
 }
 
@@ -699,16 +719,19 @@ async fn main() -> Result<()> {
         Commands::Smoke => run_first_server_smoke().await?,
         Commands::Update {
             version,
+            branch,
             verbose,
             yes,
         } => {
+            let target = update_source::resolve(version, branch)?;
             confirm_action(
                 &format!(
-                    "Argus will create a rollback snapshot and update this host to '{version}'."
+                    "Argus will create a rollback snapshot and update this host from {}.",
+                    target.display()
                 ),
                 yes,
             )?;
-            run_first_server_update(&version, verbose).await?
+            run_first_server_update(&target, verbose).await?
         }
         Commands::Uninstall { yes, purge_data } => run_uninstall(yes, purge_data).await?,
         Commands::RegistryLogin { username } => run_registry_login(username.as_deref()).await?,
@@ -813,13 +836,17 @@ mod tests {
     use clap::CommandFactory;
 
     #[test]
-    fn update_defaults_to_main_discovery_tag() {
+    fn update_without_selector_defers_to_saved_source() {
         let cli = Cli::try_parse_from(["argusctl", "update"]).expect("parse update command");
         match cli.command {
             Commands::Update {
-                version, verbose, ..
+                version,
+                branch,
+                verbose,
+                ..
             } => {
-                assert_eq!(version, "main");
+                assert_eq!(version, None);
+                assert_eq!(branch, None);
                 assert!(!verbose);
             }
             _ => panic!("expected update command"),
@@ -833,13 +860,46 @@ mod tests {
             .expect("parse pinned update command");
         match cli.command {
             Commands::Update {
-                version, verbose, ..
+                version,
+                branch,
+                verbose,
+                ..
             } => {
-                assert_eq!(version, revision);
+                assert_eq!(version.as_deref(), Some(revision));
+                assert!(branch.is_none());
                 assert!(!verbose);
             }
             _ => panic!("expected update command"),
         }
+    }
+
+    #[test]
+    fn update_accepts_branch_selector() {
+        let cli = Cli::try_parse_from(["argusctl", "update", "--branch", "design/saasframe"])
+            .expect("parse branch update command");
+        assert!(matches!(
+            cli.command,
+            Commands::Update {
+                branch: Some(value),
+                version: None,
+                ..
+            } if value == "design/saasframe"
+        ));
+    }
+
+    #[test]
+    fn update_rejects_branch_and_version_together() {
+        assert!(
+            Cli::try_parse_from([
+                "argusctl",
+                "update",
+                "--branch",
+                "design/saasframe",
+                "--version",
+                "main",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
