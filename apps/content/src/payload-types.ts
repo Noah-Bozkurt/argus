@@ -139,14 +139,14 @@ export interface WorkspaceUser {
   id: string;
   displayName: string;
   /**
-   * Argus organization UUID. This is the tenant boundary for content data.
+   * Argus organization UUID. This is the tenant boundary for application and content data.
    */
   organizationId: string;
   /**
-   * Optional link to the Argus control-plane user UUID.
+   * Control-plane user UUID. Required for operator access; client-only accounts may leave this empty.
    */
   argusUserId?: string | null;
-  role: 'admin' | 'member';
+  role: 'owner' | 'admin' | 'member' | 'client';
   updatedAt: string;
   createdAt: string;
   email: string;
