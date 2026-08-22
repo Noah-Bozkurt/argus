@@ -193,9 +193,9 @@ pub(crate) async fn run(offline: bool) -> DoctorReport {
         }
     }
 
-    for (label, service) in [
-        ("Agent service", "argus-agent.service"),
-        ("Helper service", "argus-helper.service"),
+    for (label, service, logs) in [
+        ("Agent service", "argus-agent.service", "argusctl logs agent"),
+        ("Helper service", "argus-helper.service", "argusctl logs helper"),
     ] {
         if service_active(service) {
             report.push_ok(label, "active");
@@ -203,7 +203,7 @@ pub(crate) async fn run(offline: bool) -> DoctorReport {
             report.push_failed(
                 label,
                 "not active",
-                format!("inspect journalctl -u {service}; then run sudo argusctl repair"),
+                format!("inspect {logs}; then run sudo argusctl repair"),
             );
         }
     }
@@ -218,7 +218,7 @@ pub(crate) async fn run(offline: bool) -> DoctorReport {
                     report.push_failed(
                         "Helper socket",
                         format!("{} is not reachable", config.helper_socket.display()),
-                        "inspect the Helper service and run sudo argusctl repair",
+                        "inspect argusctl logs helper and run sudo argusctl repair",
                     );
                 }
                 if offline {
@@ -290,7 +290,7 @@ pub(crate) async fn run(offline: bool) -> DoctorReport {
                         report.push_failed(
                             "Control-plane containers",
                             "one or more containers are unhealthy or stopped",
-                            "run docker compose ps and sudo argusctl repair",
+                            "inspect argusctl logs control-plane; then run sudo argusctl repair",
                         );
                     } else {
                         report.push_ok("Control-plane containers", "running");
@@ -299,7 +299,7 @@ pub(crate) async fn run(offline: bool) -> DoctorReport {
                 _ => report.push_failed(
                     "Control-plane containers",
                     "Compose status is unavailable",
-                    "check Docker, then run sudo argusctl repair",
+                    "check Docker, inspect argusctl logs control-plane, then run sudo argusctl repair",
                 ),
             }
         } else {
@@ -371,7 +371,7 @@ pub(crate) async fn run(offline: bool) -> DoctorReport {
                             Some(code) => report.push_failed(
                                 label,
                                 format!("{value} returned HTTP {code}"),
-                                "inspect Caddy logs and DNS configuration",
+                                "inspect argusctl logs caddy and DNS configuration",
                             ),
                             None => report.push_failed(
                                 label,
@@ -381,7 +381,7 @@ pub(crate) async fn run(offline: bool) -> DoctorReport {
                                 if tls_error.is_some() {
                                     "wait until the listed retry time; reinstalling cannot bypass the CA limit"
                                 } else {
-                                    "inspect DNS, firewall access, and Caddy certificate logs"
+                                    "inspect DNS, firewall access, and argusctl logs caddy"
                                 },
                             ),
                         },
