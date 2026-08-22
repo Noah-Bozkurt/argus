@@ -17,6 +17,7 @@ use tokio::{
 use uuid::Uuid;
 
 mod doctor;
+mod logs;
 
 const FIRST_SERVER_SMOKE: &str = include_str!("../../../scripts/first-server-smoke.sh");
 const FIRST_SERVER_UPDATE: &str = include_str!("../../../scripts/update-first-test.sh");
@@ -62,10 +63,28 @@ enum Commands {
     Credentials,
     /// Show local service and enrollment state.
     Status,
+    /// View secret-safe Argus runtime and lifecycle logs.
+    Logs {
+        /// Log source. Omit to automatically show the relevant runtime logs for this host.
+        #[arg(value_enum)]
+        target: Option<logs::LogTarget>,
+        /// Number of recent lines to show per source.
+        #[arg(long, default_value_t = 200)]
+        tail: u32,
+        /// Continue following new log output.
+        #[arg(long, short = 'f')]
+        follow: bool,
+        /// Only show entries since a journald/Compose time such as 1h or 2026-08-22T08:00:00.
+        #[arg(long)]
+        since: Option<String>,
+    },
+    #[command(hide = true)]
     /// Check native services, the helper socket, and host collection.
     Health,
+    #[command(hide = true)]
     /// Verify the Agent can authenticate with its control plane.
     Connection,
+    #[command(hide = true)]
     /// Run the full installed control-plane smoke test.
     Smoke,
     /// Transactionally update Argus to a release tag or immutable revision.
@@ -605,6 +624,17 @@ async fn main() -> Result<()> {
                 println!("Helper socket: {}", config.helper_socket.display());
             }
         }
+        Commands::Logs {
+            target,
+            tail,
+            follow,
+            since,
+        } => {
+            if cli.json {
+                anyhow::bail!("--json is not supported for streaming logs");
+            }
+            logs::run(target, tail, follow, since.as_deref()).await?;
+        }
         Commands::Health => {
             let config = load(&cli.config).await?;
             let agent = service_state("argus-agent.service").await;
@@ -780,6 +810,7 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
 
     #[test]
     fn update_defaults_to_main_discovery_tag() {
@@ -819,6 +850,52 @@ mod tests {
             cli.command,
             Commands::Update { verbose: true, .. }
         ));
+    }
+
+    #[test]
+    fn logs_accept_target_follow_tail_and_since() {
+        let cli = Cli::try_parse_from([
+            "argusctl",
+            "logs",
+            "control-plane",
+            "--tail",
+            "500",
+            "--follow",
+            "--since",
+            "1h",
+        ])
+        .expect("parse logs command");
+        assert!(matches!(
+            cli.command,
+            Commands::Logs {
+                target: Some(logs::LogTarget::ControlPlane),
+                tail: 500,
+                follow: true,
+                since: Some(value),
+            } if value == "1h"
+        ));
+    }
+
+    #[test]
+    fn compatibility_diagnostics_remain_parseable_but_hidden_from_help() {
+        for name in ["health", "connection", "smoke"] {
+            Cli::try_parse_from(["argusctl", name]).expect("parse compatibility command");
+        }
+        let mut command = Cli::command();
+        let mut buffer = Vec::new();
+        command
+            .write_long_help(&mut buffer)
+            .expect("render argusctl help");
+        let help = String::from_utf8(buffer).expect("help is UTF-8");
+        assert!(help.lines().any(|line| line.trim_start().starts_with("logs ")));
+        for hidden in ["health", "connection", "smoke"] {
+            assert!(
+                !help
+                    .lines()
+                    .any(|line| line.trim_start().starts_with(&format!("{hidden} "))),
+                "{hidden} should not be promoted in top-level help"
+            );
+        }
     }
 
     #[test]
