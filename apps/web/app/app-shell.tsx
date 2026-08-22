@@ -9,17 +9,22 @@ import LucideIcon, { type LucideIconName } from './lucide-icons'
 import NotificationIndicator from './notification-indicator'
 
 type NavItem = { label: string; href: string; icon: LucideIconName }
+type NavSection = { label: string; items: NavItem[] }
 
-const workspaceNav: NavItem[] = [
-  { label: 'Overview', href: '/', icon: 'overview' },
-  { label: 'Projects', href: '/projects', icon: 'projects' },
-]
-
-const operationsNav: NavItem[] = [
-  { label: 'Servers', href: '/infrastructure/servers', icon: 'servers' },
-  { label: 'Jobs', href: '/jobs', icon: 'jobs' },
-  { label: 'Notifications', href: '/notifications', icon: 'notifications' },
-  { label: 'System', href: '/system', icon: 'system' },
+const navigation: NavSection[] = [
+  { label: 'Workspace', items: [
+    { label: 'Overview', href: '/', icon: 'overview' },
+    { label: 'Projects', href: '/projects', icon: 'projects' },
+  ] },
+  { label: 'Infrastructure', items: [
+    { label: 'Servers', href: '/infrastructure/servers', icon: 'servers' },
+  ] },
+  { label: 'Operations', items: [
+    { label: 'Operations', href: '/jobs', icon: 'jobs' },
+  ] },
+  { label: 'Manage', items: [
+    { label: 'System', href: '/system', icon: 'system' },
+  ] },
 ]
 
 function titleFromPath(pathname: string): string {
@@ -27,6 +32,7 @@ function titleFromPath(pathname: string): string {
   const parts = pathname.split('/').filter(Boolean)
   if (parts[0] === 'projects' && parts.length > 1) return 'Project workspace'
   if (parts[0] === 'infrastructure' && parts[1] === 'servers' && parts.length > 2) return 'Server details'
+  if (parts[0] === 'jobs') return 'Operations'
   return parts.at(-1)?.replaceAll('-', ' ').replace(/^./, (value) => value.toUpperCase()) ?? 'Argus'
 }
 
@@ -63,14 +69,12 @@ export default function AppShell({ children, user }: { children: ReactNode; user
         </Link>
 
         <nav className="sidebar-nav" aria-label="Primary navigation">
-          <div className="nav-section">
-            <div className="nav-group">Workspace</div>
-            {workspaceNav.map((item) => <NavLink key={item.href} item={item} pathname={pathname} />)}
-          </div>
-          <div className="nav-section">
-            <div className="nav-group">Manage</div>
-            {operationsNav.map((item) => <NavLink key={item.href} item={item} pathname={pathname} />)}
-          </div>
+          {navigation.map((section) => (
+            <div className="nav-section" key={section.label}>
+              <div className="nav-group">{section.label}</div>
+              {section.items.map((item) => <NavLink key={item.href} item={item} pathname={pathname} />)}
+            </div>
+          ))}
         </nav>
 
         <div className="sidebar-footer">
@@ -97,12 +101,20 @@ export default function AppShell({ children, user }: { children: ReactNode; user
           </div>
           <div className="topbar-actions">
             <CommandPalette />
-            <span className="control-status"><span className="status-dot online" />Control plane online</span>
-            <Link className="icon-button notification-button" href="/notifications" aria-label="Notifications"><LucideIcon name="notifications" /><NotificationIndicator /></Link>
-            <form className="mobile-signout" action="/auth/logout" method="post">
-              <button className="icon-button" type="submit" aria-label="Sign out" title="Sign out"><LucideIcon name="logout" /></button>
-            </form>
-            <div className="topbar-avatar avatar" title={user?.email ?? 'Argus account'}>{userInitial(user)}</div>
+            <Link className="icon-button notification-button" href="/notifications" aria-label="Notifications">
+              <LucideIcon name="notifications" />
+              <NotificationIndicator />
+            </Link>
+            <details className="account-menu">
+              <summary className="topbar-avatar avatar" aria-label="Account menu">{userInitial(user)}</summary>
+              <div className="account-popover">
+                {user ? <div className="account-popover-user"><strong>{user.displayName || user.email}</strong><span>{user.email}</span><small>{user.role}</small></div> : null}
+                <Link href="/system"><LucideIcon name="system" /><span>System</span></Link>
+                <form action="/auth/logout" method="post">
+                  <button type="submit"><LucideIcon name="logout" /><span>Sign out</span></button>
+                </form>
+              </div>
+            </details>
           </div>
         </header>
         <div className="page-frame">{children}</div>
