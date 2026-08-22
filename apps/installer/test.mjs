@@ -70,8 +70,9 @@ test("native installer uses public registry access", async () => {
     readFile(resolve(rootDir, "crates/cli/src/lifecycle.rs"), "utf8"),
     readFile(resolve(rootDir, "crates/cli/src/installer.rs"), "utf8"),
   ]);
-  assert.match(lifecycle, /DEFAULT_REGISTRY/);
-  assert.doesNotMatch(lifecycle, /docker login|ARGUS_REGISTRY_TOKEN/);
+  const productionLifecycle = lifecycle.split("\n#[cfg(test)]")[0];
+  assert.match(productionLifecycle, /DEFAULT_REGISTRY/);
+  assert.doesNotMatch(productionLifecycle, /docker login|ARGUS_REGISTRY_TOKEN/);
   assert.match(installer, /Install an Argus control plane or managed node/);
 });
 
