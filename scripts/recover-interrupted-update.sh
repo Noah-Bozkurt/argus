@@ -50,6 +50,18 @@ durable_write_text() {
   sync -f "$(dirname "$path")"
 }
 
+atomic_install_file() {
+  local source="$1" target="$2" mode="$3"
+  local tmp="${target}.argus-new.$$"
+  if ! install -m "$mode" "$source" "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  sync -f "$tmp"
+  mv -f "$tmp" "$target"
+  sync -f "$(dirname "$target")"
+}
+
 write_transaction_result() {
   local transaction="$1" result="$2"
   durable_write_text "$transaction/result" "$result"
@@ -222,9 +234,9 @@ restore_installed_files() {
   cp -a "$backup/install/compose.yaml" "$COMPOSE_FILE"
   cp -a "$backup/install/Caddyfile" "$CADDY_FILE"
   cp -a "$backup/install/Caddyfile.template" "$INSTALL_DIR/Caddyfile.template"
-  cp -a "$backup/bin/argus-agent" /usr/local/bin/argus-agent
-  cp -a "$backup/bin/argus-helper" /usr/local/bin/argus-helper
-  cp -a "$backup/bin/argusctl" /usr/local/bin/argusctl
+  atomic_install_file "$backup/bin/argus-agent" /usr/local/bin/argus-agent 0755
+  atomic_install_file "$backup/bin/argus-helper" /usr/local/bin/argus-helper 0755
+  atomic_install_file "$backup/bin/argusctl" /usr/local/bin/argusctl 0755
   cp -a "$backup/systemd/argus-agent.service" /etc/systemd/system/argus-agent.service
   cp -a "$backup/systemd/argus-helper.service" /etc/systemd/system/argus-helper.service
   chmod 0600 "$ENV_FILE"
