@@ -533,7 +533,8 @@ arm_target_start() {
 }
 
 render_target_caddyfile() {
-  local hash rendered_caddyfile tls_mode acme_email
+  local hash rendered_caddyfile tls_mode acme_email tls_dir
+  local -a caddy_validate_mounts=()
   hash="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext "$ARGUS_BASIC_AUTH_PASSWORD")"
   rendered_caddyfile="$TARGET_TMP/Caddyfile.rendered"
   tls_mode="${ARGUS_TLS_MODE:-public-acme}"
@@ -555,6 +556,10 @@ render_target_caddyfile() {
       ' "$TARGET_TMP/Caddyfile.template" >"$rendered_caddyfile"
       ;;
     cloudflare-origin)
+      tls_dir="${ARGUS_CONFIG_DIR:-/etc/argus}/tls"
+      require_file "$tls_dir/origin.crt"
+      require_file "$tls_dir/origin.key"
+      caddy_validate_mounts=(-v "$tls_dir:/etc/caddy/argus-tls:ro")
       awk '
         $0 == "__ARGUS_GLOBAL_OPTIONS__" { next }
         $0 == "__ARGUS_TLS__" {
@@ -580,6 +585,7 @@ render_target_caddyfile() {
 
   docker run --rm \
     -v "$rendered_caddyfile:/etc/caddy/Caddyfile:ro" \
+    "${caddy_validate_mounts[@]}" \
     caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile >/dev/null
 
   # Copy the already-rendered content over the existing file. Unlike sed -i,
