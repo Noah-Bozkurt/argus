@@ -19,10 +19,20 @@ concurrency:
 
 jobs:
   build-immutable-release:
+    name: Build immutable ${{ matrix.target }} image
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main'
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - web
+          - content
+          - control-api
+          - worker
+          - host-tools
     runs-on: [self-hosted, linux, x64, argus]
     steps:
       - name: Check out release-gated revision
@@ -30,25 +40,34 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Set up Docker Buildx once
+      - name: Prepare Docker access
+        run: bash scripts/ci-prepare-docker.sh
+
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Sign in to GHCR once
+      - name: Sign in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push complete immutable release
+      - name: Build and push ${{ matrix.target }}
         env:
           RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: docker buildx bake --push
+        run: docker buildx bake --push ${{ matrix.target }}
 
   verify-immutable-release:
     needs: build-immutable-release
     runs-on: [self-hosted, linux, x64, argus]
     steps:
+      - name: Check out tested revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Prepare Docker access
+        run: bash scripts/ci-prepare-docker.sh
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Sign in to GHCR
@@ -80,6 +99,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Prepare Docker access
+        run: bash scripts/ci-prepare-docker.sh
 
       - name: Sign in to GHCR
         uses: docker/login-action@v3
@@ -134,6 +156,12 @@ jobs:
       - deploy-installer-pages
     runs-on: [self-hosted, linux, x64, argus]
     steps:
+      - name: Check out tested revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Prepare Docker access
+        run: bash scripts/ci-prepare-docker.sh
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Sign in to GHCR
