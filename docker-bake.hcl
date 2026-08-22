@@ -24,8 +24,8 @@ target "web" {
     "org.opencontainers.image.revision" = RELEASE_SHA
     "org.opencontainers.image.version" = RELEASE_SHA
   }
-  cache-from = ["type=gha,scope=argus-web"]
-  cache-to = ["type=gha,mode=max,scope=argus-web"]
+  cache-from = ["type=registry,ref=${REGISTRY}/argus-web:buildcache"]
+  cache-to = ["type=registry,ref=${REGISTRY}/argus-web:buildcache,mode=max"]
 }
 
 target "content" {
@@ -38,8 +38,8 @@ target "content" {
     "org.opencontainers.image.revision" = RELEASE_SHA
     "org.opencontainers.image.version" = RELEASE_SHA
   }
-  cache-from = ["type=gha,scope=argus-content"]
-  cache-to = ["type=gha,mode=max,scope=argus-content"]
+  cache-from = ["type=registry,ref=${REGISTRY}/argus-content:buildcache"]
+  cache-to = ["type=registry,ref=${REGISTRY}/argus-content:buildcache,mode=max"]
 }
 
 target "control-api" {
@@ -52,8 +52,8 @@ target "control-api" {
     "org.opencontainers.image.revision" = RELEASE_SHA
     "org.opencontainers.image.version" = RELEASE_SHA
   }
-  cache-from = ["type=gha,scope=argus-control-api"]
-  cache-to = ["type=gha,mode=max,scope=argus-control-api"]
+  cache-from = ["type=registry,ref=${REGISTRY}/argus-control-api:buildcache"]
+  cache-to = ["type=registry,ref=${REGISTRY}/argus-control-api:buildcache,mode=max"]
 }
 
 target "worker" {
@@ -66,8 +66,8 @@ target "worker" {
     "org.opencontainers.image.revision" = RELEASE_SHA
     "org.opencontainers.image.version" = RELEASE_SHA
   }
-  cache-from = ["type=gha,scope=argus-worker"]
-  cache-to = ["type=gha,mode=max,scope=argus-worker"]
+  cache-from = ["type=registry,ref=${REGISTRY}/argus-worker:buildcache"]
+  cache-to = ["type=registry,ref=${REGISTRY}/argus-worker:buildcache,mode=max"]
 }
 
 target "host-tools" {
@@ -82,6 +82,6 @@ target "host-tools" {
     "org.argus.update-runner-protocol" = "1"
     "org.argus.branch-update-protocol" = "1"
   }
-  cache-from = ["type=gha,scope=argus-host-tools"]
-  cache-to = ["type=gha,mode=max,scope=argus-host-tools"]
+  cache-from = ["type=registry,ref=${REGISTRY}/argus-host-tools:buildcache"]
+  cache-to = ["type=registry,ref=${REGISTRY}/argus-host-tools:buildcache,mode=max"]
 }
