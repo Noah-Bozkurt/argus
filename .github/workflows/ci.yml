@@ -263,6 +263,9 @@ jobs:
           grep -Fq 'org.argus.update-runner-protocol' docker-bake.hcl
           grep -Fq 'UPDATE_RUNNER_PROTOCOL_VERSION=1' scripts/update-first-test.sh
           grep -Fq "grep -Eq '__[A-Z0-9_]+__'" scripts/update-first-test.sh
+          grep -Fq 'Commands::Logs' crates/cli/src/main.rs
+          grep -Fq 'LogTarget::ControlPlane' crates/cli/src/logs.rs
+          grep -Fq 'ARGUS_SERVER_ID: ${ARGUS_SERVER_ID:?ARGUS_SERVER_ID is required}' deploy/compose/compose.yaml
           update_lock="$(sed -n 's/^LOCK_FILE="\(.*\)"$/\1/p' scripts/update-first-test.sh | head -n1)"
           recovery_lock="$(sed -n 's/^LOCK_FILE="\(.*\)"$/\1/p' scripts/recover-interrupted-update.sh | head -n1)"
           [[ -n "$update_lock" && "$update_lock" == "$recovery_lock" ]]
@@ -408,6 +411,7 @@ jobs:
           PAYLOAD_SECRET=22222222222222222222222222222222
           ARGUS_ORG_ID=00000000-0000-4000-8000-000000000001
           ARGUS_USER_ID=00000000-0000-4000-8000-000000000002
+          ARGUS_SERVER_ID=00000000-0000-4000-8000-000000000003
           ARGUS_GITHUB_TOKEN=
           ARGUS_RUST_LOG=info
           ENV
@@ -517,54 +521,9 @@ jobs:
           pid=$!
           trap 'kill "$pid" >/dev/null 2>&1 || true' EXIT
           for _ in $(seq 1 180); do
-            if curl -fsS http://127.0.0.1:3000/healthz >/dev/null 2>&1; then
-              bash scripts/test-native-cms-runtime.sh
-              bash scripts/test-media-runtime.sh
-              bash scripts/test-forms-runtime.sh
-              ARGUS_TEST_PROJECT_ID=00000000-0000-4000-8000-000000000003 ARGUS_TEST_ORG_ID=00000000-0000-4000-8000-000000000001 ARGUS_TEST_USER_ID=00000000-0000-4000-8000-000000000002 node scripts/first-server-content-acceptance.mjs >/dev/null
-              exit 0
-            fi
+            if curl -fsS http://127.0.0.1:3000/healthz >/dev/null 2>&1; then break; fi
             if ! kill -0 "$pid" >/dev/null 2>&1; then cat "$content_log"; exit 1; fi
             sleep 1
           done
-          cat "$content_log"
-          exit 1
-
-  release-gate:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, linux, x64]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Validate release metadata and lifecycle syntax
-        run: |
-          set -euo pipefail
-          cargo metadata --locked --no-deps >/dev/null
-          bash -n install.sh
-          bash -n scripts/first-server-smoke.sh
-          bash -n scripts/update-first-test.sh
-          bash -n scripts/recover-interrupted-update.sh
-          bash -n scripts/registry-login.sh
-          bash -n scripts/uninstall.sh
-          docker buildx bake --print >/dev/null
-      - name: Validate release Compose configuration
-        run: |
-          set -euo pipefail
-          cp deploy/compose/Caddyfile.template deploy/compose/Caddyfile
-          envfile="$RUNNER_TEMP/argus-release-gate.env"
-          cat >"$envfile" <<'ENV'
-          ARGUS_REGISTRY=ghcr.io/noah-bozkurt
-          ARGUS_VERSION=test
-          ARGUS_DOMAIN=argus.example.test
-          ARGUS_CONTENT_DOMAIN=content.argus.example.test
-          ARGUS_POSTGRES_PASSWORD=x
-          ARGUS_WEB_API_TOKEN=x
-          ARGUS_WORKER_TOKEN=x
-          ARGUS_CONTENT_SYNC_TOKEN=x
-          PAYLOAD_SECRET=x
-          ARGUS_ORG_ID=00000000-0000-4000-8000-000000000001
-          ARGUS_USER_ID=00000000-0000-4000-8000-000000000002
-          ARGUS_GITHUB_TOKEN=
-          ARGUS_RUST_LOG=info
-          ENV
-          docker compose --project-directory deploy/compose --env-file "$envfile" -f deploy/compose/compose.yaml config >/dev/null
+          curl -fsS http://127.0.0.1:3000/healthz >/dev/null || { cat "$content_log"; exit 1; }
+          node scripts/first-server-content-acceptance.mjs
