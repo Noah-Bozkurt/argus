@@ -17,8 +17,8 @@ jobs:
         with:
           ref: chore/delete-pr79-branch
           fetch-depth: 0
-      - name: Delete merged branch and cleanup branch
+      - name: Delete cleanup branch
         run: |
           set -euo pipefail
-          git push origin --delete fix/project-system-runtime
+          git push origin --delete fix/project-system-runtime || true
           git push origin --delete chore/delete-pr79-branch
