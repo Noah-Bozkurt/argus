@@ -53,7 +53,7 @@ permissions:
 jobs:
   validate:
     if: github.event_name != 'push'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 35
     outputs:
       deployment: ${{ steps.filter.outputs.deployment }}
@@ -313,7 +313,7 @@ jobs:
       (needs.validate.outputs.deployment == 'true' ||
        needs.validate.outputs.acceptance == 'true' ||
        needs.validate.outputs.full == 'true')
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
