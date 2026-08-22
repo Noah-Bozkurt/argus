@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   migrate:
+    # Bootstrap on GitHub-hosted infrastructure so runner-group access cannot block this migration.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
