@@ -194,8 +194,16 @@ pub(crate) async fn run(offline: bool) -> DoctorReport {
     }
 
     for (label, service, logs) in [
-        ("Agent service", "argus-agent.service", "argusctl logs agent"),
-        ("Helper service", "argus-helper.service", "argusctl logs helper"),
+        (
+            "Agent service",
+            "argus-agent.service",
+            "argusctl logs agent",
+        ),
+        (
+            "Helper service",
+            "argus-helper.service",
+            "argusctl logs helper",
+        ),
     ] {
         if service_active(service) {
             report.push_ok(label, "active");

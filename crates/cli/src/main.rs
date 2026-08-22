@@ -887,7 +887,10 @@ mod tests {
             .write_long_help(&mut buffer)
             .expect("render argusctl help");
         let help = String::from_utf8(buffer).expect("help is UTF-8");
-        assert!(help.lines().any(|line| line.trim_start().starts_with("logs ")));
+        assert!(
+            help.lines()
+                .any(|line| line.trim_start().starts_with("logs "))
+        );
         for hidden in ["health", "connection", "smoke"] {
             assert!(
                 !help

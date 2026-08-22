@@ -1,9 +1,9 @@
-name: Format PR 79 branch
+name: Format native lifecycle branch
 
 on:
   push:
     branches:
-      - fix/project-system-runtime
+      - refactor/native-lifecycle
 
 permissions:
   contents: write
@@ -14,22 +14,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: fix/project-system-runtime
+          ref: refactor/native-lifecycle
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Format Rust sources and restore helper workflow
+      - name: Format Rust sources
+        run: cargo fmt --all
+      - name: Commit formatting when needed
         run: |
           set -euo pipefail
-          cargo fmt --all
-          git fetch origin main
-          git checkout origin/main -- .github/workflows/format-native-lifecycle.yml
           if git diff --quiet; then
             exit 0
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -- crates/cli/src .github/workflows/format-native-lifecycle.yml
-          git commit -m 'style(rust): apply cargo fmt'
-          git push origin HEAD:fix/project-system-runtime
+          git add -- crates/cli/src
+          git commit -m 'style(rust): format native lifecycle code'
+          git push origin HEAD:refactor/native-lifecycle
