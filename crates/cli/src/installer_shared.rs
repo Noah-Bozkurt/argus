@@ -18,6 +18,37 @@ use std::{
 };
 use uuid::Uuid;
 
+const PROGRESS_WIDTH: usize = 24;
+const PROGRESS_PULSE: usize = 6;
+
+fn indeterminate_bar(frame: usize) -> String {
+    let travel = PROGRESS_WIDTH - PROGRESS_PULSE;
+    let cycle = travel * 2;
+    let position = if cycle == 0 {
+        0
+    } else {
+        let phase = frame % cycle;
+        if phase <= travel {
+            phase
+        } else {
+            cycle - phase
+        }
+    };
+    let mut cells = vec!['░'; PROGRESS_WIDTH];
+    for cell in cells.iter_mut().skip(position).take(PROGRESS_PULSE) {
+        *cell = '█';
+    }
+    cells.into_iter().collect()
+}
+
+fn elapsed_label(seconds: u64) -> String {
+    if seconds >= 60 {
+        format!("{}m {:02}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{seconds}s")
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Ui {
     color: bool,
@@ -139,32 +170,34 @@ impl Ui {
         let flag = Arc::clone(&running);
         let message_owned = message.to_string();
         let color = self.color;
-        let spinner = thread::spawn(move || {
-            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-            let mut i = 0usize;
+        let progress = thread::spawn(move || {
+            let mut frame = 0usize;
             let started = std::time::Instant::now();
             while flag.load(Ordering::Relaxed) {
-                let frame = frames[i % frames.len()];
-                let prefix = if color {
-                    format!("\x1b[36m  {frame}\x1b[0m")
-                } else {
-                    format!("  {frame}")
-                };
                 let elapsed = started.elapsed().as_secs();
-                let detail = if elapsed >= 15 {
-                    format!(" · {elapsed}s · still working")
+                let bar = indeterminate_bar(frame);
+                let bar = if color {
+                    format!("\x1b[36m[{bar}]\x1b[0m")
                 } else {
-                    format!(" · {elapsed}s")
+                    format!("[{bar}]")
                 };
-                print!("\r{prefix} {message_owned}{detail}\x1b[K");
+                let activity = if elapsed >= 15 {
+                    " · still working"
+                } else {
+                    ""
+                };
+                print!(
+                    "\r\x1b[2K  {bar} {message_owned} · {}{activity}",
+                    elapsed_label(elapsed)
+                );
                 let _ = std::io::stdout().flush();
-                i += 1;
-                thread::sleep(Duration::from_millis(90));
+                frame = frame.wrapping_add(1);
+                thread::sleep(Duration::from_millis(100));
             }
         });
         let result = work();
         running.store(false, Ordering::Relaxed);
-        let _ = spinner.join();
+        let _ = progress.join();
         print!("\r\x1b[2K");
         let _ = std::io::stdout().flush();
         if result.is_ok() {
@@ -399,6 +432,25 @@ mod tests {
         assert!(redacted.contains("service failed"));
         assert!(redacted.contains("retry later"));
         assert!(!redacted.contains("secret-value"));
+    }
+
+    #[test]
+    fn installer_progress_bar_is_fixed_width_and_moves() {
+        let first = indeterminate_bar(0);
+        let later = indeterminate_bar(7);
+        assert_eq!(first.chars().count(), PROGRESS_WIDTH);
+        assert_eq!(later.chars().count(), PROGRESS_WIDTH);
+        assert_ne!(first, later);
+        assert_eq!(
+            first.chars().filter(|cell| *cell == '█').count(),
+            PROGRESS_PULSE
+        );
+    }
+
+    #[test]
+    fn installer_elapsed_time_becomes_compact_minutes() {
+        assert_eq!(elapsed_label(8), "8s");
+        assert_eq!(elapsed_label(65), "1m 05s");
     }
 
     #[test]
