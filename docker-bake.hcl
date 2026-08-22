@@ -76,6 +76,7 @@ target "host-tools" {
     "org.opencontainers.image.revision" = RELEASE_SHA
     "org.opencontainers.image.version" = RELEASE_SHA
     "org.argus.update-runner-protocol" = "1"
+    "org.argus.branch-update-protocol" = "1"
   }
   cache-from = ["type=gha,scope=argus-host-tools"]
   cache-to = ["type=gha,mode=max,scope=argus-host-tools"]
