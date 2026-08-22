@@ -27,7 +27,6 @@ function downloadLog(item: CommandHistoryItem) {
 }
 
 export default function LiveOperations({ initialServer, initialCommands }: { initialServer: ServerView; initialCommands: CommandHistoryItem[] }) {
-  const [server, setServer] = useState(initialServer)
   const [commands, setCommands] = useState(initialCommands)
   const [connection, setConnection] = useState<'live' | 'reconnecting' | 'stale'>('reconnecting')
   const [query, setQuery] = useState('')
@@ -37,8 +36,7 @@ export default function LiveOperations({ initialServer, initialCommands }: { ini
     let lastMessage = Date.now()
     const source = new EventSource(`/api/servers/${initialServer.server_id}/events`)
     source.addEventListener('snapshot', (event) => {
-      const data = JSON.parse((event as MessageEvent).data) as { server: ServerView; commands: CommandHistoryItem[] }
-      setServer(data.server)
+      const data = JSON.parse((event as MessageEvent).data) as { commands: CommandHistoryItem[] }
       setCommands(data.commands)
       lastMessage = Date.now()
       setConnection('live')
@@ -62,14 +60,8 @@ export default function LiveOperations({ initialServer, initialCommands }: { ini
   }, [commands, failedOnly, query])
 
   return <section className="detail-card live-operations" id="activity">
-    <div className="detail-card-header"><div><h2>Live operations</h2><p>Utilization and privileged command progress update without refreshing this page.</p></div><span className={`badge ${connection === 'live' ? 'success' : connection === 'stale' ? 'danger' : 'warning'}`}><span className={`status-dot ${connection === 'live' ? 'online' : connection === 'stale' ? 'danger' : 'warning'}`} />{connection}</span></div>
+    <div className="detail-card-header"><div><h2>Activity</h2><p>Command progress and captured output update without refreshing the page.</p></div><span className={`badge ${connection === 'live' ? 'success' : connection === 'stale' ? 'danger' : 'warning'}`}><span className={`status-dot ${connection === 'live' ? 'online' : connection === 'stale' ? 'danger' : 'warning'}`} />{connection}</span></div>
     <div className="detail-card-body">
-      <div className="live-metric-strip">
-        <div><span>CPU</span><strong>{server.snapshot ? `${server.snapshot.cpu_percent.toFixed(1)}%` : '—'}</strong></div>
-        <div><span>Memory</span><strong>{server.snapshot ? `${server.snapshot.ram_percent.toFixed(1)}%` : '—'}</strong></div>
-        <div><span>Disk</span><strong>{server.snapshot ? `${server.snapshot.disk_percent.toFixed(1)}%` : '—'}</strong></div>
-        <div><span>Agent</span><strong>{server.online ? 'Online' : 'Offline'}</strong></div>
-      </div>
       <div className="resource-toolbar operation-filter-bar">
         <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search operations or logs…" aria-label="Search operations and logs" />
         <button className={`resource-chip-filter${failedOnly ? ' active' : ''}`} type="button" onClick={() => setFailedOnly((value) => !value)}>Failures only</button>
