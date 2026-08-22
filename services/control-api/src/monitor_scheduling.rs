@@ -62,7 +62,7 @@ impl MonitorSchedulingStore {
     ) -> Result<Vec<MonitorSchedule>, MonitorSchedulingError> {
         self.authorize_project(organization_id, project_id).await?;
         let rows = sqlx::query(
-            "SELECT s.id AS site_id,s.name AS site_name,(c.id IS NOT NULL) AS has_monitor_config,j.id AS schedule_id,COALESCE(j.enabled,FALSE) AS enabled,COALESCE(j.interval_seconds,300) AS interval_seconds,j.next_run_at,j.last_enqueued_at,j.payload->>'actor_user_id' AS actor_user_id FROM sites s LEFT JOIN site_monitor_configs c ON c.site_id=s.id AND c.organization_id=s.organization_id AND c.project_id=s.project_id LEFT JOIN job_schedules j ON j.organization_id=s.organization_id AND j.project_id=s.project_id AND j.job_kind=$3 AND j.resource_key=s.id::text WHERE s.organization_id=$1 AND s.project_id=$2 AND s.status='ACTIVE' ORDER BY s.name,s.id",
+            "SELECT s.id AS site_id,s.name AS site_name,(c.id IS NOT NULL) AS has_monitor_config,j.id AS schedule_id,COALESCE(j.enabled,FALSE) AS enabled,COALESCE(j.interval_seconds,300) AS interval_seconds,j.next_run_at,j.last_enqueued_at,j.payload->>'actor_user_id' AS actor_user_id FROM sites s LEFT JOIN site_monitor_configs c ON c.site_id=s.id AND c.organization_id=s.organization_id AND c.project_id=s.project_id LEFT JOIN job_schedules j ON j.organization_id=s.organization_id AND j.project_id=s.project_id AND j.job_kind=$3 AND j.resource_key=s.id::text WHERE s.organization_id=$1 AND s.project_id=$2 AND s.lifecycle_status='ACTIVE' ORDER BY s.name,s.id",
         )
         .bind(organization_id)
         .bind(project_id)
@@ -101,7 +101,7 @@ impl MonitorSchedulingStore {
         self.authorize_project(identity.organization_id, project_id)
             .await?;
         let configured: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM sites s JOIN site_monitor_configs c ON c.site_id=s.id AND c.organization_id=s.organization_id AND c.project_id=s.project_id WHERE s.id=$1 AND s.organization_id=$2 AND s.project_id=$3 AND s.status='ACTIVE')",
+            "SELECT EXISTS(SELECT 1 FROM sites s JOIN site_monitor_configs c ON c.site_id=s.id AND c.organization_id=s.organization_id AND c.project_id=s.project_id WHERE s.id=$1 AND s.organization_id=$2 AND s.project_id=$3 AND s.lifecycle_status='ACTIVE')",
         )
         .bind(site_id)
         .bind(identity.organization_id)
