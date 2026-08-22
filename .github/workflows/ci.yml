@@ -53,7 +53,7 @@ permissions:
 jobs:
   validate:
     if: github.event_name != 'push'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'argus' }}
     timeout-minutes: 35
     outputs:
       deployment: ${{ steps.filter.outputs.deployment }}
@@ -314,7 +314,7 @@ jobs:
       (needs.validate.outputs.deployment == 'true' ||
        needs.validate.outputs.acceptance == 'true' ||
        needs.validate.outputs.full == 'true')
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'argus' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
