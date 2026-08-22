@@ -123,8 +123,7 @@ mod tests {
     fn empty_saved_branch_falls_back_to_main() {
         let install_dir = test_install_dir();
         fs::create_dir_all(&install_dir).expect("create install dir");
-        fs::write(install_dir.join(".env"), "ARGUS_UPDATE_BRANCH=\n")
-            .expect("write installed env");
+        fs::write(install_dir.join(".env"), "ARGUS_UPDATE_BRANCH=\n").expect("write installed env");
         assert_eq!(
             resolve_from_install_dir(None, None, &install_dir).expect("resolve default target"),
             UpdateTarget::Version("main".to_string())
