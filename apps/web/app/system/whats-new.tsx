@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import LucideIcon from '../lucide-icons'
 
 const KEY = 'argus:whats-new:last-seen:v1'
 
@@ -23,13 +24,16 @@ export default function WhatsNew({ revision }: { revision: string }) {
   if (!visible) return null
 
   return (
-    <section className="detail-card whats-new-card">
-      <div className="detail-card-header">
-        <div><h2>What&apos;s new</h2><p>Interface changes available in this Argus revision.</p></div>
-        <button className="small" type="button" onClick={() => { window.localStorage.setItem(KEY, revision); setVisible(false) }}>Got it</button>
+    <section className="system-card whats-new-card">
+      <div className="system-card-header">
+        <div className="system-heading">
+          <span className="system-heading-icon"><LucideIcon name="check-circle" className="system-icon" /></span>
+          <div><h2>What&apos;s new</h2><p>Interface changes available in this Argus revision.</p></div>
+        </div>
+        <button className="small" type="button" onClick={() => { window.localStorage.setItem(KEY, revision); setVisible(false) }}>Dismiss</button>
       </div>
-      <div className="detail-card-body">
-        <ul style={{ margin: 0, paddingLeft: 18 }}>{highlights.map((highlight) => <li key={highlight} style={{ margin: '5px 0' }}>{highlight}</li>)}</ul>
+      <div className="system-card-body">
+        <ul className="whats-new-list">{highlights.map((highlight) => <li key={highlight}>{highlight}</li>)}</ul>
       </div>
     </section>
   )
