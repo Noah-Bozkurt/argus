@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import type { ServerView } from '../../../lib/api'
+import LucideIcon from '../../lucide-icons'
 import usePersistentChoice from '../../use-persistent-choice'
 
 const FAVORITES_KEY = 'argus:favorites:v1'
@@ -63,8 +64,8 @@ export default function ServerFleet({ initialServers }: { initialServers: Server
   }, [])
 
   const online = servers.filter((server) => server.online).length
-  const unhealthy = servers.length - online
   const needsAttention = servers.filter(attention).length
+  const containers = servers.reduce((sum, server) => sum + (server.snapshot?.docker.containers.length ?? 0), 0)
 
   const visible = useMemo(() => {
     const normalized = query.trim().toLowerCase()
@@ -103,26 +104,46 @@ export default function ServerFleet({ initialServers }: { initialServers: Server
   }
 
   return <>
-    <div className="stats-grid">
-      <div className="stat-card"><div className="stat-label"><span>Total servers</span><span className="badge">Fleet</span></div><div className="stat-value">{servers.length}</div><div className="stat-meta">Registered with this workspace</div></div>
-      <div className="stat-card"><div className="stat-label"><span>Online</span><span className="status-dot online" /></div><div className="stat-value">{online}</div><div className="stat-meta">Healthy agent heartbeat</div></div>
-      <div className="stat-card"><div className="stat-label"><span>Needs attention</span><span className={`status-dot ${needsAttention ? 'warning' : 'online'}`} /></div><div className="stat-value">{needsAttention}</div><div className="stat-meta">Offline or actionable finding</div></div>
-      <div className="stat-card"><div className="stat-label"><span>Containers</span><span className="badge info">Docker</span></div><div className="stat-value">{servers.reduce((sum, server) => sum + (server.snapshot?.docker.containers.length ?? 0), 0)}</div><div className="stat-meta">Visible across snapshots</div></div>
+    <div className="stats-grid fleet-summary">
+      <div className="stat-card"><div className="stat-label"><span>Servers</span></div><div className="stat-value">{servers.length}</div><div className="stat-meta">registered nodes</div></div>
+      <div className="stat-card"><div className="stat-label"><span>Online</span><span className="status-dot online" /></div><div className="stat-value">{online}</div><div className="stat-meta">healthy heartbeats</div></div>
+      <div className="stat-card"><div className="stat-label"><span>Attention</span><span className={`status-dot ${needsAttention ? 'warning' : 'online'}`} /></div><div className="stat-value">{needsAttention}</div><div className="stat-meta">actionable nodes</div></div>
+      <div className="stat-card"><div className="stat-label"><span>Containers</span></div><div className="stat-value">{containers}</div><div className="stat-meta">visible in snapshots</div></div>
     </div>
-    <section className="panel">
-      <div className="panel-header resource-toolbar-header">
-        <div><h2>Infrastructure fleet</h2><p>{visible.length} shown · {online}/{servers.length} reporting online · {unhealthy} offline</p></div>
+
+    <section className="resource-section server-fleet-section">
+      <div className="section-bar resource-toolbar-header">
+        <div><h2>Fleet</h2><p>{visible.length} shown · live host telemetry</p></div>
         <div className="resource-toolbar">
           <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search servers…" aria-label="Search servers" />
           <select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)} aria-label="Filter server status"><option value="all">All statuses</option><option value="online">Online</option><option value="offline">Offline</option><option value="attention">Needs attention</option></select>
           <select value={sort} onChange={(event) => setSort(event.target.value as SortChoice)} aria-label="Sort servers"><option value="name">Name</option><option value="heartbeat">Latest heartbeat</option><option value="cpu">CPU usage</option><option value="disk">Disk usage</option></select>
-          <span className={`badge ${live ? 'success' : 'warning'}`}><span className={`status-dot ${live ? 'online' : 'warning'}`} />{live ? 'Live' : 'Connecting'}</span>
+          <span className={`live-state ${live ? 'online' : 'connecting'}`}><span className="status-dot" />{live ? 'Live' : 'Connecting'}</span>
         </div>
       </div>
-      {visible.length === 0 ? <div className="empty-state"><strong>No matching servers</strong>Change the search or status filter to show other nodes.</div> : <div className="table-wrap" style={{ border: 0, borderRadius: 0 }}><table className="responsive-table"><thead><tr><th>Server</th><th>Status</th><th>CPU</th><th>RAM</th><th>Disk</th><th>Services</th><th>Last heartbeat</th></tr></thead><tbody>{visible.map((server) => {
-        const pinned = favorites.includes(`server:${server.server_id}`)
-        return <tr key={server.server_id}><td><div className="resource-inline-actions"><button className={`pin-button${pinned ? ' active' : ''}`} type="button" onClick={() => toggleFavorite(server.server_id)} aria-label={pinned ? `Unpin ${server.hostname}` : `Pin ${server.hostname}`}>{pinned ? '★' : '☆'}</button><div><div className="row-title"><span className={`status-dot ${server.online ? 'online' : 'danger'}`} /><Link href={`/infrastructure/servers/${server.server_id}`}>{server.hostname}</Link>{attention(server) ? <span className="badge warning">Attention</span> : null}</div><div className="row-subtitle">{server.snapshot?.os ?? 'Unknown OS'} · <code>{server.server_id.slice(0, 12)}</code> <button className="copy-button" type="button" onClick={() => void copy(server.server_id, server.server_id)}>{copied === server.server_id ? 'Copied' : 'Copy ID'}</button></div></div></div></td><td data-label="Status"><span className={`badge ${server.online ? 'success' : 'danger'}`}>{server.online ? 'Online' : 'Offline'}</span></td><td data-label="CPU"><Utilization value={server.snapshot?.cpu_percent} /></td><td data-label="RAM"><Utilization value={server.snapshot?.ram_percent} /></td><td data-label="Disk"><Utilization value={server.snapshot?.disk_percent} /></td><td data-label="Services">{server.services.length}</td><td data-label="Heartbeat" title={server.last_heartbeat ? new Date(server.last_heartbeat).toLocaleString() : undefined}>{relativeTime(server.last_heartbeat)}</td></tr>
-      })}</tbody></table></div>}
+
+      {visible.length === 0 ? <div className="empty-state"><strong>No matching servers</strong>Change the search or status filter to show other nodes.</div> : <>
+        <div className="desktop-resource-table table-wrap server-table-wrap">
+          <table><thead><tr><th>Server</th><th>Status</th><th>CPU</th><th>Memory</th><th>Disk</th><th>Services</th><th>Heartbeat</th></tr></thead><tbody>{visible.map((server) => {
+            const pinned = favorites.includes(`server:${server.server_id}`)
+            return <tr key={server.server_id}><td><div className="resource-inline-actions"><button className={`pin-button${pinned ? ' active' : ''}`} type="button" onClick={() => toggleFavorite(server.server_id)} aria-label={pinned ? `Unpin ${server.hostname}` : `Pin ${server.hostname}`}><LucideIcon name="star" /></button><div><div className="row-title"><span className={`status-dot ${server.online ? 'online' : 'danger'}`} /><Link href={`/infrastructure/servers/${server.server_id}`}>{server.hostname}</Link>{attention(server) ? <span className="badge warning">Attention</span> : null}</div><div className="row-subtitle">{server.snapshot?.os ?? 'Unknown OS'} · <code>{server.server_id.slice(0, 12)}</code> <button className="copy-button" type="button" onClick={() => void copy(server.server_id, server.server_id)}>{copied === server.server_id ? 'Copied' : 'Copy ID'}</button></div></div></div></td><td><span className={`state-label ${server.online ? 'success' : 'danger'}`}>{server.online ? 'Online' : 'Offline'}</span></td><td><Utilization value={server.snapshot?.cpu_percent} /></td><td><Utilization value={server.snapshot?.ram_percent} /></td><td><Utilization value={server.snapshot?.disk_percent} /></td><td>{server.services.length}</td><td title={server.last_heartbeat ? new Date(server.last_heartbeat).toLocaleString() : undefined}>{relativeTime(server.last_heartbeat)}</td></tr>
+          })}</tbody></table>
+        </div>
+
+        <ul className="mobile-server-list">
+          {visible.map((server) => {
+            const pinned = favorites.includes(`server:${server.server_id}`)
+            return <li key={server.server_id}>
+              <div className="mobile-server-head">
+                <Link href={`/infrastructure/servers/${server.server_id}`}><span className={`status-dot ${server.online ? 'online' : 'danger'}`} /><strong>{server.hostname}</strong></Link>
+                <button className={`pin-button${pinned ? ' active' : ''}`} type="button" onClick={() => toggleFavorite(server.server_id)} aria-label={pinned ? `Unpin ${server.hostname}` : `Pin ${server.hostname}`}><LucideIcon name="star" /></button>
+              </div>
+              <div className="mobile-server-meta"><span>{server.snapshot?.os ?? 'Unknown OS'}</span><span>{relativeTime(server.last_heartbeat)}</span>{attention(server) ? <span className="state-label warning">Attention</span> : null}</div>
+              <div className="mobile-server-metrics"><div><span>CPU</span><strong>{server.snapshot ? `${Math.round(server.snapshot.cpu_percent)}%` : '—'}</strong></div><div><span>Memory</span><strong>{server.snapshot ? `${Math.round(server.snapshot.ram_percent)}%` : '—'}</strong></div><div><span>Disk</span><strong>{server.snapshot ? `${Math.round(server.snapshot.disk_percent)}%` : '—'}</strong></div></div>
+            </li>
+          })}
+        </ul>
+      </>}
     </section>
   </>
 }
