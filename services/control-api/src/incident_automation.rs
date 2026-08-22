@@ -70,7 +70,7 @@ impl IncidentAutomationStore {
     ) -> Result<Vec<SiteIncidentPolicyView>, IncidentAutomationError> {
         self.authorize_project(organization_id, project_id).await?;
         let rows = sqlx::query(
-            "SELECT s.id AS site_id,s.name AS site_name,(m.id IS NOT NULL) AS has_monitor_config,COALESCE(p.enabled,FALSE) AS enabled,COALESCE(p.failure_threshold,3) AS failure_threshold,COALESCE(p.severity,'MAJOR') AS severity,p.active_incident_id,i.status AS active_incident_status,p.updated_at FROM sites s LEFT JOIN site_monitor_configs m ON m.site_id=s.id AND m.organization_id=s.organization_id AND m.project_id=s.project_id LEFT JOIN site_incident_policies p ON p.site_id=s.id AND p.organization_id=s.organization_id AND p.project_id=s.project_id LEFT JOIN incidents i ON i.id=p.active_incident_id AND i.organization_id=s.organization_id AND i.project_id=s.project_id WHERE s.organization_id=$1 AND s.project_id=$2 AND s.status='ACTIVE' ORDER BY s.name,s.id",
+            "SELECT s.id AS site_id,s.name AS site_name,(m.id IS NOT NULL) AS has_monitor_config,COALESCE(p.enabled,FALSE) AS enabled,COALESCE(p.failure_threshold,3) AS failure_threshold,COALESCE(p.severity,'MAJOR') AS severity,p.active_incident_id,i.status AS active_incident_status,p.updated_at FROM sites s LEFT JOIN site_monitor_configs m ON m.site_id=s.id AND m.organization_id=s.organization_id AND m.project_id=s.project_id LEFT JOIN site_incident_policies p ON p.site_id=s.id AND p.organization_id=s.organization_id AND p.project_id=s.project_id LEFT JOIN incidents i ON i.id=p.active_incident_id AND i.organization_id=s.organization_id AND i.project_id=s.project_id WHERE s.organization_id=$1 AND s.project_id=$2 AND s.lifecycle_status='ACTIVE' ORDER BY s.name,s.id",
         )
         .bind(organization_id)
         .bind(project_id)
@@ -106,7 +106,7 @@ impl IncidentAutomationStore {
         }
         let severity = normalize_severity(&request.severity)?;
         let site_state = sqlx::query(
-            "SELECT s.id,(m.id IS NOT NULL) AS has_monitor FROM sites s LEFT JOIN site_monitor_configs m ON m.site_id=s.id AND m.organization_id=s.organization_id AND m.project_id=s.project_id WHERE s.id=$1 AND s.organization_id=$2 AND s.project_id=$3 AND s.status='ACTIVE'",
+            "SELECT s.id,(m.id IS NOT NULL) AS has_monitor FROM sites s LEFT JOIN site_monitor_configs m ON m.site_id=s.id AND m.organization_id=s.organization_id AND m.project_id=s.project_id WHERE s.id=$1 AND s.organization_id=$2 AND s.project_id=$3 AND s.lifecycle_status='ACTIVE'",
         )
         .bind(site_id)
         .bind(identity.organization_id)
