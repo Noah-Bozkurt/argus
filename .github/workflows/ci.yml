@@ -482,6 +482,42 @@ jobs:
           DATABASE_BACKUP_READY=1
           arm_target_start
           [[ "$(cat "$TRANSACTION_DIR/target-start-armed")" == "$TARGET_REVISION" ]]
+
+      - name: Test atomic replacement of a running executable
+        if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          source scripts/update-first-test.sh --internal-test-library
+          install -m 0755 /bin/sleep "$tmp/running"
+          "$tmp/running" 30 &
+          running_pid=$!
+          atomic_install_file /bin/true "$tmp/running" 0755
+          "$tmp/running"
+          kill "$running_pid"
+          wait "$running_pid" 2>/dev/null || true
+
+      - name: Test recovery atomic replacement helper
+        if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          source scripts/recover-interrupted-update.sh --internal-test-library
+          install -m 0755 /bin/sleep "$tmp/running"
+          "$tmp/running" 30 &
+          running_pid=$!
+          atomic_install_file /bin/true "$tmp/running" 0755
+          "$tmp/running"
+          kill "$running_pid"
+          wait "$running_pid" 2>/dev/null || true
+
+      - name: Test update transaction phase safety (continued)
+        if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
           export ARGUS_STATE_DIR="$tmp/recovery-state"
           export ARGUS_INSTALL_DIR="$tmp/recovery-install"
           mkdir -p "$ARGUS_STATE_DIR/update-backups" "$ARGUS_INSTALL_DIR"
