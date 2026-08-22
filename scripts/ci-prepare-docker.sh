@@ -38,6 +38,11 @@ if [[ "${1:-}" == "run" && -n "${HOSTNAME:-}" ]]; then
   done
 
   if [[ "$is_postgres" == "true" ]]; then
+    if ! runner_id="$("${docker_cmd[@]}" inspect "$HOSTNAME" --format '{{.Id}}' 2>/dev/null)" || [[ -z "$runner_id" ]]; then
+      echo "[argus-ci] Docker daemon cannot resolve runner container ${HOSTNAME}" >&2
+      exit 1
+    fi
+
     label="argus.ci.runner=${HOSTNAME}"
     mapfile -t stale < <("${docker_cmd[@]}" ps -aq --filter "label=${label}" 2>/dev/null || true)
     if (( ${#stale[@]} > 0 )); then
@@ -49,15 +54,23 @@ if [[ "${1:-}" == "run" && -n "${HOSTNAME:-}" ]]; then
     i=1
     while (( i < ${#args[@]} )); do
       if [[ "${args[$i]}" == "-p" && $((i + 1)) -lt ${#args[@]} && "${args[$((i + 1))]}" == "127.0.0.1::5432" ]]; then
-        rewritten+=("--network" "container:${HOSTNAME}")
+        rewritten+=("--network" "container:${runner_id}")
         i=$((i + 2))
         continue
       fi
       rewritten+=("${args[$i]}")
       i=$((i + 1))
     done
+
     echo "[argus-ci] starting Postgres inside runner ${HOSTNAME} network namespace" >&2
-    exec "${docker_cmd[@]}" "${rewritten[@]}"
+    if ! container_id="$("${docker_cmd[@]}" "${rewritten[@]}")"; then
+      echo "[argus-ci] failed to start runner-local Postgres" >&2
+      exit 1
+    fi
+    status="$("${docker_cmd[@]}" inspect "$container_id" --format '{{.State.Status}}/{{.HostConfig.NetworkMode}}' 2>/dev/null || true)"
+    echo "[argus-ci] Postgres container ${container_id:0:12} status=${status:-unknown}" >&2
+    printf '%s\n' "$container_id"
+    exit 0
   fi
 fi
 
