@@ -420,7 +420,7 @@ async fn run_embedded_script(name: &str, script: &str, env: &[(&str, &str)]) -> 
     stdin
         .write_all(script.as_bytes())
         .await
-        .with_context(|| format!("write {name}"))?;
+        .with_context(|| format!("write {name} stdin"))?;
     drop(stdin);
 
     let status = child
@@ -452,7 +452,7 @@ async fn run_concise_update_script(target: &UpdateTarget) -> Result<()> {
     stdin
         .write_all(FIRST_SERVER_UPDATE.as_bytes())
         .await
-        .with_context(|| format!("write {name}"))?;
+        .with_context(|| format!("write {name} stdin"))?;
     drop(stdin);
 
     let stdout = child
@@ -875,13 +875,8 @@ mod tests {
 
     #[test]
     fn update_accepts_branch_selector() {
-        let cli = Cli::try_parse_from([
-            "argusctl",
-            "update",
-            "--branch",
-            "design/saasframe",
-        ])
-        .expect("parse branch update command");
+        let cli = Cli::try_parse_from(["argusctl", "update", "--branch", "design/saasframe"])
+            .expect("parse branch update command");
         assert!(matches!(
             cli.command,
             Commands::Update {
