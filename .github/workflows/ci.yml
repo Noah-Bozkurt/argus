@@ -70,6 +70,12 @@ jobs:
         with:
           fetch-depth: 2
 
+      - name: Report runner capacity
+        run: |
+          echo "CPUs: $(nproc)"
+          free -h || true
+          df -h / || true
+
       - name: Select validation scope
         id: scope
         shell: bash
@@ -90,6 +96,7 @@ jobs:
               - 'crates/**'
               - 'services/**'
               - 'migrations/**'
+              - 'scripts/ci-rust-database-validation.sh'
               - '.github/workflows/ci.yml'
             web:
               - 'apps/web/**'
@@ -104,6 +111,7 @@ jobs:
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
+              - 'scripts/ci-content-runtime-validation.sh'
               - '.github/workflows/ci.yml'
             installer:
               - 'install.sh'
@@ -135,6 +143,7 @@ jobs:
               - 'crates/**'
               - 'services/control-api/**'
               - 'services/worker/**'
+              - 'scripts/ci-rust-database-validation.sh'
               - 'scripts/ci-prepare-docker.sh'
               - '.github/workflows/ci.yml'
             cms_runtime:
@@ -147,6 +156,7 @@ jobs:
               - 'scripts/test-native-cms-runtime.sh'
               - 'scripts/test-media-runtime.sh'
               - 'scripts/test-forms-runtime.sh'
+              - 'scripts/ci-content-runtime-validation.sh'
               - 'scripts/ci-prepare-docker.sh'
               - 'services/control-api/src/job_execution.rs'
               - 'services/control-api/migrations/**'
@@ -161,23 +171,30 @@ jobs:
               - 'scripts/ci-acceptance-validation.sh'
               - '.github/workflows/ci.yml'
 
-  rust:
+  rust-database:
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.full == 'true'
+    if: >-
+      needs.changes.outputs.rust == 'true' ||
+      needs.changes.outputs.database == 'true' ||
+      needs.changes.outputs.full == 'true'
     runs-on: [self-hosted, linux, x64, argus]
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare Docker access
+        if: needs.changes.outputs.database == 'true' || needs.changes.outputs.full == 'true'
+        run: bash scripts/ci-prepare-docker.sh
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: argus-workspace
-      - name: Format Rust
-        run: cargo fmt --all -- --check
-      - name: Test Rust workspace
-        run: cargo test --workspace --locked
+      - name: Validate Rust and database runtime
+        env:
+          ARGUS_CI_RUN_RUST: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.full == 'true' }}
+          ARGUS_CI_RUN_DATABASE: ${{ needs.changes.outputs.database == 'true' || needs.changes.outputs.full == 'true' }}
+        run: bash scripts/ci-rust-database-validation.sh
 
   web:
     needs: changes
@@ -198,11 +215,14 @@ jobs:
       - name: Typecheck Web
         run: pnpm --filter @argus/web exec tsc --noEmit
 
-  content:
+  content-cms:
     needs: changes
-    if: needs.changes.outputs.content == 'true' || needs.changes.outputs.full == 'true'
+    if: >-
+      needs.changes.outputs.content == 'true' ||
+      needs.changes.outputs.cms_runtime == 'true' ||
+      needs.changes.outputs.full == 'true'
     runs-on: [self-hosted, linux, x64, argus]
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -214,14 +234,23 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - name: Validate Content
-        run: |
-          pnpm --filter @argus/content run typecheck
-          pnpm --filter @argus/content run test:cms-contract
+      - name: Prepare Docker access
+        if: needs.changes.outputs.cms_runtime == 'true' || needs.changes.outputs.full == 'true'
+        run: bash scripts/ci-prepare-docker.sh
+      - name: Validate content and CMS runtime
+        env:
+          ARGUS_CI_RUN_CONTENT: ${{ needs.changes.outputs.content == 'true' || needs.changes.outputs.full == 'true' }}
+          ARGUS_CI_RUN_CMS: ${{ needs.changes.outputs.cms_runtime == 'true' || needs.changes.outputs.full == 'true' }}
+        run: bash scripts/ci-content-runtime-validation.sh
 
   installer:
-    needs: changes
-    if: needs.changes.outputs.installer == 'true' || needs.changes.outputs.full == 'true'
+    needs:
+      - changes
+      - web
+    if: >-
+      always() &&
+      (needs.changes.outputs.installer == 'true' || needs.changes.outputs.full == 'true') &&
+      (needs.web.result == 'success' || needs.web.result == 'skipped')
     runs-on: [self-hosted, linux, x64, argus]
     timeout-minutes: 20
     steps:
@@ -237,165 +266,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Test installer packaging
         run: pnpm --filter @argus/installer test
-
-  database-runtime:
-    needs: changes
-    if: needs.changes.outputs.database == 'true' || needs.changes.outputs.full == 'true'
-    runs-on: [self-hosted, linux, x64, argus]
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@v4
-      - name: Prepare Docker access
-        run: bash scripts/ci-prepare-docker.sh
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: argus-workspace
-
-      - name: Start runtime Postgres
-        run: |
-          set -euo pipefail
-          container="argus-ci-postgres-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
-          docker rm -f "$container" >/dev/null 2>&1 || true
-          docker run -d --name "$container" \
-            -e POSTGRES_USER=argus \
-            -e POSTGRES_PASSWORD=argus-test-password \
-            -e POSTGRES_DB=argus \
-            -p 127.0.0.1::5432 \
-            postgres:16 >/dev/null
-          for _ in $(seq 1 60); do
-            if docker exec "$container" pg_isready -U argus -d argus >/dev/null 2>&1; then break; fi
-            sleep 1
-          done
-          docker exec "$container" pg_isready -U argus -d argus >/dev/null
-          port="$(docker port "$container" 5432/tcp | sed -n 's/.*://p' | head -n1)"
-          [[ "$port" =~ ^[0-9]+$ ]]
-          echo "ARGUS_CI_POSTGRES_CONTAINER=$container" >> "$GITHUB_ENV"
-          echo "ARGUS_CI_POSTGRES_PORT=$port" >> "$GITHUB_ENV"
-
-      - name: Verify migrations and Worker scheduling
-        env:
-          ARGUS_CONTROL_API_BIND: 127.0.0.1:18080
-          ARGUS_CONTROL_API_URL: http://127.0.0.1:18080
-          ARGUS_WEB_API_TOKEN: 0123456789abcdef0123456789abcdef
-          ARGUS_WORKER_TOKEN: abcdef0123456789abcdef0123456789
-          ARGUS_CONTENT_URL: http://127.0.0.1:9
-          ARGUS_CONTENT_SYNC_TOKEN: '11111111111111111111111111111111'
-          ARGUS_WORKER_POLL_SECONDS: 1
-          RUST_LOG: info
-        run: |
-          set -euo pipefail
-          export DATABASE_URL="postgresql://argus:argus-test-password@127.0.0.1:${ARGUS_CI_POSTGRES_PORT}/argus"
-          control_log="$RUNNER_TEMP/argus-control-api.log"
-          worker_log="$RUNNER_TEMP/argus-worker.log"
-          cargo run --locked -p control-api >"$control_log" 2>&1 &
-          control_pid=$!
-          worker_pid=''
-          trap 'kill "$control_pid" ${worker_pid:-} >/dev/null 2>&1 || true' EXIT
-          for _ in $(seq 1 300); do
-            if curl -fsS http://127.0.0.1:18080/health >/dev/null 2>&1; then break; fi
-            if ! kill -0 "$control_pid" >/dev/null 2>&1; then cat "$control_log"; exit 1; fi
-            sleep 1
-          done
-          curl -fsS http://127.0.0.1:18080/health >/dev/null || { cat "$control_log"; exit 1; }
-          psql() {
-            docker run --rm --network host -e PGPASSWORD=argus-test-password postgres:16 psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$ARGUS_CI_POSTGRES_PORT" -U argus -d argus "$@"
-          }
-          [[ "$(psql -Atc "SELECT indexprs IS NULL AND indpred IS NULL FROM pg_index WHERE indexrelid='background_jobs_dedupe_idx'::regclass")" == "t" ]]
-          psql -c "INSERT INTO organizations(id,name) VALUES('00000000-0000-4000-8000-000000000001','CI')"
-          cargo run --locked -p argus-worker >"$worker_log" 2>&1 &
-          worker_pid=$!
-          for _ in $(seq 1 60); do
-            if [[ "$(psql -Atc "SELECT EXISTS(SELECT 1 FROM background_jobs WHERE dedupe_key IS NOT NULL)")" == "t" ]]; then exit 0; fi
-            if ! kill -0 "$worker_pid" >/dev/null 2>&1; then cat "$worker_log"; exit 1; fi
-            sleep 1
-          done
-          cat "$worker_log"
-          exit 1
-
-      - name: Stop runtime Postgres
-        if: always()
-        run: |
-          if [[ -n "${ARGUS_CI_POSTGRES_CONTAINER:-}" ]]; then
-            docker rm -f "$ARGUS_CI_POSTGRES_CONTAINER" >/dev/null 2>&1 || true
-          fi
-
-  cms-runtime:
-    needs: changes
-    if: needs.changes.outputs.cms_runtime == 'true' || needs.changes.outputs.full == 'true'
-    runs-on: [self-hosted, linux, x64, argus]
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@v4
-      - name: Prepare Docker access
-        run: bash scripts/ci-prepare-docker.sh
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-
-      - name: Start runtime Postgres
-        run: |
-          set -euo pipefail
-          container="argus-ci-postgres-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
-          docker rm -f "$container" >/dev/null 2>&1 || true
-          docker run -d --name "$container" \
-            -e POSTGRES_USER=argus \
-            -e POSTGRES_PASSWORD=argus-test-password \
-            -e POSTGRES_DB=argus \
-            -p 127.0.0.1::5432 \
-            postgres:16 >/dev/null
-          for _ in $(seq 1 60); do
-            if docker exec "$container" pg_isready -U argus -d argus >/dev/null 2>&1; then break; fi
-            sleep 1
-          done
-          docker exec "$container" pg_isready -U argus -d argus >/dev/null
-          port="$(docker port "$container" 5432/tcp | sed -n 's/.*://p' | head -n1)"
-          [[ "$port" =~ ^[0-9]+$ ]]
-          echo "ARGUS_CI_POSTGRES_CONTAINER=$container" >> "$GITHUB_ENV"
-          echo "ARGUS_CI_POSTGRES_PORT=$port" >> "$GITHUB_ENV"
-
-      - name: Exercise native CMS draft and publication workflow
-        env:
-          ARGUS_CONTENT_DB_SCHEMA: argus_content
-          PAYLOAD_SECRET: payload-runtime-secret-0000000000
-          PAYLOAD_PUBLIC_URL: http://127.0.0.1:3000
-          ARGUS_CONTENT_SYNC_TOKEN: content-sync-runtime-000000000000
-          ARGUS_MEDIA_DIR: ${{ runner.temp }}/argus-content-media
-          PAYLOAD_DB_PUSH: "false"
-        run: |
-          set -euo pipefail
-          export DATABASE_URL="postgresql://argus:argus-test-password@127.0.0.1:${ARGUS_CI_POSTGRES_PORT}/argus"
-          pnpm --filter @argus/content exec payload migrate
-          content_log="$RUNNER_TEMP/argus-content.log"
-          pnpm --filter @argus/content dev >"$content_log" 2>&1 &
-          pid=$!
-          trap 'kill "$pid" >/dev/null 2>&1 || true' EXIT
-          for _ in $(seq 1 180); do
-            if curl -fsS http://127.0.0.1:3000/healthz >/dev/null 2>&1; then
-              bash scripts/test-native-cms-runtime.sh
-              bash scripts/test-media-runtime.sh
-              bash scripts/test-forms-runtime.sh
-              ARGUS_TEST_PROJECT_ID=00000000-0000-4000-8000-000000000003 ARGUS_TEST_ORG_ID=00000000-0000-4000-8000-000000000001 ARGUS_TEST_USER_ID=00000000-0000-4000-8000-000000000002 node scripts/first-server-content-acceptance.mjs >/dev/null
-              exit 0
-            fi
-            if ! kill -0 "$pid" >/dev/null 2>&1; then cat "$content_log"; exit 1; fi
-            sleep 1
-          done
-          cat "$content_log"
-          exit 1
-
-      - name: Stop runtime Postgres
-        if: always()
-        run: |
-          if [[ -n "${ARGUS_CI_POSTGRES_CONTAINER:-}" ]]; then
-            docker rm -f "$ARGUS_CI_POSTGRES_CONTAINER" >/dev/null 2>&1 || true
-          fi
 
   acceptance:
     needs: changes
@@ -425,12 +295,10 @@ jobs:
   validation-gate:
     needs:
       - changes
-      - rust
+      - rust-database
       - web
-      - content
+      - content-cms
       - installer
-      - database-runtime
-      - cms-runtime
       - acceptance
       - deployment
     if: always() && needs.changes.result != 'skipped'
@@ -438,12 +306,10 @@ jobs:
     timeout-minutes: 5
     env:
       CHANGES_RESULT: ${{ needs.changes.result }}
-      RUST_RESULT: ${{ needs.rust.result }}
+      RUST_DATABASE_RESULT: ${{ needs.rust-database.result }}
       WEB_RESULT: ${{ needs.web.result }}
-      CONTENT_RESULT: ${{ needs.content.result }}
+      CONTENT_CMS_RESULT: ${{ needs.content-cms.result }}
       INSTALLER_RESULT: ${{ needs.installer.result }}
-      DATABASE_RESULT: ${{ needs.database-runtime.result }}
-      CMS_RESULT: ${{ needs.cms-runtime.result }}
       ACCEPTANCE_RESULT: ${{ needs.acceptance.result }}
       DEPLOYMENT_RESULT: ${{ needs.deployment.result }}
     steps:
@@ -453,12 +319,10 @@ jobs:
           failed=0
           for result in \
             "$CHANGES_RESULT" \
-            "$RUST_RESULT" \
+            "$RUST_DATABASE_RESULT" \
             "$WEB_RESULT" \
-            "$CONTENT_RESULT" \
+            "$CONTENT_CMS_RESULT" \
             "$INSTALLER_RESULT" \
-            "$DATABASE_RESULT" \
-            "$CMS_RESULT" \
             "$ACCEPTANCE_RESULT" \
             "$DEPLOYMENT_RESULT"
           do
