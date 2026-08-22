@@ -383,6 +383,8 @@ jobs:
           grep -Fq 'ARGUS_UPDATE_DELEGATED_REVISION' crates/cli/src/main.rs
           grep -Fq 'org.argus.update-runner-protocol' docker-bake.hcl
           grep -Fq 'UPDATE_RUNNER_PROTOCOL_VERSION=1' scripts/update-first-test.sh
+          grep -Fq 'using verified prepared target revision' scripts/update-first-test.sh
+          grep -Fq 'still working' scripts/update-first-test.sh
           grep -Fq '"$tls_dir:/etc/caddy/argus-tls:ro"' scripts/update-first-test.sh
           grep -Fq "grep -Eq '__[A-Z0-9_]+__'" scripts/update-first-test.sh
           update_lock="$(sed -n 's/^LOCK_FILE="\(.*\)"$/\1/p' scripts/update-first-test.sh | head -n1)"
@@ -442,13 +444,25 @@ jobs:
           TARGET_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
           TARGET_TMP="$tmp/target"
           mkdir -p "$TARGET_TMP"
-          printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$ARGUS_UPDATE_DELEGATED_REVISION" "$ARGUS_UPDATE_DELEGATED_RUNNER_SHA256" "$*" >"%s/handoff"\n' "$tmp" >"$TARGET_TMP/argusctl"
+          printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$ARGUS_UPDATE_DELEGATED_REVISION" "$ARGUS_UPDATE_DELEGATED_RUNNER_SHA256" "$ARGUS_UPDATE_PREPARED_REVISION" "$*" >"%s/handoff"\n' "$tmp" >"$TARGET_TMP/argusctl"
           chmod 0700 "$TARGET_TMP/argusctl"
           delegate_to_target_runner
           mapfile -t handoff <"$tmp/handoff"
           [[ "${handoff[0]}" == "$TARGET_REVISION" ]]
           [[ "${handoff[1]}" =~ ^[0-9a-f]{64}$ ]]
-          [[ "${handoff[2]}" == "update --version $TARGET_REVISION --yes --verbose" ]]
+          [[ "${handoff[2]}" == "$TARGET_REVISION" ]]
+          [[ "${handoff[3]}" == "update --version $TARGET_REVISION --yes --verbose" ]]
+
+          DELEGATED_REVISION="$TARGET_REVISION"
+          PREPARED_REVISION="$TARGET_REVISION"
+          verify_target_images() { TARGET_RUNNER_PROTOCOL=1; TARGET_BRANCH_PROTOCOL=1; }
+          pull_and_verify_target() { return 99; }
+          prepare_update_target
+          [[ "$TARGET_REVISION" == "$PREPARED_REVISION" ]]
+          PREPARED_REVISION=""
+          REQUESTED_VERSION="$DELEGATED_REVISION"
+          prepare_update_target
+          [[ "$PREPARED_REVISION" == "$DELEGATED_REVISION" ]]
 
       - name: Test update transaction phase safety
         if: needs.validate.outputs.deployment == 'true' || needs.validate.outputs.full == 'true'
@@ -484,7 +498,7 @@ jobs:
           [[ "$(cat "$TRANSACTION_DIR/target-start-armed")" == "$TARGET_REVISION" ]]
 
       - name: Test atomic replacement of a running executable
-        if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'
+        if: needs.validate.outputs.deployment == 'true' || needs.validate.outputs.full == 'true'
         run: |
           set -euo pipefail
           tmp="$(mktemp -d)"
@@ -499,7 +513,7 @@ jobs:
           wait "$running_pid" 2>/dev/null || true
 
       - name: Test recovery atomic replacement helper
-        if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'
+        if: needs.validate.outputs.deployment == 'true' || needs.validate.outputs.full == 'true'
         run: |
           set -euo pipefail
           tmp="$(mktemp -d)"
@@ -514,7 +528,7 @@ jobs:
           wait "$running_pid" 2>/dev/null || true
 
       - name: Test update transaction phase safety (continued)
-        if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'
+        if: needs.validate.outputs.deployment == 'true' || needs.validate.outputs.full == 'true'
         run: |
           set -euo pipefail
           tmp="$(mktemp -d)"

@@ -4,10 +4,10 @@ use clap::{Parser, Subcommand};
 use cli::{domain, lifecycle};
 use serde_json::json;
 use std::{
-    io::{self, IsTerminal},
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process::Stdio,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -28,6 +28,8 @@ const INTERRUPTED_UPDATE_RECOVERY: &str =
     include_str!("../../../scripts/recover-interrupted-update.sh");
 const UNINSTALL: &str = include_str!("../../../scripts/uninstall.sh");
 const REGISTRY_LOGIN: &str = include_str!("../../../scripts/registry-login.sh");
+const UPDATE_PROGRESS_WIDTH: usize = 24;
+const UPDATE_PROGRESS_PULSE: usize = 6;
 
 #[derive(Debug, Parser)]
 #[command(name = "argusctl", about = "Argus local diagnostics and lifecycle CLI")]
@@ -164,24 +166,37 @@ enum SystemCommands {
     Info,
 }
 
+struct ActiveProgress {
+    message: String,
+    detail: Option<String>,
+    started: Instant,
+}
+
 struct UpdateUi {
     color: bool,
+    interactive: bool,
     post_start: bool,
     download_announced: bool,
     rollback_started: bool,
     rollback_completed: bool,
     finished: bool,
+    progress: Option<ActiveProgress>,
+    progress_frame: usize,
 }
 
 impl UpdateUi {
     fn new() -> Self {
+        let interactive = io::stdout().is_terminal();
         Self {
-            color: io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
+            color: interactive && std::env::var_os("NO_COLOR").is_none(),
+            interactive,
             post_start: false,
             download_announced: false,
             rollback_started: false,
             rollback_completed: false,
             finished: false,
+            progress: None,
+            progress_frame: 0,
         }
     }
 
@@ -223,6 +238,91 @@ impl UpdateUi {
         revision.get(..12).unwrap_or(revision)
     }
 
+    fn indeterminate_bar(frame: usize) -> String {
+        let travel = UPDATE_PROGRESS_WIDTH - UPDATE_PROGRESS_PULSE;
+        let cycle = travel * 2;
+        let position = if cycle == 0 {
+            0
+        } else {
+            let phase = frame % cycle;
+            if phase <= travel {
+                phase
+            } else {
+                cycle - phase
+            }
+        };
+        let mut cells = vec!['░'; UPDATE_PROGRESS_WIDTH];
+        for cell in cells.iter_mut().skip(position).take(UPDATE_PROGRESS_PULSE) {
+            *cell = '█';
+        }
+        cells.into_iter().collect()
+    }
+
+    fn elapsed_label(seconds: u64) -> String {
+        if seconds >= 60 {
+            format!("{}m {:02}s", seconds / 60, seconds % 60)
+        } else {
+            format!("{seconds}s")
+        }
+    }
+
+    fn stop_progress(&mut self) {
+        if self.progress.take().is_some() && self.interactive {
+            print!("\r\x1b[2K");
+            let _ = io::stdout().flush();
+        }
+    }
+
+    fn start_progress(&mut self, message: impl Into<String>) {
+        self.stop_progress();
+        let message = message.into();
+        if !self.interactive {
+            self.step(&message);
+            return;
+        }
+        self.progress = Some(ActiveProgress {
+            message,
+            detail: None,
+            started: Instant::now(),
+        });
+        self.progress_frame = 0;
+        self.tick();
+    }
+
+    fn set_progress_detail(&mut self, detail: impl Into<String>) {
+        if let Some(progress) = self.progress.as_mut() {
+            progress.detail = Some(detail.into());
+        }
+    }
+
+    fn tick(&mut self) {
+        if !self.interactive {
+            return;
+        }
+        let Some(progress) = self.progress.as_ref() else {
+            return;
+        };
+        let message = progress.message.clone();
+        let detail = progress.detail.clone();
+        let elapsed = progress.started.elapsed().as_secs();
+        let bar = Self::indeterminate_bar(self.progress_frame);
+        self.progress_frame = self.progress_frame.wrapping_add(1);
+        let bar = self.paint("36", &format!("[{bar}]"));
+        let activity = if elapsed >= 15 {
+            " · still working"
+        } else {
+            ""
+        };
+        let detail = detail
+            .map(|value| format!(" · {value}"))
+            .unwrap_or_default();
+        print!(
+            "\r\x1b[2K  {bar} {message}{detail} · {}{activity}",
+            Self::elapsed_label(elapsed)
+        );
+        let _ = io::stdout().flush();
+    }
+
     fn handle_line(&mut self, line: &str) {
         let line = line.trim();
         if line.is_empty() {
@@ -230,6 +330,7 @@ impl UpdateUi {
         }
 
         if let Some(revision) = line.strip_prefix("[argus-update] current installed revision: ") {
+            self.stop_progress();
             self.step(&format!(
                 "Checking current installation ({})",
                 Self::short_revision(revision)
@@ -240,6 +341,7 @@ impl UpdateUi {
             return;
         }
         if line.starts_with("Argus first-server smoke test passed:") {
+            self.stop_progress();
             if self.post_start {
                 self.success("Updated installation is healthy");
             } else {
@@ -248,29 +350,40 @@ impl UpdateUi {
             return;
         }
         if line.starts_with("[argus-update] resolving branch '") {
-            self.step("Fetching branch source");
+            self.start_progress("Downloading branch source");
             return;
         }
         if line.starts_with("[argus-update] building branch '") {
-            self.step("Building update locally");
+            self.start_progress("Building branch locally");
+            self.set_progress_detail("Docker BuildKit");
             return;
         }
         if line.starts_with("[argus-update] using prepared branch build ") {
+            self.stop_progress();
             self.step("Using verified local branch build");
             return;
         }
         if line.starts_with("[argus-update] resolving target '") {
-            self.step("Checking for updates");
+            self.start_progress("Resolving update target");
             return;
         }
-        if line.starts_with("[argus-update] pre-fetching ") {
+        if let Some(image) = line.strip_prefix("[argus-update] pre-fetching ") {
             if !self.download_announced {
                 self.download_announced = true;
-                self.step("Downloading update");
+                self.start_progress("Downloading update");
             }
+            let image = image
+                .rsplit('/')
+                .next()
+                .unwrap_or(image)
+                .split(':')
+                .next()
+                .unwrap_or(image);
+            self.set_progress_detail(format!("pulling {image}"));
             return;
         }
         if let Some(revision) = line.strip_prefix("[argus-update] resolved target revision: ") {
+            self.stop_progress();
             self.success(&format!(
                 "Update ready ({})",
                 Self::short_revision(revision)
@@ -280,6 +393,7 @@ impl UpdateUi {
         if let Some(revision) =
             line.strip_prefix("[argus-update] already running requested revision ")
         {
+            self.stop_progress();
             self.success(&format!(
                 "Already up to date ({})",
                 Self::short_revision(revision)
@@ -288,35 +402,35 @@ impl UpdateUi {
             return;
         }
         if line.starts_with("[argus-update] storage preflight: ") {
+            self.stop_progress();
             self.step("Checking backup storage");
             return;
         }
         if line == "[argus-update] quiescing native Agent/Helper and control-plane writers" {
+            self.stop_progress();
             self.success("Backup storage is sufficient");
             self.step("Stopping Argus services");
             return;
         }
         if line == "[argus-update] creating consistent PostgreSQL backup" {
-            self.step("Creating rollback backup");
+            self.start_progress("Creating rollback backup");
             return;
         }
         if line == "[argus-update] installing target deployment assets and native binaries" {
-            self.step("Installing update");
+            self.start_progress("Installing update");
             return;
         }
         if let Some(revision) = line.strip_prefix("[argus-update] starting target control plane ") {
             self.post_start = true;
-            self.step(&format!(
-                "Starting Argus {}",
-                Self::short_revision(revision)
-            ));
+            self.start_progress(format!("Starting Argus {}", Self::short_revision(revision)));
             return;
         }
         if self.post_start && line == "[argus-smoke] validating deployed configuration" {
-            self.step("Verifying updated installation");
+            self.start_progress("Verifying updated installation");
             return;
         }
         if let Some(change) = line.strip_prefix("[argus-update] update succeeded: ") {
+            self.stop_progress();
             let change = change
                 .split(" -> ")
                 .map(Self::short_revision)
@@ -328,14 +442,17 @@ impl UpdateUi {
             return;
         }
         if let Some(path) = line.strip_prefix("[argus-update] rollback snapshot retained at ") {
+            self.stop_progress();
             self.detail(&format!("Rollback snapshot: {path}"));
             return;
         }
         if let Some(message) = line.strip_prefix("[argus-update] warning: ") {
+            self.stop_progress();
             if message.starts_with("update failed; automatically rolling back transaction ") {
                 self.rollback_started = true;
                 println!();
                 self.warning("Update failed; restoring the previous version");
+                self.start_progress("Restoring previous version");
             } else if message.starts_with("rollback completed successfully; restored revision ") {
                 self.rollback_completed = true;
                 let revision = message
@@ -350,10 +467,12 @@ impl UpdateUi {
             return;
         }
         if let Some(message) = line.strip_prefix("[argus-update] error: ") {
+            self.stop_progress();
             self.error(message);
             return;
         }
         if let Some(message) = line.strip_prefix("[argus-smoke] FAIL: ") {
+            self.stop_progress();
             self.error(message);
             return;
         }
@@ -363,11 +482,13 @@ impl UpdateUi {
             || lower.starts_with("error response from daemon")
             || lower.contains("permission denied")
         {
+            self.stop_progress();
             self.error(line);
         }
     }
 
-    fn finish_failure(&self) {
+    fn finish_failure(&mut self) {
+        self.stop_progress();
         if !self.finished {
             println!();
             if self.rollback_completed {
@@ -442,7 +563,10 @@ async fn run_concise_update_script(target: &UpdateTarget) -> Result<()> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .env(env_key, env_value);
+        .env(env_key, env_value)
+        // The embedded updater has a compatibility spinner for direct shell use.
+        // argusctl owns the richer progress renderer, so keep the child terminal quiet.
+        .env("TERM", "dumb");
 
     let mut child = command.spawn().with_context(|| format!("start {name}"))?;
     let mut stdin = child
@@ -468,6 +592,8 @@ async fn run_concise_update_script(target: &UpdateTarget) -> Result<()> {
     let mut stdout_open = true;
     let mut stderr_open = true;
     let mut ui = UpdateUi::new();
+    let mut ticker = tokio::time::interval(Duration::from_millis(100));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     ui.begin(target);
 
     while stdout_open || stderr_open {
@@ -484,9 +610,11 @@ async fn run_concise_update_script(target: &UpdateTarget) -> Result<()> {
                     None => stderr_open = false,
                 }
             }
+            _ = ticker.tick() => ui.tick(),
         }
     }
 
+    ui.stop_progress();
     let status = child
         .wait()
         .await
@@ -1026,6 +1154,25 @@ mod tests {
                 }
             } if domain == "argus.example.com" && content_domain == "content.argus.example.com"
         ));
+    }
+
+    #[test]
+    fn update_progress_bar_is_fixed_width_and_moves() {
+        let first = UpdateUi::indeterminate_bar(0);
+        let later = UpdateUi::indeterminate_bar(8);
+        assert_eq!(first.chars().count(), UPDATE_PROGRESS_WIDTH);
+        assert_eq!(later.chars().count(), UPDATE_PROGRESS_WIDTH);
+        assert_ne!(first, later);
+        assert_eq!(
+            first.chars().filter(|cell| *cell == '█').count(),
+            UPDATE_PROGRESS_PULSE
+        );
+    }
+
+    #[test]
+    fn update_elapsed_time_becomes_compact_minutes() {
+        assert_eq!(UpdateUi::elapsed_label(9), "9s");
+        assert_eq!(UpdateUi::elapsed_label(125), "2m 05s");
     }
 
     #[test]

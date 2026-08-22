@@ -66,12 +66,19 @@ progress_start() {
   PROGRESS_MESSAGE="$message"
   (
     local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏') i=0 frame
+    local started_at=$SECONDS elapsed detail
     while :; do
       frame="${frames[$((i % ${#frames[@]}))]}"
-      if [[ -z "${NO_COLOR:-}" ]]; then
-        printf '\r\033[2K\033[36m  %s\033[0m %s' "$frame" "$message" >/dev/tty
+      elapsed=$((SECONDS - started_at))
+      if (( elapsed >= 15 )); then
+        detail=" · ${elapsed}s · still working"
       else
-        printf '\r\033[2K  %s %s' "$frame" "$message" >/dev/tty
+        detail=" · ${elapsed}s"
+      fi
+      if [[ -z "${NO_COLOR:-}" ]]; then
+        printf '\r\033[2K\033[36m  %s\033[0m %s%s' "$frame" "$message" "$detail" >/dev/tty
+      else
+        printf '\r\033[2K  %s %s%s' "$frame" "$message" "$detail" >/dev/tty
       fi
       i=$((i + 1))
       sleep 0.1
@@ -211,6 +218,7 @@ delegate_to_target_runner() {
     ARGUS_UPDATE_DELEGATED_REVISION="$TARGET_REVISION" \
     ARGUS_UPDATE_DELEGATED_RUNNER="$runner" \
     ARGUS_UPDATE_DELEGATED_RUNNER_SHA256="$runner_sha256" \
+    ARGUS_UPDATE_PREPARED_REVISION="$TARGET_REVISION" \
       "$runner" update --version "$TARGET_REVISION" --yes --verbose
   fi
 }
@@ -360,7 +368,7 @@ running_service_image_id() {
 }
 
 resolve_current_revision() {
-  local control_image
+  local display="${1:-}" control_image
   control_image="$(running_service_image_id control-api)" \
     || die "Control API container is not running; restore the installation before updating"
   CURRENT_REVISION="$(image_revision "$control_image")"
@@ -381,7 +389,7 @@ worker argus-worker
 content argus-content
 EOF
 
-  log "current installed revision: $CURRENT_REVISION"
+  [[ "$display" == "quiet" ]] || log "current installed revision: $CURRENT_REVISION"
 }
 
 verify_target_images() {
@@ -487,6 +495,20 @@ EOF
 }
 
 prepare_update_target() {
+  if [[ -n "$DELEGATED_REVISION" ]]; then
+    if [[ -z "$PREPARED_REVISION" && "$REQUESTED_VERSION" == "$DELEGATED_REVISION" ]]; then
+      # Update runners before the prepared-revision handoff passed the immutable
+      # revision only as --version. Accept that equivalent, verified contract so
+      # the first update to this runner does not need an intermediate release.
+      PREPARED_REVISION="$DELEGATED_REVISION"
+    fi
+    [[ -n "$PREPARED_REVISION" && "$PREPARED_REVISION" == "$DELEGATED_REVISION" ]] \
+      || die "target update runner did not receive the prepared revision"
+    TARGET_REVISION="$PREPARED_REVISION"
+    verify_target_images
+    log "using verified prepared target revision $TARGET_REVISION"
+    return
+  fi
   if [[ -n "$REQUESTED_BRANCH" ]]; then
     prepare_branch_target
   else
@@ -1016,13 +1038,15 @@ main() {
   : "${ARGUS_DOMAIN:?missing ARGUS_DOMAIN}"
   : "${ARGUS_CONTENT_DOMAIN:?missing ARGUS_CONTENT_DOMAIN}"
 
-  registry_login
-  resolve_current_revision
-
-  log "verifying current installation before update"
-  /usr/local/bin/argusctl smoke
-
-  prune_completed_transactions
+  if [[ -n "$DELEGATED_REVISION" ]]; then
+    resolve_current_revision quiet
+  else
+    registry_login
+    resolve_current_revision
+    log "verifying current installation before update"
+    /usr/local/bin/argusctl smoke
+    prune_completed_transactions
+  fi
   prepare_update_target
   if [[ "$TARGET_REVISION" == "$CURRENT_REVISION" ]]; then
     normalize_installed_version
@@ -1043,12 +1067,11 @@ main() {
   if [[ -n "$DELEGATED_REVISION" ]]; then
     [[ "$TARGET_REVISION" == "$DELEGATED_REVISION" ]] \
       || die "target update runner revision does not match the verified image set"
+    [[ "$PREPARED_REVISION" == "$DELEGATED_REVISION" ]] \
+      || die "target update runner did not receive the prepared revision"
     if [[ -n "$REQUESTED_VERSION" ]]; then
       [[ "$REQUESTED_VERSION" == "$DELEGATED_REVISION" ]] \
         || die "target update runner was invoked for an unexpected version"
-    else
-      [[ "$PREPARED_REVISION" == "$DELEGATED_REVISION" ]] \
-        || die "target branch update runner did not receive the prepared revision"
     fi
     log "target update runner accepted revision $TARGET_REVISION"
     normalize_installed_version

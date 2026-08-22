@@ -21,7 +21,13 @@ EXPECTED="$(sed -n 's/.*"installer_sha256"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{
 [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]] || { printf '  ✗ Installer manifest has an invalid revision.\n' >&2; exit 1; }
 [[ "$EXPECTED" =~ ^[0-9a-f]{64}$ ]] || { printf '  ✗ Installer manifest has an invalid checksum.\n' >&2; exit 1; }
 
-curl -fsSL "$ORIGIN/bin/$ASSET" -o "$TMP/argus-installer"
+if [[ -t 2 && "${TERM:-}" != "dumb" ]]; then
+  # curl knows the actual transfer size, so use its real byte-based progress bar
+  # instead of inventing a percentage in the bootstrap shell.
+  curl -fL --progress-bar "$ORIGIN/bin/$ASSET" -o "$TMP/argus-installer"
+else
+  curl -fsSL "$ORIGIN/bin/$ASSET" -o "$TMP/argus-installer"
+fi
 ACTUAL="$(sha256sum "$TMP/argus-installer" | awk '{print $1}')"
 [[ "$ACTUAL" == "$EXPECTED" ]] || { printf '  ✗ Installer checksum verification failed.\n' >&2; exit 1; }
 chmod 0755 "$TMP/argus-installer"
