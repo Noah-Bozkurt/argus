@@ -10,6 +10,7 @@ import './ui-resource-editors.css'
 import './command-palette.css'
 import './resource-polish.css'
 import './auth.css'
+import './theme.css'
 
 // The operator UI reads runtime-only Argus credentials and live control-plane data.
 // Never prerender it into the image at build time.
