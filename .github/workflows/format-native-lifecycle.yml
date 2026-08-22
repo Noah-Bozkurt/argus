@@ -1,34 +1,13 @@
-name: Format native lifecycle branch
+name: Format native lifecycle branch (disabled - Buildkite trial)
 
+# Automatic GitHub Actions formatting is temporarily disabled while Argus evaluates Buildkite.
+# The previous workflow remains available in Git history for an easy rollback.
 on:
-  push:
-    branches:
-      - refactor/native-lifecycle
-
-permissions:
-  contents: write
+  workflow_dispatch:
 
 jobs:
-  rustfmt:
-    runs-on: [self-hosted, linux, x64]
+  disabled:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: refactor/native-lifecycle
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - name: Format Rust sources
-        run: cargo fmt --all
-      - name: Commit formatting when needed
-        run: |
-          set -euo pipefail
-          if git diff --quiet; then
-            exit 0
-          fi
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add -- crates/cli/src
-          git commit -m 'style(rust): format native lifecycle code'
-          git push origin HEAD:refactor/native-lifecycle
+      - run: echo "GitHub Actions formatting is disabled; use Buildkite."
