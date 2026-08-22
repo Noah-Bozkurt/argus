@@ -245,14 +245,14 @@ impl UpdateUi {
             0
         } else {
             let phase = frame % cycle;
-            if phase <= travel { phase } else { cycle - phase }
+            if phase <= travel {
+                phase
+            } else {
+                cycle - phase
+            }
         };
         let mut cells = vec!['░'; UPDATE_PROGRESS_WIDTH];
-        for cell in cells
-            .iter_mut()
-            .skip(position)
-            .take(UPDATE_PROGRESS_PULSE)
-        {
+        for cell in cells.iter_mut().skip(position).take(UPDATE_PROGRESS_PULSE) {
             *cell = '█';
         }
         cells.into_iter().collect()
@@ -308,8 +308,14 @@ impl UpdateUi {
         let bar = Self::indeterminate_bar(self.progress_frame);
         self.progress_frame = self.progress_frame.wrapping_add(1);
         let bar = self.paint("36", &format!("[{bar}]"));
-        let activity = if elapsed >= 15 { " · still working" } else { "" };
-        let detail = detail.map(|value| format!(" · {value}")).unwrap_or_default();
+        let activity = if elapsed >= 15 {
+            " · still working"
+        } else {
+            ""
+        };
+        let detail = detail
+            .map(|value| format!(" · {value}"))
+            .unwrap_or_default();
         print!(
             "\r\x1b[2K  {bar} {message}{detail} · {}{activity}",
             Self::elapsed_label(elapsed)
@@ -416,10 +422,7 @@ impl UpdateUi {
         }
         if let Some(revision) = line.strip_prefix("[argus-update] starting target control plane ") {
             self.post_start = true;
-            self.start_progress(format!(
-                "Starting Argus {}",
-                Self::short_revision(revision)
-            ));
+            self.start_progress(format!("Starting Argus {}", Self::short_revision(revision)));
             return;
         }
         if self.post_start && line == "[argus-smoke] validating deployed configuration" {
