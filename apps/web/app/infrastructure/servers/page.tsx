@@ -6,9 +6,8 @@ export default async function ServersPage() {
 
   return (
     <main>
-      <div className="page-header">
+      <div className="page-header compact-page-header">
         <div>
-          <span className="eyebrow">Infrastructure</span>
           <h1>Servers</h1>
           <p>Host health, utilization and connected workloads reported by Argus agents.</p>
         </div>
