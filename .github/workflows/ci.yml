@@ -124,6 +124,7 @@ jobs:
               - 'scripts/registry-login.sh'
               - 'scripts/uninstall.sh'
               - 'scripts/ci-deployment-validation.sh'
+              - 'scripts/ci-prepare-docker.sh'
               - 'deploy/**'
               - 'docker-bake.hcl'
               - '.github/workflows/ci.yml'
@@ -134,6 +135,7 @@ jobs:
               - 'crates/**'
               - 'services/control-api/**'
               - 'services/worker/**'
+              - 'scripts/ci-prepare-docker.sh'
               - '.github/workflows/ci.yml'
             cms_runtime:
               - 'apps/content/**'
@@ -145,6 +147,7 @@ jobs:
               - 'scripts/test-native-cms-runtime.sh'
               - 'scripts/test-media-runtime.sh'
               - 'scripts/test-forms-runtime.sh'
+              - 'scripts/ci-prepare-docker.sh'
               - 'services/control-api/src/job_execution.rs'
               - 'services/control-api/migrations/**'
               - '.github/workflows/ci.yml'
@@ -242,6 +245,8 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare Docker access
+        run: bash scripts/ci-prepare-docker.sh
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -322,6 +327,8 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare Docker access
+        run: bash scripts/ci-prepare-docker.sh
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -410,6 +417,8 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare Docker access
+        run: bash scripts/ci-prepare-docker.sh
       - name: Validate deployment lifecycle
         run: bash scripts/ci-deployment-validation.sh
 
@@ -466,6 +475,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare Docker access
+        run: bash scripts/ci-prepare-docker.sh
       - uses: dtolnay/rust-toolchain@stable
       - name: Validate release metadata and lifecycle syntax
         run: |
