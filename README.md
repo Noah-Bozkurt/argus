@@ -19,7 +19,7 @@ The name comes from **Argus Panoptes**, the many-eyed watchman from Greek mythol
 - GitHub repository integration with repository, issue, pull-request and CI state.
 - Payload-backed application data and CMS workflows scoped to projects.
 - First-party Argus login with shared operator/CMS sessions and workspace roles.
-- Host lifecycle tooling through `argusctl`, including health checks, updates, registry login and uninstall.
+- Host lifecycle tooling through `argusctl`, including diagnosis, logs, updates, registry login and uninstall.
 
 The operator UI has global **Overview**, **Projects**, **Servers**, **Jobs** and **Notifications** views. Project work is grouped into **Deploy**, **Infrastructure**, **Observe**, **Work** and **Content**.
 
@@ -49,26 +49,36 @@ For a control plane, the installer asks for a certificate contact email. It norm
 
 ## `argusctl`
 
-Useful commands on an installed host:
+The normal troubleshooting flow is deliberately small:
 
 ```bash
 argusctl status
-argusctl health
-argusctl connection
 argusctl doctor
+argusctl logs
+sudo argusctl repair
+```
+
+Useful lifecycle and targeted commands include:
+
+```bash
+argusctl logs control-plane --tail 200
+argusctl logs web -f
+argusctl logs agent --since 1h
 argusctl system info
 argusctl version
-sudo argusctl smoke
-sudo argusctl repair
 sudo argusctl credentials
 sudo argusctl update --version main
 sudo argusctl registry-login
 sudo argusctl uninstall
 ```
 
-`argusctl update` resolves the requested release to an immutable Git revision instead of leaving an installation on a moving `main` tag.
+`argusctl logs` automatically shows the native Agent/Helper logs and, on a control-plane host, the Compose application logs. Individual sources include `agent`, `helper`, `control-plane`, `web`, `control-api`, `worker`, `content`, `caddy`, `postgres`, `installer` and `update`. Common secret-shaped log lines are redacted before they are printed.
 
-Start with `argusctl doctor` when something does not look right. It checks the local services, containers, DNS, HTTPS and Agent connection in one pass and suggests a next step for each failure. `argusctl repair` restores damaged installation files without changing the installed version or deleting data. If `argusctl` itself is missing or broken, run the public installer again and choose **Repair**.
+Start with `argusctl status` for a quick overview and `argusctl doctor` when something does not look right. Doctor checks local services, containers, DNS, HTTPS and the Agent connection in one pass and suggests a next step for each failure. Use `argusctl logs` when the diagnosis needs the underlying runtime output, then `argusctl repair` when installed files or services need to be restored.
+
+The older targeted `health`, `connection` and `smoke` commands remain available for compatibility, scripts and low-level debugging, but they are intentionally not promoted in normal CLI help because their checks are already covered by the primary flow.
+
+`argusctl update` resolves the requested release to an immutable Git revision instead of leaving an installation on a moving `main` tag. If `argusctl` itself is missing or broken, run the public installer again and choose **Repair**.
 
 ## Current limitations
 

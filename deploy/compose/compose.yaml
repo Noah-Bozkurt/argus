@@ -87,6 +87,8 @@ services:
       ARGUS_WEB_API_TOKEN: ${ARGUS_WEB_API_TOKEN:?ARGUS_WEB_API_TOKEN is required}
       ARGUS_ORG_ID: ${ARGUS_ORG_ID:?ARGUS_ORG_ID is required}
       ARGUS_USER_ID: ${ARGUS_USER_ID:?ARGUS_USER_ID is required}
+      ARGUS_VERSION: ${ARGUS_VERSION:?ARGUS_VERSION is required}
+      ARGUS_SERVER_ID: ${ARGUS_SERVER_ID:-}
     depends_on:
       control-api:
         condition: service_healthy

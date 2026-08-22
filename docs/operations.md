@@ -41,13 +41,26 @@ Default host paths:
 /opt/argus/       Compose/runtime files
 /etc/argus/       host configuration and registry credentials
 /var/lib/argus/   persistent state and backups
-/var/log/argus/   installer logs
+/var/log/argus/   installer and host-update logs
 /usr/local/bin/   argus-agent, argus-helper, argusctl
 ```
 
 Only Caddy is publicly exposed. The Control API has a host-loopback path for the local Agent. PostgreSQL and the application containers are not published directly.
 
 ## Host lifecycle
+
+### Primary troubleshooting flow
+
+The normal operator flow is:
+
+```bash
+argusctl status
+argusctl doctor
+argusctl logs
+sudo argusctl repair
+```
+
+`status` answers whether the local Agent/Helper are running and which server/control plane this host belongs to. `doctor` performs the broader diagnosis. `logs` exposes the underlying runtime output when more detail is needed. `repair` is the corrective step for damaged installed files or services.
 
 ### Local status
 
@@ -56,30 +69,6 @@ argusctl status
 ```
 
 Shows native Agent/Helper service state and the enrolled Agent/Server/control-plane identity.
-
-### Local health
-
-```bash
-argusctl health
-```
-
-Checks Agent, Helper, Helper socket reachability and local system collection.
-
-### Control-plane connectivity
-
-```bash
-argusctl connection
-```
-
-Performs an authenticated Agent identity request against the configured control plane.
-
-### Full installed-system smoke check
-
-```bash
-sudo argusctl smoke
-```
-
-Use this after installation, reboot and update. It performs broader installed-system validation than the local health command.
 
 ### One-command diagnosis
 
@@ -91,6 +80,41 @@ Doctor checks installation files and permissions, Agent and Helper services, the
 
 Use `argusctl doctor --offline` when external network checks are not wanted. `argusctl --json doctor` returns stable machine-readable output.
 
+### Logs
+
+```bash
+argusctl logs
+```
+
+On a managed node this shows the Agent and Helper journals. On a control-plane host it also shows the Web, Control API, Worker, Content, Caddy and PostgreSQL Compose logs.
+
+Target individual sources when needed:
+
+```bash
+argusctl logs host
+argusctl logs agent
+argusctl logs helper
+argusctl logs control-plane
+argusctl logs web
+argusctl logs control-api
+argusctl logs worker
+argusctl logs content
+argusctl logs caddy
+argusctl logs postgres
+argusctl logs installer
+argusctl logs update
+```
+
+Common options:
+
+```bash
+argusctl logs --tail 500
+argusctl logs control-api --since 1h
+argusctl logs web -f
+```
+
+`--follow`/`-f` follows new output. `--since` is passed to journald or Docker Compose and therefore applies to runtime logs, not the installer/update flat files. Log lines matching common credential shapes such as authorization headers, password/token/secret assignments and database URLs are redacted before printing.
+
 ### Repair
 
 ```bash
@@ -100,6 +124,18 @@ sudo argusctl repair
 Repair restores the installed revision's binaries, service units and deployment files, then verifies the host. It preserves configuration, IDs, credentials, Caddy data, database volumes and media. If repair fails, the previous files and services are restored.
 
 If `argusctl` cannot run, launch the public installer and choose **Repair this installation**. The downloaded installer provides the same recovery path without relying on the installed CLI.
+
+### Advanced compatibility checks
+
+The older commands remain available for scripts and precise low-level checks, but are intentionally hidden from normal `argusctl --help` output because `doctor` already covers their checks:
+
+```bash
+argusctl health
+argusctl connection
+sudo argusctl smoke
+```
+
+`health` checks the native services, Helper socket and host collection. `connection` performs only the authenticated Agent identity request. `smoke` runs the strict installed control-plane verification used by installer/update internals. They are not the recommended first-line troubleshooting workflow.
 
 ### System snapshot
 
@@ -184,7 +220,7 @@ At a high level the update flow:
 7. captures and validates a PostgreSQL backup when required by the update phase;
 8. installs the target files and records the durable target-start boundary;
 9. starts the target services;
-10. requires service health and `argusctl smoke` before success.
+10. requires service health and the internal strict smoke verification before success.
 
 If a mutation-stage failure occurs, the updater uses the stored transaction state to restore the previous coordinated revision. Recovery behavior distinguishes failures before target startup from failures after target startup so the database is not unnecessarily replaced.
 
@@ -227,10 +263,7 @@ Enrollment flow:
 
 The Agent reports heartbeats and snapshots, polls typed commands, calls the local privileged Helper and returns command results.
 
-Package operations retain redacted APT output and expose their current phase in the server activity
-view. The Servers UI consumes targeted event streams instead of refreshing the entire page. On a
-control-plane host, an owner can schedule the existing transactional Argus updater from the System
-page; local recovery continues to use `argusctl`.
+Package operations retain redacted APT output and expose their current phase in the server activity view. The Servers UI consumes targeted event streams instead of refreshing the entire page. On a control-plane host, an owner can schedule the existing transactional Argus updater from the System page; local recovery continues to use `argusctl`.
 
 ## Agent/Helper trust boundary
 
@@ -244,86 +277,18 @@ Argus-owned control-plane containers are marked with `com.argus.protected=true`.
 
 Managed systemd services support typed start, stop and restart operations. Service names must pass validation and Helper allowlisting.
 
-The Agent can also collect relevant service/journald diagnostics. Host-side troubleshooting for Argus itself starts with:
+The Agent can also collect relevant service/journald diagnostics. Host-side troubleshooting for Argus itself normally uses:
 
 ```bash
-systemctl status argus-agent.service
-systemctl status argus-helper.service
-journalctl -u argus-agent.service
-journalctl -u argus-helper.service
+argusctl logs host
+argusctl logs agent -f
+argusctl logs helper -f
 ```
+
+Direct `systemctl`/`journalctl` remains available for low-level host debugging when the CLI itself is unavailable.
 
 ## Package maintenance
 
 APT-based managed hosts expose update/reboot information and support typed maintenance operations such as metadata refresh and supported upgrade flows.
 
 Disruptive operations are maintenance-gated where required by Control API policy. UI button state is not the enforcement boundary.
-
-## Docker and Compose
-
-When Docker is available, Agents report container inventory and expose typed start/stop/restart actions through the Helper.
-
-Compose projects are represented as stack resources. The Helper resolves/validates known Compose project configuration before executing stack actions; the API does not simply accept arbitrary Docker/Compose CLI argument strings.
-
-## Monitoring
-
-Site monitoring can record operational checks including DNS/HTTP reachability, response latency, TLS state and selected website metadata.
-
-Monitoring requests include SSRF protections instead of blindly requesting arbitrary internal addresses.
-
-Checks are persisted and feed site state, incident automation and related operational views.
-
-## Schedules and jobs
-
-Recurring operational work is persisted in PostgreSQL. Workers claim due jobs and record attempts/results.
-
-The same job foundation is used by capabilities such as:
-
-- site monitoring;
-- incident evaluation;
-- notification materialization;
-- desired-state reconciliation;
-- domain lifecycle evaluation;
-- Payload project synchronization.
-
-The global Jobs view exposes this background activity instead of hiding it inside long-running web processes.
-
-## Incidents
-
-Incidents are project-scoped and carry severity, status, affected resources, timeline and resolution context.
-
-Monitoring automation can evaluate/create incidents after configured failure conditions rather than turning every failed request into a new incident.
-
-Dependency and change-correlation information can be used as operational context. Correlation is evidence for investigation, not automatic root-cause proof.
-
-## Notifications
-
-Project/domain events can materialize operator notifications through background jobs. The global Notifications view is the current operator-facing notification surface.
-
-External notification providers such as email/chat/webhooks should only be documented as available once a concrete provider implementation exists.
-
-## Status pages
-
-Projects can expose public status information based on selected operational components/incidents. Status pages are a presentation layer over normal Argus operational state and intentionally render outside the authenticated control-panel shell.
-
-## Desired state and drift
-
-Argus stores desired security state separately from authenticated Agent observations.
-
-Current automatic enforcement remains deliberately narrow. Firewall `must be active` is the supported reconciliation primitive because it has explicit preflight and rollback behavior. Other observed fields should remain monitor-only until equivalent safety semantics exist.
-
-## Operational non-goals / current limits
-
-Argus currently does not claim to provide:
-
-- arbitrary remote shell as its normal management model;
-- full metrics/time-series observability;
-- generalized configuration management for every Linux setting;
-- automatic cloud/provider provisioning;
-- automatic Cloudflare/DNS mutation;
-- HA/multi-node control-plane operation;
-- arm64 installation support;
-- arbitrary point-in-time database rollback after a successful update;
-- completely autonomous remediation for arbitrary incidents.
-
-See [Roadmap](roadmap.md) for current priorities rather than historical first-test phases.

@@ -52,7 +52,7 @@ The default paths are:
 /opt/argus/       control-plane Compose files and runtime environment
 /etc/argus/       host configuration and stored registry credentials
 /var/lib/argus/   persistent Argus host state and backups
-/var/log/argus/   installer logs
+/var/log/argus/   installer and host-update logs
 /usr/local/bin/   argus-agent, argus-helper and argusctl
 ```
 
@@ -62,25 +62,30 @@ Running the public installer on an existing host opens a recovery menu instead o
 
 ## Verify the installation
 
-After installation:
+After installation, the normal checks are:
 
 ```bash
 argusctl status
-argusctl health
-argusctl connection
 argusctl doctor
-sudo argusctl smoke
 ```
 
-`argusctl smoke` exercises the installed control plane more broadly than the local service checks and should be the first command used after installation or an update.
-
-`argusctl doctor` is the best starting point when a host is not behaving as expected. It continues through failed checks and reports practical next steps:
+`status` gives the quick service/enrollment overview. `doctor` performs the broader installation, Agent, container, DNS and HTTPS verification in one pass:
 
 ```bash
 argusctl doctor
 argusctl doctor --offline
 argusctl --json doctor
 ```
+
+If a check fails and you need the underlying output, use:
+
+```bash
+argusctl logs
+argusctl logs control-plane
+argusctl logs agent -f
+```
+
+The low-level `health`, `connection` and `smoke` commands still exist for compatibility and scripts, but are intentionally not part of the normal verification flow. The installer and updater continue to use strict smoke verification internally where required.
 
 Open the configured Argus URL in a browser once the checks are green. Sign in with the operator credentials configured during installation.
 
@@ -115,8 +120,7 @@ Check the new node with:
 
 ```bash
 argusctl status
-argusctl health
-argusctl connection
+argusctl doctor
 ```
 
 ## Update Argus
@@ -129,15 +133,9 @@ sudo argusctl update --version main
 
 Argus resolves the release to an immutable Git revision. The update path performs preflight checks, keeps rollback material and verifies the resulting installation instead of simply replacing running containers in place.
 
-Before changing the installed deployment, the current updater extracts the target revision's
-`argusctl` from the verified host-tools image and delegates the transaction to it. The current
-process keeps the update lock while the target runner verifies its revision, checksum and process
-identity. This lets each release interpret its own deployment templates and migration rules without
-replacing the installed CLI outside the rollback-protected transaction.
+Before changing the installed deployment, the current updater extracts the target revision's `argusctl` from the verified host-tools image and delegates the transaction to it. The current process keeps the update lock while the target runner verifies its revision, checksum and process identity. This lets each release interpret its own deployment templates and migration rules without replacing the installed CLI outside the rollback-protected transaction.
 
-Targets that do not advertise a compatible update-runner protocol are rejected before the updater
-creates a transaction or stops services; use a supported bridge release instead of forcing an
-incompatible downgrade.
+Targets that do not advertise a compatible update-runner protocol are rejected before the updater creates a transaction or stops services; use a supported bridge release instead of forcing an incompatible downgrade.
 
 To install a specific published revision:
 
@@ -146,6 +144,12 @@ sudo argusctl update --version <40-character-git-sha>
 ```
 
 Interactive updates show a confirmation before changing the host. Automation must add `--yes`.
+
+Update output triggered through the browser is retained on the host and can be inspected with:
+
+```bash
+argusctl logs update
+```
 
 ## Repair Argus
 
@@ -237,17 +241,25 @@ When data is preserved, Argus also writes a root-only recovery bundle under `/va
 
 ## Troubleshooting
 
-Start with:
+Use the primary flow first:
 
 ```bash
 argusctl status
-argusctl health
-argusctl connection
-argusctl domain check
-sudo argusctl smoke
+argusctl doctor
+argusctl logs
 ```
 
-Useful host-level checks include:
+Target the failing layer rather than dropping directly to Docker/systemd commands:
+
+```bash
+argusctl logs control-api --tail 500
+argusctl logs caddy --since 1h
+argusctl logs host -f
+argusctl logs installer
+argusctl logs update
+```
+
+If `argusctl` itself cannot run, direct host tools remain the fallback:
 
 ```bash
 systemctl status argus-agent.service
@@ -255,20 +267,3 @@ systemctl status argus-helper.service
 journalctl -u argus-agent.service
 journalctl -u argus-helper.service
 ```
-
-Installer logs are written under `/var/log/argus/`.
-
-If an update cannot pull images because the stored package credential is no longer valid, rotate it with `sudo argusctl registry-login` before retrying.
-
-## Current installation limits
-
-The current path is deliberately narrow:
-
-- Ubuntu/Debian only;
-- amd64 only;
-- single control-plane host;
-- direct HTTP/HTTPS ingress through Caddy;
-- private GHCR access is required;
-- first-party login is implemented, but per-user identity is not yet propagated through every Web -> Control API audit path.
-
-See [Authentication](authentication.md) for the current session, role and identity model.
