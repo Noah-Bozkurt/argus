@@ -7,16 +7,15 @@ export default async function ProjectsPage() {
 
   return (
     <main>
-      <div className="page-header">
+      <div className="page-header compact-page-header">
         <div>
-          <span className="eyebrow">Workspace</span>
           <h1>Projects</h1>
-          <p>Projects are first-class workspaces. Client context stays optional, so personal software, websites and infrastructure fit the same model.</p>
+          <p>Workspaces for software, websites, infrastructure and personal projects.</p>
         </div>
       </div>
 
       <details className="create-drawer">
-        <summary className="button primary">+ New project</summary>
+        <summary className="button primary">New project</summary>
         <div className="drawer-content">
           <form action={createProjectAction}>
             <div className="form-grid">
