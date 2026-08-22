@@ -54,9 +54,10 @@ jobs:
   validate:
     if: github.event_name != 'push'
     runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 35
     outputs:
-      database: ${{ steps.filter.outputs.database }}
-      cms_runtime: ${{ steps.filter.outputs.cms_runtime }}
+      deployment: ${{ steps.filter.outputs.deployment }}
+      acceptance: ${{ steps.filter.outputs.acceptance }}
       full: ${{ steps.scope.outputs.full }}
     steps:
       - uses: actions/checkout@v4
@@ -167,7 +168,7 @@ jobs:
           steps.filter.outputs.web == 'true' ||
           steps.filter.outputs.content == 'true' ||
           steps.filter.outputs.installer == 'true' ||
-          steps.filter.outputs.acceptance == 'true' ||
+          steps.filter.outputs.cms_runtime == 'true' ||
           steps.scope.outputs.full == 'true'
         with:
           version: 9
@@ -176,7 +177,7 @@ jobs:
           steps.filter.outputs.web == 'true' ||
           steps.filter.outputs.content == 'true' ||
           steps.filter.outputs.installer == 'true' ||
-          steps.filter.outputs.acceptance == 'true' ||
+          steps.filter.outputs.cms_runtime == 'true' ||
           steps.scope.outputs.full == 'true'
         with:
           node-version: 22
@@ -187,6 +188,7 @@ jobs:
           steps.filter.outputs.web == 'true' ||
           steps.filter.outputs.content == 'true' ||
           steps.filter.outputs.installer == 'true' ||
+          steps.filter.outputs.cms_runtime == 'true' ||
           steps.scope.outputs.full == 'true'
         run: pnpm install --frozen-lockfile
       - name: Typecheck Web
@@ -201,8 +203,127 @@ jobs:
         if: steps.filter.outputs.installer == 'true' || steps.scope.outputs.full == 'true'
         run: pnpm --filter @argus/installer test
 
+      - name: Start runtime Postgres
+        if: >-
+          steps.filter.outputs.database == 'true' ||
+          steps.filter.outputs.cms_runtime == 'true' ||
+          steps.scope.outputs.full == 'true'
+        run: |
+          set -euo pipefail
+          container="argus-ci-postgres-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker rm -f "$container" >/dev/null 2>&1 || true
+          docker run -d --name "$container" \
+            -e POSTGRES_USER=argus \
+            -e POSTGRES_PASSWORD=argus-test-password \
+            -e POSTGRES_DB=argus \
+            -p 127.0.0.1::5432 \
+            postgres:16 >/dev/null
+          for _ in $(seq 1 60); do
+            if docker exec "$container" pg_isready -U argus -d argus >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          docker exec "$container" pg_isready -U argus -d argus >/dev/null
+          port="$(docker port "$container" 5432/tcp | sed -n 's/.*://p' | head -n1)"
+          [[ "$port" =~ ^[0-9]+$ ]]
+          echo "ARGUS_CI_POSTGRES_CONTAINER=$container" >> "$GITHUB_ENV"
+          echo "ARGUS_CI_POSTGRES_PORT=$port" >> "$GITHUB_ENV"
+
+      - name: Verify migrations and Worker scheduling
+        if: steps.filter.outputs.database == 'true' || steps.scope.outputs.full == 'true'
+        env:
+          ARGUS_CONTROL_API_BIND: 127.0.0.1:18080
+          ARGUS_CONTROL_API_URL: http://127.0.0.1:18080
+          ARGUS_WEB_API_TOKEN: 0123456789abcdef0123456789abcdef
+          ARGUS_WORKER_TOKEN: abcdef0123456789abcdef0123456789
+          ARGUS_CONTENT_URL: http://127.0.0.1:9
+          ARGUS_CONTENT_SYNC_TOKEN: '11111111111111111111111111111111'
+          ARGUS_WORKER_POLL_SECONDS: 1
+          RUST_LOG: info
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="postgresql://argus:argus-test-password@127.0.0.1:${ARGUS_CI_POSTGRES_PORT}/argus"
+          control_log="$RUNNER_TEMP/argus-control-api.log"
+          worker_log="$RUNNER_TEMP/argus-worker.log"
+          cargo run --locked -p control-api >"$control_log" 2>&1 &
+          control_pid=$!
+          worker_pid=''
+          trap 'kill "$control_pid" ${worker_pid:-} >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 300); do
+            if curl -fsS http://127.0.0.1:18080/health >/dev/null 2>&1; then break; fi
+            if ! kill -0 "$control_pid" >/dev/null 2>&1; then cat "$control_log"; exit 1; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:18080/health >/dev/null || { cat "$control_log"; exit 1; }
+          psql() {
+            docker run --rm --network host -e PGPASSWORD=argus-test-password postgres:16 psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$ARGUS_CI_POSTGRES_PORT" -U argus -d argus "$@"
+          }
+          [[ "$(psql -Atc "SELECT indexprs IS NULL AND indpred IS NULL FROM pg_index WHERE indexrelid='background_jobs_dedupe_idx'::regclass")" == "t" ]]
+          psql -c "INSERT INTO organizations(id,name) VALUES('00000000-0000-4000-8000-000000000001','CI')"
+          cargo run --locked -p argus-worker >"$worker_log" 2>&1 &
+          worker_pid=$!
+          for _ in $(seq 1 60); do
+            if [[ "$(psql -Atc "SELECT EXISTS(SELECT 1 FROM background_jobs WHERE dedupe_key IS NOT NULL)")" == "t" ]]; then exit 0; fi
+            if ! kill -0 "$worker_pid" >/dev/null 2>&1; then cat "$worker_log"; exit 1; fi
+            sleep 1
+          done
+          cat "$worker_log"
+          exit 1
+
+      - name: Exercise native CMS draft and publication workflow
+        if: steps.filter.outputs.cms_runtime == 'true' || steps.scope.outputs.full == 'true'
+        env:
+          ARGUS_CONTENT_DB_SCHEMA: argus_content
+          PAYLOAD_SECRET: payload-runtime-secret-0000000000
+          PAYLOAD_PUBLIC_URL: http://127.0.0.1:3000
+          ARGUS_CONTENT_SYNC_TOKEN: content-sync-runtime-000000000000
+          ARGUS_MEDIA_DIR: ${{ runner.temp }}/argus-content-media
+          PAYLOAD_DB_PUSH: "false"
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="postgresql://argus:argus-test-password@127.0.0.1:${ARGUS_CI_POSTGRES_PORT}/argus"
+          pnpm --filter @argus/content exec payload migrate
+          content_log="$RUNNER_TEMP/argus-content.log"
+          pnpm --filter @argus/content dev >"$content_log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 180); do
+            if curl -fsS http://127.0.0.1:3000/healthz >/dev/null 2>&1; then
+              bash scripts/test-native-cms-runtime.sh
+              bash scripts/test-media-runtime.sh
+              bash scripts/test-forms-runtime.sh
+              ARGUS_TEST_PROJECT_ID=00000000-0000-4000-8000-000000000003 ARGUS_TEST_ORG_ID=00000000-0000-4000-8000-000000000001 ARGUS_TEST_USER_ID=00000000-0000-4000-8000-000000000002 node scripts/first-server-content-acceptance.mjs >/dev/null
+              exit 0
+            fi
+            if ! kill -0 "$pid" >/dev/null 2>&1; then cat "$content_log"; exit 1; fi
+            sleep 1
+          done
+          cat "$content_log"
+          exit 1
+
+      - name: Stop runtime Postgres
+        if: always()
+        run: |
+          if [[ -n "${ARGUS_CI_POSTGRES_CONTAINER:-}" ]]; then
+            docker rm -f "$ARGUS_CI_POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+          fi
+
+  deployment-acceptance:
+    needs: validate
+    if: >-
+      always() && needs.validate.result == 'success' &&
+      (needs.validate.outputs.deployment == 'true' ||
+       needs.validate.outputs.acceptance == 'true' ||
+       needs.validate.outputs.full == 'true')
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        if: needs.validate.outputs.acceptance == 'true' || needs.validate.outputs.full == 'true'
+        with:
+          node-version: 22
+
       - name: Validate acceptance tooling
-        if: steps.filter.outputs.acceptance == 'true' || steps.scope.outputs.full == 'true'
+        if: needs.validate.outputs.acceptance == 'true' || needs.validate.outputs.full == 'true'
         run: |
           set -euo pipefail
           bash -n scripts/first-server-acceptance.sh
@@ -222,7 +343,7 @@ jobs:
           node --test scripts/first-server-content-acceptance.test.mjs
 
       - name: Validate deployment lifecycle
-        if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'
+        if: needs.validate.outputs.deployment == 'true' || needs.validate.outputs.full == 'true'
         run: |
           set -euo pipefail
           bash -n install.sh
@@ -269,7 +390,7 @@ jobs:
           [[ -n "$update_lock" && "$update_lock" == "$recovery_lock" ]]
 
       - name: Test update storage helper safety
-        if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'
+        if: needs.validate.outputs.deployment == 'true' || needs.validate.outputs.full == 'true'
         run: |
           set -euo pipefail
           tmp="$(mktemp -d)"
@@ -303,7 +424,7 @@ jobs:
           [[ -d "$BACKUP_ROOT/manual-snapshot" ]]
 
       - name: Test target update runner handoff safety
-        if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'
+        if: needs.validate.outputs.deployment == 'true' || needs.validate.outputs.full == 'true'
         run: |
           set -euo pipefail
           tmp="$(mktemp -d)"
@@ -330,7 +451,7 @@ jobs:
           [[ "${handoff[2]}" == "update --version $TARGET_REVISION --yes --verbose" ]]
 
       - name: Test update transaction phase safety
-        if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'
+        if: needs.validate.outputs.deployment == 'true' || needs.validate.outputs.full == 'true'
         run: |
           set -euo pipefail
           tmp="$(mktemp -d)"
@@ -392,7 +513,7 @@ jobs:
           [[ "$(find_recovery_transaction)" == "$failed" ]]
 
       - name: Validate Compose and Caddy configuration
-        if: steps.filter.outputs.deployment == 'true' || steps.scope.outputs.full == 'true'
+        if: needs.validate.outputs.deployment == 'true' || needs.validate.outputs.full == 'true'
         run: |
           set -euo pipefail
           cp deploy/compose/Caddyfile.template deploy/compose/Caddyfile
@@ -421,116 +542,6 @@ jobs:
           grep -Fq 'path /public/status/*' "$caddyfile"
           grep -Fq 'path /public/* /api/media/file/*' "$caddyfile"
           docker run --rm -v "$caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
-
-  runtime-integration:
-    needs: validate
-    if: >-
-      always() && needs.validate.result == 'success' &&
-      (needs.validate.outputs.database == 'true' ||
-       needs.validate.outputs.cms_runtime == 'true' ||
-       needs.validate.outputs.full == 'true')
-    runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 15
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: argus
-          POSTGRES_PASSWORD: argus-test-password
-          POSTGRES_DB: argus
-        ports:
-          - 5432/tcp
-        options: >-
-          --health-cmd "pg_isready -U argus -d argus"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Verify migrations and Worker scheduling
-        env:
-          DATABASE_URL: postgresql://argus:argus-test-password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/argus
-          ARGUS_CONTROL_API_BIND: 127.0.0.1:18080
-          ARGUS_CONTROL_API_URL: http://127.0.0.1:18080
-          ARGUS_WEB_API_TOKEN: 0123456789abcdef0123456789abcdef
-          ARGUS_WORKER_TOKEN: abcdef0123456789abcdef0123456789
-          ARGUS_CONTENT_URL: http://127.0.0.1:9
-          ARGUS_CONTENT_SYNC_TOKEN: '11111111111111111111111111111111'
-          ARGUS_WORKER_POLL_SECONDS: 1
-          RUST_LOG: info
-        run: |
-          set -euo pipefail
-          control_log="$RUNNER_TEMP/argus-control-api.log"
-          worker_log="$RUNNER_TEMP/argus-worker.log"
-          cargo run --locked -p control-api >"$control_log" 2>&1 &
-          control_pid=$!
-          worker_pid=''
-          trap 'kill "$control_pid" ${worker_pid:-} >/dev/null 2>&1 || true' EXIT
-          for _ in $(seq 1 300); do
-            if curl -fsS http://127.0.0.1:18080/health >/dev/null 2>&1; then break; fi
-            if ! kill -0 "$control_pid" >/dev/null 2>&1; then cat "$control_log"; exit 1; fi
-            sleep 1
-          done
-          curl -fsS http://127.0.0.1:18080/health >/dev/null || { cat "$control_log"; exit 1; }
-          psql() {
-            docker run --rm --network host -e PGPASSWORD=argus-test-password postgres:16 psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p '${{ job.services.postgres.ports[5432] }}' -U argus -d argus "$@"
-          }
-          [[ "$(psql -Atc "SELECT indexprs IS NULL AND indpred IS NULL FROM pg_index WHERE indexrelid='background_jobs_dedupe_idx'::regclass")" == "t" ]]
-          psql -c "INSERT INTO organizations(id,name) VALUES('00000000-0000-4000-8000-000000000001','CI')"
-          cargo run --locked -p argus-worker >"$worker_log" 2>&1 &
-          worker_pid=$!
-          for _ in $(seq 1 60); do
-            if [[ "$(psql -Atc "SELECT EXISTS(SELECT 1 FROM background_jobs WHERE dedupe_key IS NOT NULL)")" == "t" ]]; then exit 0; fi
-            if ! kill -0 "$worker_pid" >/dev/null 2>&1; then cat "$worker_log"; exit 1; fi
-            sleep 1
-          done
-          cat "$worker_log"
-          exit 1
-
-      - uses: pnpm/action-setup@v4
-        if: needs.validate.outputs.cms_runtime == 'true' || needs.validate.outputs.full == 'true'
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        if: needs.validate.outputs.cms_runtime == 'true' || needs.validate.outputs.full == 'true'
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - if: needs.validate.outputs.cms_runtime == 'true' || needs.validate.outputs.full == 'true'
-        run: pnpm install --frozen-lockfile
-      - name: Exercise native CMS draft and publication workflow
-        if: needs.validate.outputs.cms_runtime == 'true' || needs.validate.outputs.full == 'true'
-        env:
-          DATABASE_URL: postgresql://argus:argus-test-password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/argus
-          ARGUS_CONTENT_DB_SCHEMA: argus_content
-          PAYLOAD_SECRET: payload-runtime-secret-0000000000
-          PAYLOAD_PUBLIC_URL: http://127.0.0.1:3000
-          ARGUS_CONTENT_SYNC_TOKEN: content-sync-runtime-000000000000
-          ARGUS_MEDIA_DIR: ${{ runner.temp }}/argus-content-media
-          PAYLOAD_DB_PUSH: "false"
-        run: |
-          set -euo pipefail
-          pnpm --filter @argus/content exec payload migrate
-          content_log="$RUNNER_TEMP/argus-content.log"
-          pnpm --filter @argus/content dev >"$content_log" 2>&1 &
-          pid=$!
-          trap 'kill "$pid" >/dev/null 2>&1 || true' EXIT
-          for _ in $(seq 1 180); do
-            if curl -fsS http://127.0.0.1:3000/healthz >/dev/null 2>&1; then
-              bash scripts/test-native-cms-runtime.sh
-              bash scripts/test-media-runtime.sh
-              bash scripts/test-forms-runtime.sh
-              ARGUS_TEST_PROJECT_ID=00000000-0000-4000-8000-000000000003 ARGUS_TEST_ORG_ID=00000000-0000-4000-8000-000000000001 ARGUS_TEST_USER_ID=00000000-0000-4000-8000-000000000002 node scripts/first-server-content-acceptance.mjs >/dev/null
-              exit 0
-            fi
-            if ! kill -0 "$pid" >/dev/null 2>&1; then cat "$content_log"; exit 1; fi
-            sleep 1
-          done
-          cat "$content_log"
-          exit 1
 
   release-gate:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
