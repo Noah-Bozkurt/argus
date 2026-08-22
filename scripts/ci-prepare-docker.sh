@@ -38,7 +38,14 @@ if [[ "${1:-}" == "run" && -n "${HOSTNAME:-}" ]]; then
   done
 
   if [[ "$is_postgres" == "true" ]]; then
-    rewritten=("run")
+    label="argus.ci.runner=${HOSTNAME}"
+    mapfile -t stale < <("${docker_cmd[@]}" ps -aq --filter "label=${label}" 2>/dev/null || true)
+    if (( ${#stale[@]} > 0 )); then
+      echo "[argus-ci] removing ${#stale[@]} stale Postgres container(s) for runner ${HOSTNAME}" >&2
+      "${docker_cmd[@]}" rm -f "${stale[@]}" >/dev/null 2>&1 || true
+    fi
+
+    rewritten=("run" "--label" "$label")
     i=1
     while (( i < ${#args[@]} )); do
       if [[ "${args[$i]}" == "-p" && $((i + 1)) -lt ${#args[@]} && "${args[$((i + 1))]}" == "127.0.0.1::5432" ]]; then
@@ -49,6 +56,7 @@ if [[ "${1:-}" == "run" && -n "${HOSTNAME:-}" ]]; then
       rewritten+=("${args[$i]}")
       i=$((i + 1))
     done
+    echo "[argus-ci] starting Postgres inside runner ${HOSTNAME} network namespace" >&2
     exec "${docker_cmd[@]}" "${rewritten[@]}"
   fi
 fi
