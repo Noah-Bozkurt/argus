@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="650" viewBox="0 0 1200 650" role="img" aria-labelledby="title desc">
+  <title id="title">Argus runtime architecture</title>
+  <desc id="desc">Diagram showing the public Caddy edge, containerized control-plane services, PostgreSQL, and managed-host Agent and privileged Helper services.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#566073"/>
+    </marker>
+    <marker id="arrow-primary" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7590ff"/>
+    </marker>
+    <filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000000" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="650" rx="18" fill="#0b0d12"/>
+
+  <g font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <text x="42" y="42" fill="#7590ff" font-size="11" font-weight="700" letter-spacing="2.2">ARGUS</text>
+    <text x="42" y="66" fill="#f5f7fb" font-size="21" font-weight="650">Runtime architecture</text>
+    <text x="252" y="66" fill="#818a9b" font-size="12">project-first control plane · typed host operations · outbound agents</text>
+
+    <!-- External entry point -->
+    <rect x="42" y="92" width="196" height="50" rx="10" fill="#11141b" stroke="#303746"/>
+    <circle cx="66" cy="117" r="7" fill="#44c88a"/>
+    <text x="84" y="114" fill="#f5f7fb" font-size="13" font-weight="600">Internet / browser</text>
+    <text x="84" y="130" fill="#818a9b" font-size="10.5">public HTTPS</text>
+
+    <!-- Control plane boundary -->
+    <rect x="42" y="168" width="758" height="438" rx="14" fill="#0f1218" stroke="#232833"/>
+    <text x="64" y="194" fill="#f5f7fb" font-size="12" font-weight="700" letter-spacing="1.4">CONTROL PLANE</text>
+    <text x="190" y="194" fill="#697182" font-size="10.5">DOCKER COMPOSE SERVICES</text>
+
+    <!-- Managed host boundary -->
+    <rect x="830" y="168" width="328" height="438" rx="14" fill="#0f1218" stroke="#232833"/>
+    <text x="852" y="194" fill="#f5f7fb" font-size="12" font-weight="700" letter-spacing="1.4">MANAGED HOSTS</text>
+    <text x="972" y="194" fill="#697182" font-size="10.5">NATIVE SYSTEMD</text>
+    <text x="852" y="211" fill="#697182" font-size="9.5">one or more Linux nodes, including the control-plane host</text>
+
+    <!-- Public edge -->
+    <rect x="252" y="215" width="340" height="66" rx="10" fill="#151922" stroke="#35405b" filter="url(#soft-shadow)"/>
+    <rect x="270" y="231" width="34" height="34" rx="8" fill="#1a2132" stroke="#4162db"/>
+    <path d="M281 255v-14h12v14M278 255h18M282 247h10" fill="none" stroke="#9eb0ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="320" y="242" fill="#f5f7fb" font-size="13" font-weight="650">Caddy</text>
+    <text x="320" y="260" fill="#818a9b" font-size="10.5">only public service · :80 / :443</text>
+
+    <!-- Web -->
+    <rect x="76" y="326" width="214" height="76" rx="10" fill="#11141b" stroke="#232833"/>
+    <text x="94" y="350" fill="#f5f7fb" font-size="13" font-weight="650">Web / UI</text>
+    <text x="94" y="369" fill="#818a9b" font-size="10.5">Next.js operator app</text>
+    <rect x="94" y="379" width="61" height="15" rx="7.5" fill="#151922" stroke="#232833"/>
+    <text x="105" y="390" fill="#818a9b" font-size="8.5" font-weight="600">SERVER-SIDE</text>
+
+    <!-- Content -->
+    <rect x="552" y="326" width="214" height="76" rx="10" fill="#11141b" stroke="#232833"/>
+    <text x="570" y="350" fill="#f5f7fb" font-size="13" font-weight="650">Content / CMS</text>
+    <text x="570" y="369" fill="#818a9b" font-size="10.5">Payload + Next.js</text>
+    <rect x="570" y="379" width="94" height="15" rx="7.5" fill="#151922" stroke="#232833"/>
+    <text x="580" y="390" fill="#818a9b" font-size="8.5" font-weight="600">ISOLATED SCHEMA</text>
+
+    <!-- Control API -->
+    <rect x="314" y="326" width="214" height="92" rx="10" fill="#151a2a" stroke="#5b7cff" stroke-width="1.2" filter="url(#soft-shadow)"/>
+    <rect x="332" y="344" width="30" height="30" rx="7" fill="#1a2132" stroke="#4162db"/>
+    <path d="M341 351h12v12h-12zM344 355h6M344 359h6" fill="none" stroke="#aebcff" stroke-width="1.4" stroke-linecap="round"/>
+    <text x="376" y="355" fill="#f5f7fb" font-size="13" font-weight="700">Control API</text>
+    <text x="376" y="373" fill="#aebcff" font-size="10.5">authoritative operational state</text>
+    <text x="332" y="400" fill="#818a9b" font-size="9.5">Rust / Axum · typed commands · auth · audit</text>
+
+    <!-- Worker -->
+    <rect x="76" y="464" width="214" height="76" rx="10" fill="#11141b" stroke="#232833"/>
+    <text x="94" y="488" fill="#f5f7fb" font-size="13" font-weight="650">Jobs Worker</text>
+    <text x="94" y="507" fill="#818a9b" font-size="10.5">persisted background work</text>
+    <text x="94" y="525" fill="#697182" font-size="9.5">monitor · reconcile · notify</text>
+
+    <!-- PostgreSQL -->
+    <rect x="552" y="464" width="214" height="76" rx="10" fill="#11141b" stroke="#232833"/>
+    <ellipse cx="577" cy="486" rx="10" ry="4.5" fill="none" stroke="#9da6b7" stroke-width="1.4"/>
+    <path d="M567 486v15c0 2.5 4.5 4.5 10 4.5s10-2 10-4.5v-15M567 493c0 2.5 4.5 4.5 10 4.5s10-2 10-4.5" fill="none" stroke="#9da6b7" stroke-width="1.4"/>
+    <text x="602" y="489" fill="#f5f7fb" font-size="13" font-weight="650">PostgreSQL</text>
+    <text x="602" y="507" fill="#818a9b" font-size="10.5">control + content schemas</text>
+    <text x="602" y="525" fill="#697182" font-size="9.5">private network only</text>
+
+    <!-- Managed host: Agent -->
+    <rect x="864" y="258" width="260" height="86" rx="10" fill="#11141b" stroke="#303746"/>
+    <circle cx="888" cy="282" r="8" fill="#1a2132" stroke="#4162db"/>
+    <circle cx="888" cy="282" r="2.5" fill="#7590ff"/>
+    <path d="M888 274v-4M888 294v-4M880 282h-4M900 282h-4" stroke="#7590ff" stroke-width="1.2" stroke-linecap="round"/>
+    <text x="908" y="282" fill="#f5f7fb" font-size="13" font-weight="650">Agent</text>
+    <text x="882" y="306" fill="#818a9b" font-size="10.5">unprivileged · outbound connection</text>
+    <text x="882" y="324" fill="#697182" font-size="9.5">heartbeats · inventory · command polling</text>
+
+    <!-- Managed host: Helper -->
+    <rect x="864" y="392" width="260" height="86" rx="10" fill="#11141b" stroke="#303746"/>
+    <path d="M884 413l8-4 8 4v7c0 7-4.5 11-8 13-3.5-2-8-6-8-13z" fill="#1a2132" stroke="#e7b35a" stroke-width="1.2"/>
+    <text x="912" y="419" fill="#f5f7fb" font-size="13" font-weight="650">Privileged Helper</text>
+    <text x="882" y="442" fill="#818a9b" font-size="10.5">root boundary · local socket only</text>
+    <text x="882" y="460" fill="#697182" font-size="9.5">validated operation classes, no remote shell</text>
+
+    <!-- Managed host: operations -->
+    <rect x="864" y="526" width="260" height="54" rx="10" fill="#151922" stroke="#232833"/>
+    <text x="882" y="549" fill="#c6ccd7" font-size="11" font-weight="600">Docker · Compose · systemd · APT · firewall</text>
+    <text x="882" y="566" fill="#697182" font-size="9.5">host observation and controlled mutation</text>
+
+    <!-- Connections -->
+    <path d="M238 117 C 330 117, 350 175, 402 215" fill="none" stroke="#7590ff" stroke-width="1.7" marker-end="url(#arrow-primary)"/>
+
+    <path d="M338 281 C 300 300, 240 305, 185 326" fill="none" stroke="#566073" stroke-width="1.4" marker-end="url(#arrow)"/>
+    <path d="M506 281 C 545 301, 607 306, 659 326" fill="none" stroke="#566073" stroke-width="1.4" marker-end="url(#arrow)"/>
+    <path d="M421 281 L421 326" fill="none" stroke="#566073" stroke-width="1.4" stroke-dasharray="4 5" marker-end="url(#arrow)"/>
+    <text x="431" y="306" fill="#697182" font-size="8.5">allowlisted API routes</text>
+
+    <path d="M290 364 L314 364" fill="none" stroke="#7590ff" stroke-width="1.6" marker-end="url(#arrow-primary)"/>
+    <path d="M183 402 L183 464" fill="none" stroke="#566073" stroke-width="1.4" marker-end="url(#arrow)" opacity="0"/>
+
+    <path d="M314 399 C 278 425, 230 441, 183 464" fill="none" stroke="#566073" stroke-width="1.4" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+    <text x="205" y="435" fill="#697182" font-size="8.5">internal jobs</text>
+
+    <path d="M528 399 C 568 426, 614 440, 659 464" fill="none" stroke="#566073" stroke-width="1.4" marker-end="url(#arrow)"/>
+    <path d="M659 402 L659 464" fill="none" stroke="#566073" stroke-width="1.4" marker-end="url(#arrow)"/>
+    <path d="M290 502 C 382 558, 466 558, 552 502" fill="none" stroke="#566073" stroke-width="1.2" stroke-dasharray="4 5" marker-end="url(#arrow)"/>
+
+    <path d="M528 372 C 650 372, 742 301, 864 301" fill="none" stroke="#7590ff" stroke-width="1.7" marker-start="url(#arrow-primary)" marker-end="url(#arrow-primary)"/>
+    <rect x="662" y="321" width="139" height="22" rx="11" fill="#11141b" stroke="#232833"/>
+    <text x="677" y="336" fill="#9eb0ff" font-size="9.5" font-weight="600">AUTHENTICATED PROTOCOL</text>
+
+    <path d="M994 344 L994 392" fill="none" stroke="#566073" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="1007" y="372" fill="#697182" font-size="8.5">Unix socket</text>
+
+    <path d="M994 478 L994 526" fill="none" stroke="#e7b35a" stroke-width="1.4" marker-end="url(#arrow)"/>
+
+    <!-- Legend -->
+    <circle cx="65" cy="575" r="4" fill="#7590ff"/>
+    <text x="76" y="579" fill="#697182" font-size="9.5">authenticated / application path</text>
+    <circle cx="236" cy="575" r="4" fill="#e7b35a"/>
+    <text x="247" y="579" fill="#697182" font-size="9.5">privileged local boundary</text>
+  </g>
+</svg>
