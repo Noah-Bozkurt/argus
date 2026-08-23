@@ -243,6 +243,17 @@ pub fn prompt_secret(prompt: &str) -> Result<String> {
     Ok(value.trim().to_string())
 }
 
+pub fn docker_pull_images<F>(images: &[String], report: F) -> Result<()>
+where
+    F: FnMut(crate::docker::PullProgress),
+{
+    crate::docker::pull_images_blocking(images, report)
+}
+
+pub fn docker_short_image_name(image: &str) -> &str {
+    crate::docker::short_image_name(image)
+}
+
 pub fn registry_config() -> RegistryConfig {
     RegistryConfig {
         registry: env::var("ARGUS_REGISTRY").unwrap_or_else(|_| DEFAULT_REGISTRY.to_string()),

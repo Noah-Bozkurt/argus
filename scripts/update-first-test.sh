@@ -321,7 +321,18 @@ image_branch_update_protocol() {
 }
 
 pull_image() {
-  local ref="$1" output status summary
+  local ref="$1" output status summary helper
+
+  if [[ "${ARGUS_UPDATE_BOLLARD_PULL:-0}" == "1" ]]; then
+    helper="${ARGUS_UPDATE_PULL_HELPER:-/proc/$PPID/exe}"
+    [[ -x "$helper" ]] || die "Bollard pull helper is unavailable: $helper"
+    set +e
+    "$helper" docker-pull "$ref"
+    status=$?
+    set -e
+    (( status == 0 )) || die "failed to pull $ref through Docker Engine API (exit $status)"
+    return
+  fi
 
   if [[ "${ARGUS_UPDATE_VERBOSE:-0}" == "1" ]] || [[ -t 1 ]]; then
     set +e
