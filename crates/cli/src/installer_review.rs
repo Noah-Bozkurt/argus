@@ -1,7 +1,5 @@
 use super::{
-    installer_shared::{
-        ControlConfig, TlsMode, new_secret, validate_basic_user, validate_domain,
-    },
+    installer_shared::{ControlConfig, TlsMode, new_secret, validate_basic_user, validate_domain},
     installer_ui::{MenuChoice, MenuItem, menu_select},
 };
 use anyhow::{Result, bail};
