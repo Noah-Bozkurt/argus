@@ -9,14 +9,16 @@ mod installer_repair;
 mod installer_review;
 mod installer_shared;
 mod installer_tls;
+mod installer_ui;
 
 use installer_review::review_control_install;
-use installer_shared::{ControlConfig, InstallMode, Installer, select_mode, validate_domain};
+use installer_shared::{ControlConfig, InstallMode, Installer, validate_domain};
+use installer_ui::{print_control_success, print_managed_success, select_install_mode};
 
 #[derive(Debug, Parser)]
 #[command(
     name = "argus-installer",
-    about = "Install an Argus control plane or managed node"
+    about = "Install an Argus control plane or managed server"
 )]
 struct Cli {
     /// Installation path: control-plane, agent, repair, update, or uninstall.
@@ -117,7 +119,6 @@ impl Installer {
     fn run(&mut self) -> Result<()> {
         lifecycle::require_root().context("installer must run as root")?;
         self.ui.enable_log(&self.log_dir)?;
-        self.ui.title();
 
         if self.mode == InstallMode::Repair {
             return self.repair_installation();
@@ -148,14 +149,14 @@ impl Installer {
             let result = (|| -> Result<()> {
                 self.preflight()?;
                 lifecycle::remove_legacy_registry_credentials(&self.config_dir)?;
-                self.ui.working("Installing managed-node bundle", || {
+                self.ui.working("Installing managed server", || {
                     self.install_managed_node(&credentials, &setup)
                 })
             })();
             if let Err(error) = result {
                 if fresh_install {
                     self.ui.warning(
-                        "Managed-node installation failed; removing installed Argus components.",
+                        "Managed-server installation failed; removing installed Argus components.",
                     );
                     if let Err(cleanup_error) =
                         lifecycle::uninstall(lifecycle::UninstallOptions::from_env(true, true))
@@ -168,6 +169,7 @@ impl Installer {
                 }
                 return Err(error);
             }
+            print_managed_success();
             return Ok(());
         }
 
@@ -228,7 +230,7 @@ impl Installer {
             return Err(error);
         }
 
-        self.print_summary(&config);
+        print_control_success(&config);
         Ok(())
     }
 }
@@ -238,7 +240,7 @@ fn main() -> Result<()> {
     match cli.action {
         Some(Action::Uninstall { yes, purge_data }) => run_uninstall(yes, purge_data),
         None => {
-            let mode = select_mode(cli.mode)?;
+            let mode = select_install_mode(cli.mode)?;
             let mut installer = Installer::new(mode, cli.verbose)?;
             installer.run().map_err(|error| {
                 installer
