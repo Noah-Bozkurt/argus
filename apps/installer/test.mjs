@@ -73,7 +73,7 @@ test("native installer uses public registry access", async () => {
   const productionLifecycle = lifecycle.split("\n#[cfg(test)]")[0];
   assert.match(productionLifecycle, /DEFAULT_REGISTRY/);
   assert.doesNotMatch(productionLifecycle, /docker login|ARGUS_REGISTRY_TOKEN/);
-  assert.match(installer, /Install an Argus control plane or managed node/);
+  assert.match(installer, /Install an Argus control plane or managed server/);
 });
 
 test("native installer keeps interactive prompts visible and guides uninstall", async () => {
@@ -138,7 +138,7 @@ test("installer portal explains the real deployment and published revision", asy
 test("updater retains progress and reports public pull failures", async () => {
   const updater = await readFile(resolve(rootDir, "scripts/update-first-test.sh"), "utf8");
   assert.doesNotMatch(updater, /docker login|ARGUS_REGISTRY_TOKEN/);
-  assert.match(updater, /failed to pull \$ref \(docker exit \$status\): \$summary/);
+  assert.match(updater, /failed to pull \$ref: \$PULL_ERROR/);
   assert.match(updater, /progress_start "Downloading update"/);
   assert.match(updater, /progress_start "Installing update"/);
   assert.match(updater, /progress_start "Starting Argus services"/);
