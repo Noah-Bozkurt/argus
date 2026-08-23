@@ -1,3 +1,5 @@
+pub mod docker;
+
 use protocol::{BackupArtifact, BackupState, SecurityFinding, SecurityState};
 use std::{
     collections::HashSet,
@@ -11,7 +13,6 @@ use tokio::process::Command;
 
 const MAX_JOURNAL_LINES: u32 = 500;
 const MAX_OUTPUT_BYTES: usize = 64 * 1024;
-const MAX_DOCKER_OUTPUT_BYTES: usize = 256 * 1024;
 const MAX_BACKUPS: usize = 50;
 
 #[derive(Debug, Error)]
@@ -161,27 +162,34 @@ impl HelperApi {
         ))
     }
     pub async fn docker_list(&self) -> Result<String, HelperError> {
-        Ok(truncate_utf8(
-            run_capture(
-                "docker",
-                &["ps", "-a", "--no-trunc", "--format", "{{json .}}"],
-            )
-            .await?,
-            MAX_DOCKER_OUTPUT_BYTES,
-        ))
+        docker::list().await
+    }
+    pub async fn docker_inspect(&self, container: &str) -> Result<String, HelperError> {
+        Self::validate_container_reference(container)?;
+        docker::inspect(container).await
+    }
+    pub async fn docker_stats(&self, container: &str) -> Result<String, HelperError> {
+        Self::validate_container_reference(container)?;
+        docker::stats(container).await
+    }
+    pub async fn docker_logs(&self, container: &str, lines: u32) -> Result<String, HelperError> {
+        Self::validate_container_reference(container)?;
+        if lines == 0 || lines > MAX_JOURNAL_LINES {
+            return Err(HelperError::InvalidRequest);
+        }
+        docker::logs(container, lines).await
     }
     pub async fn docker_start(&self, container: &str) -> Result<(), HelperError> {
-        self.docker_action("start", container).await
+        Self::validate_container_reference(container)?;
+        docker::start(container).await
     }
     pub async fn docker_stop(&self, container: &str) -> Result<(), HelperError> {
-        self.docker_action("stop", container).await
+        Self::validate_container_reference(container)?;
+        docker::stop(container).await
     }
     pub async fn docker_restart(&self, container: &str) -> Result<(), HelperError> {
-        self.docker_action("restart", container).await
-    }
-    async fn docker_action(&self, action: &str, container: &str) -> Result<(), HelperError> {
         Self::validate_container_reference(container)?;
-        run("docker", &[action, container]).await
+        docker::restart(container).await
     }
     pub async fn docker_compose_start(&self, project: &str) -> Result<(), HelperError> {
         self.docker_compose_action("start", project).await
