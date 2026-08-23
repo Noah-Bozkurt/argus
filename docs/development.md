@@ -162,6 +162,8 @@ Do not run the Helper as a network service or add generic shell execution to sim
 
 Local diagnostic commands are available through `argusctl` (`crates/cli`). They are an operator/developer diagnostic surface, not a replacement for normal UI/API workflows.
 
+Lifecycle image downloads use Bollard against the local Docker Engine API so the installer and concise updater can report Docker layer byte progress without parsing CLI text. Docker Compose remains the owner of Compose configuration and service orchestration (`config`, `up`, `down`, and related stack operations); do not replace transactional update or rollback semantics with direct container calls just to avoid Compose.
+
 ## Branch and PR workflow
 
 Feature work should use a branch and PR. Required CI must be green before merge. Temporary migration/cleanup workflows should remove themselves and must not land on `main` unless they are intentionally permanent CI.
