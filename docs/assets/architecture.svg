@@ -119,9 +119,9 @@
     <path d="M659 402 L659 464" fill="none" stroke="#566073" stroke-width="1.4" marker-end="url(#arrow)"/>
     <path d="M290 502 C 382 558, 466 558, 552 502" fill="none" stroke="#566073" stroke-width="1.2" stroke-dasharray="4 5" marker-end="url(#arrow)"/>
 
-    <path d="M528 372 C 650 372, 742 301, 864 301" fill="none" stroke="#7590ff" stroke-width="1.7" marker-start="url(#arrow-primary)" marker-end="url(#arrow-primary)"/>
-    <rect x="662" y="321" width="139" height="22" rx="11" fill="#11141b" stroke="#232833"/>
-    <text x="677" y="336" fill="#9eb0ff" font-size="9.5" font-weight="600">AUTHENTICATED PROTOCOL</text>
+    <path d="M528 350 H536 Q544 350 544 358 V548 Q544 560 556 560 H800 Q814 560 814 546 V315 Q814 301 828 301 H864" fill="none" stroke="#7590ff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" marker-start="url(#arrow-primary)" marker-end="url(#arrow-primary)"/>
+    <rect x="596" y="544" width="150" height="22" rx="11" fill="#11141b" stroke="#232833"/>
+    <text x="611" y="559" fill="#9eb0ff" font-size="9.5" font-weight="600">AUTHENTICATED PROTOCOL</text>
 
     <path d="M994 344 L994 392" fill="none" stroke="#566073" stroke-width="1.5" marker-end="url(#arrow)"/>
     <text x="1007" y="372" fill="#697182" font-size="8.5">Unix socket</text>
