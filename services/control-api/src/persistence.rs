@@ -26,7 +26,7 @@ pub struct AgentIdentity {
     pub agent_id: Uuid,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ServerView {
     pub server_id: Uuid,
     pub project_id: Uuid,

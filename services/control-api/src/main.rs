@@ -11,7 +11,12 @@ use protocol::{
 };
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, sync::Arc};
+use tower_http::{
+    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
+    trace::TraceLayer,
+};
 use tracing::info;
+use utoipa::OpenApi;
 use uuid::Uuid;
 
 mod change_correlation;
@@ -122,19 +127,19 @@ impl Config {
         })
     }
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct ErrorResponse {
     code: String,
     message: String,
 }
 type ApiError = (StatusCode, Json<ErrorResponse>);
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct CreateServerRequest {
     project_id: Uuid,
     environment_id: Uuid,
     hostname: String,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct CreateServerResponse {
     server_id: Uuid,
 }
@@ -154,8 +159,29 @@ struct StartMaintenanceRequest {
     reason: String,
 }
 
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(health, list_servers, create_server, get_server),
+    components(schemas(
+        ErrorResponse,
+        CreateServerRequest,
+        CreateServerResponse,
+        persistence::ServerView
+    )),
+    tags(
+        (name = "system", description = "Control-plane health and metadata"),
+        (name = "servers", description = "Managed server inventory")
+    )
+)]
+struct ApiDoc;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if std::env::args().any(|arg| arg == "--print-openapi") {
+        println!("{}", serde_json::to_string_pretty(&ApiDoc::openapi())?);
+        return Ok(());
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
@@ -209,6 +235,7 @@ async fn main() -> anyhow::Result<()> {
     };
     let app = Router::new()
         .route("/health", get(health))
+        .route("/openapi.json", get(openapi_json))
         .route("/servers", get(list_servers).post(create_server))
         .route("/servers/:server_id", get(get_server))
         .route("/servers/:server_id/commands", get(command_history))
@@ -249,14 +276,27 @@ async fn main() -> anyhow::Result<()> {
         .merge(notifications::router())
         .merge(job_execution::router())
         .merge(jobs_admin::router())
-        .with_state(state);
+        .with_state(state)
+        .layer(PropagateRequestIdLayer::x_request_id())
+        .layer(TraceLayer::new_for_http())
+        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid));
     info!(bind_addr=%config.bind_addr, "starting persistent Argus control API");
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
 }
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "system",
+    responses((status = 200, description = "Control API is healthy"))
+)]
 async fn health() -> &'static str {
     "ok"
+}
+
+async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
+    Json(ApiDoc::openapi())
 }
 
 async fn web_identity(state: &AppState, headers: &HeaderMap) -> Result<WebIdentity, ApiError> {
@@ -279,6 +319,16 @@ async fn web_identity(state: &AppState, headers: &HeaderMap) -> Result<WebIdenti
         .map_err(map_storage)?;
     Ok(identity)
 }
+#[utoipa::path(
+    get,
+    path = "/servers",
+    tag = "servers",
+    responses(
+        (status = 200, description = "Managed servers", body = [persistence::ServerView]),
+        (status = 401, description = "Missing or invalid authentication", body = ErrorResponse),
+        (status = 403, description = "Identity is not allowed", body = ErrorResponse)
+    )
+)]
 async fn list_servers(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -292,6 +342,18 @@ async fn list_servers(
             .map_err(map_storage)?,
     ))
 }
+#[utoipa::path(
+    get,
+    path = "/servers/{server_id}",
+    tag = "servers",
+    params(("server_id" = Uuid, Path, description = "Managed server identifier")),
+    responses(
+        (status = 200, description = "Managed server", body = persistence::ServerView),
+        (status = 401, description = "Missing or invalid authentication", body = ErrorResponse),
+        (status = 403, description = "Identity is not allowed", body = ErrorResponse),
+        (status = 404, description = "Server not found", body = ErrorResponse)
+    )
+)]
 async fn get_server(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -306,6 +368,18 @@ async fn get_server(
             .map_err(map_storage)?,
     ))
 }
+#[utoipa::path(
+    post,
+    path = "/servers",
+    tag = "servers",
+    request_body = CreateServerRequest,
+    responses(
+        (status = 200, description = "Server created", body = CreateServerResponse),
+        (status = 400, description = "Invalid server request", body = ErrorResponse),
+        (status = 401, description = "Missing or invalid authentication", body = ErrorResponse),
+        (status = 403, description = "Identity is not allowed", body = ErrorResponse)
+    )
+)]
 async fn create_server(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -689,4 +763,18 @@ fn api_error(status: StatusCode, code: &str, message: &str) -> ApiError {
             message: message.into(),
         }),
     )
+}
+
+#[cfg(test)]
+mod openapi_tests {
+    use super::*;
+
+    #[test]
+    fn core_server_contract_is_exported() {
+        let value = serde_json::to_value(ApiDoc::openapi()).expect("serialize OpenAPI");
+        let paths = value["paths"].as_object().expect("OpenAPI paths");
+        assert!(paths.contains_key("/health"));
+        assert!(paths.contains_key("/servers"));
+        assert!(paths.contains_key("/servers/{server_id}"));
+    }
 }

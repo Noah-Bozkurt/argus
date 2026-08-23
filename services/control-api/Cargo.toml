@@ -11,7 +11,7 @@ axum = { workspace = true }
 chrono = { workspace = true }
 common = { path = "../../crates/common" }
 hex = { workspace = true }
-protocol = { path = "../../crates/protocol" }
+protocol = { path = "../../crates/protocol", features = ["openapi"] }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -21,4 +21,6 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tower-http = { workspace = true }
+utoipa = { workspace = true }
 uuid = { workspace = true }

@@ -42,7 +42,7 @@ pnpm install --no-frozen-lockfile
 cargo fetch
 ```
 
-CI currently uses pnpm install without a frozen lockfile for the combined web/content typecheck and the committed repository lockfile as the dependency source of truth.
+CI installs pnpm dependencies with `--frozen-lockfile`; dependency changes must update and commit `pnpm-lock.yaml`. Rust validation likewise uses the committed `Cargo.lock`.
 
 ## Standard checks
 
@@ -96,6 +96,16 @@ ARGUS_USER_ID=<development user UUID>
 ```
 
 These are backend/server variables. Do not expose the Control API credential through public browser environment variables.
+
+### Generated Control API contract
+
+Core operator-facing Control API routes publish an OpenAPI document from Rust types. The running Control API exposes the same generated contract at `GET /openapi.json`. Regenerate the committed browser contract after changing a documented route or schema:
+
+```bash
+pnpm generate:api
+```
+
+This writes `apps/web/openapi/control-api.json` and `apps/web/lib/generated/control-api.ts`. The generated TypeScript file is owned by this command and should not be edited by hand. The server fleet is the first UI flow using the generated schema together with TanStack Query and TanStack Table; new migrations should follow the same contract-first pattern instead of introducing duplicate handwritten DTOs.
 
 ## Payload content service
 
