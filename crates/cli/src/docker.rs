@@ -42,10 +42,9 @@ where
     let mut last_status = String::from("Preparing");
 
     while let Some(event) = stream.next().await {
+        // Bollard converts Docker's error_detail stream objects into Err values for
+        // create_image(), so a successful event only needs status/progress handling.
         let event = event.with_context(|| format!("pull Docker image {image}"))?;
-        if let Some(error) = event.error.filter(|error| !error.trim().is_empty()) {
-            anyhow::bail!("Docker failed to pull {image}: {error}");
-        }
 
         if let Some(status) = event.status.filter(|status| !status.trim().is_empty()) {
             last_status = status;
