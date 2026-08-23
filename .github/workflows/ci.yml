@@ -129,7 +129,6 @@ jobs:
               - 'scripts/first-server-smoke.sh'
               - 'scripts/update-first-test.sh'
               - 'scripts/recover-interrupted-update.sh'
-              - 'scripts/registry-login.sh'
               - 'scripts/uninstall.sh'
               - 'scripts/ci-deployment-validation.sh'
               - 'scripts/ci-prepare-docker.sh'
@@ -345,12 +344,11 @@ jobs:
       - name: Validate release metadata and lifecycle syntax
         run: |
           set -euo pipefail
-          cargo metadata --locked --no-deps >/dev/null
+          cargo metadata --locked --no-deps --format-version 1 >/dev/null
           bash -n install.sh
           bash -n scripts/first-server-smoke.sh
           bash -n scripts/update-first-test.sh
           bash -n scripts/recover-interrupted-update.sh
-          bash -n scripts/registry-login.sh
           bash -n scripts/uninstall.sh
           docker buildx bake --print >/dev/null
       - name: Validate release Compose configuration
