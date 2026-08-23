@@ -137,6 +137,31 @@ impl HelperClient {
             .await?
             .unwrap_or_default())
     }
+    pub async fn docker_inspect(&self, container: &str) -> Result<String, OperationError> {
+        Ok(self
+            .request(HelperRequest::DockerInspect {
+                container: container.into(),
+            })
+            .await?
+            .unwrap_or_default())
+    }
+    pub async fn docker_stats(&self, container: &str) -> Result<String, OperationError> {
+        Ok(self
+            .request(HelperRequest::DockerStats {
+                container: container.into(),
+            })
+            .await?
+            .unwrap_or_default())
+    }
+    pub async fn docker_logs(&self, container: &str, lines: u32) -> Result<String, OperationError> {
+        Ok(self
+            .request(HelperRequest::DockerLogs {
+                container: container.into(),
+                lines,
+            })
+            .await?
+            .unwrap_or_default())
+    }
     pub async fn docker_start(&self, container: &str) -> Result<(), OperationError> {
         self.request(HelperRequest::DockerStart {
             container: container.into(),
@@ -375,6 +400,15 @@ impl AgentRuntime {
                 .map(Some),
             protocol::CommandType::LogsJournal { service, lines } => {
                 self.helper.journal(service, *lines).await.map(Some)
+            }
+            protocol::CommandType::DockerInspect { container } => {
+                self.helper.docker_inspect(container).await.map(Some)
+            }
+            protocol::CommandType::DockerStats { container } => {
+                self.helper.docker_stats(container).await.map(Some)
+            }
+            protocol::CommandType::DockerLogs { container, lines } => {
+                self.helper.docker_logs(container, *lines).await.map(Some)
             }
             protocol::CommandType::DockerStart { container } => {
                 self.helper.docker_start(container).await.map(|_| None)

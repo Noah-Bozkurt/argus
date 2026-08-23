@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: &str = "1.10";
+pub const PROTOCOL_VERSION: &str = "1.11";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentHandshake {
@@ -63,6 +63,12 @@ pub enum CommandType {
     ArgusUpdate { version: String },
     #[serde(rename = "logs.journal")]
     LogsJournal { service: String, lines: u32 },
+    #[serde(rename = "docker.inspect")]
+    DockerInspect { container: String },
+    #[serde(rename = "docker.stats")]
+    DockerStats { container: String },
+    #[serde(rename = "docker.logs")]
+    DockerLogs { container: String, lines: u32 },
     #[serde(rename = "docker.start")]
     DockerStart { container: String },
     #[serde(rename = "docker.stop")]
@@ -99,6 +105,9 @@ impl CommandType {
             CommandType::SystemReboot => "system.reboot",
             CommandType::ArgusUpdate { .. } => "argus.update",
             CommandType::LogsJournal { .. } => "logs.read",
+            CommandType::DockerInspect { .. }
+            | CommandType::DockerStats { .. }
+            | CommandType::DockerLogs { .. } => "docker.read",
             CommandType::DockerStart { .. }
             | CommandType::DockerStop { .. }
             | CommandType::DockerRestart { .. }
@@ -140,7 +149,10 @@ impl CommandType {
                 name: "logs.journal".into(),
                 version: "v1".into(),
             },
-            CommandType::DockerStart { .. }
+            CommandType::DockerInspect { .. }
+            | CommandType::DockerStats { .. }
+            | CommandType::DockerLogs { .. }
+            | CommandType::DockerStart { .. }
             | CommandType::DockerStop { .. }
             | CommandType::DockerRestart { .. } => Capability {
                 name: "docker".into(),
@@ -408,6 +420,12 @@ pub enum HelperRequest {
     Journal { service: String, lines: u32 },
     #[serde(rename = "docker.list")]
     DockerList,
+    #[serde(rename = "docker.inspect")]
+    DockerInspect { container: String },
+    #[serde(rename = "docker.stats")]
+    DockerStats { container: String },
+    #[serde(rename = "docker.logs")]
+    DockerLogs { container: String, lines: u32 },
     #[serde(rename = "docker.start")]
     DockerStart { container: String },
     #[serde(rename = "docker.stop")]

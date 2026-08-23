@@ -158,6 +158,8 @@ The Helper is intended to run as root with a local Unix socket; the Agent should
 
 Do not run the Helper as a network service or add generic shell execution to simplify development.
 
+Docker resource operations in the Helper use Bollard and the local Docker Engine API for typed container listing, inspection, stats, logs, protection-label checks, and start/stop/restart. Docker Compose remains the orchestration boundary for stack-level operations; do not reimplement Compose semantics in Bollard.
+
 ## CLI
 
 Local diagnostic commands are available through `argusctl` (`crates/cli`). They are an operator/developer diagnostic surface, not a replacement for normal UI/API workflows.

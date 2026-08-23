@@ -79,6 +79,13 @@ async fn execute_request(
         HelperRequest::ArgusUpdateLog => api.argus_update_log().await.map(Some),
         HelperRequest::Journal { service, lines } => api.journal(&service, lines).await.map(Some),
         HelperRequest::DockerList => api.docker_list().await.map(Some),
+        HelperRequest::DockerInspect { container } => {
+            api.docker_inspect(&container).await.map(Some)
+        }
+        HelperRequest::DockerStats { container } => api.docker_stats(&container).await.map(Some),
+        HelperRequest::DockerLogs { container, lines } => {
+            api.docker_logs(&container, lines).await.map(Some)
+        }
         HelperRequest::DockerStart { container } => {
             api.docker_start(&container).await.map(|_| None)
         }

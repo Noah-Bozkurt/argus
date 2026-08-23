@@ -23,7 +23,9 @@ fn map_error(error: BollardError) -> HelperError {
         BollardError::DockerResponseServerError {
             status_code: 404, ..
         } => HelperError::InvalidContainerReference,
-        other => HelperError::SystemCommandFailed(format!("Docker Engine API request failed: {other}")),
+        other => {
+            HelperError::SystemCommandFailed(format!("Docker Engine API request failed: {other}"))
+        }
     }
 }
 
