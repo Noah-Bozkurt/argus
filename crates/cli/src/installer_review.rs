@@ -1,61 +1,12 @@
-use super::installer_shared::{
-    ControlConfig, TlsMode, new_secret, validate_basic_user, validate_domain,
+use super::{
+    installer_shared::{ControlConfig, TlsMode, new_secret, validate_basic_user, validate_domain},
+    installer_ui::{MenuChoice, MenuItem, menu_select},
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use cli::lifecycle::{self, prompt_line, prompt_secret};
-use std::{
-    fs::{File, OpenOptions},
-    io::{Read, Write},
-    process::{Command, Stdio},
-};
 
 const INSTALL: usize = 5;
 const CANCEL: usize = 6;
-
-struct TerminalMode {
-    tty: File,
-    original: String,
-}
-
-impl TerminalMode {
-    fn enter() -> Result<Self> {
-        let tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
-        let output = Command::new("stty")
-            .arg("-g")
-            .stdin(Stdio::from(tty.try_clone()?))
-            .output()
-            .context("read terminal mode")?;
-        if !output.status.success() {
-            bail!("could not read terminal mode");
-        }
-        let original = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let status = Command::new("stty")
-            .args(["-echo", "-icanon", "min", "1", "time", "0"])
-            .stdin(Stdio::from(tty.try_clone()?))
-            .status()
-            .context("enable review navigation")?;
-        if !status.success() {
-            bail!("could not enable review navigation");
-        }
-        Ok(Self { tty, original })
-    }
-}
-
-impl Drop for TerminalMode {
-    fn drop(&mut self) {
-        let _ = Command::new("stty")
-            .arg(&self.original)
-            .stdin(
-                self.tty
-                    .try_clone()
-                    .map(Stdio::from)
-                    .unwrap_or(Stdio::null()),
-            )
-            .status();
-        let _ = write!(self.tty, "\x1b[?25h");
-        let _ = self.tty.flush();
-    }
-}
 
 fn rows(config: &ControlConfig) -> Vec<String> {
     vec![
@@ -76,64 +27,15 @@ fn rows(config: &ControlConfig) -> Vec<String> {
     ]
 }
 
-fn select_row(config: &ControlConfig) -> Result<usize> {
-    let mut terminal = TerminalMode::enter()?;
-    let mut selected = 0usize;
-    loop {
-        write!(
-            terminal.tty,
-            "\x1b[?25l\x1b[2J\x1b[HArgus installation review\n\n"
-        )?;
-        for (index, row) in rows(config).iter().enumerate() {
-            if index == selected {
-                writeln!(terminal.tty, "\x1b[36m› {row}\x1b[0m")?;
-            } else {
-                writeln!(terminal.tty, "  {row}")?;
-            }
-        }
-        write!(
-            terminal.tty,
-            "\n↑/↓ navigate  •  Enter edit/select  •  q cancel\n"
-        )?;
-        terminal.tty.flush()?;
-
-        let mut byte = [0u8; 1];
-        terminal.tty.read_exact(&mut byte)?;
-        match byte[0] {
-            b'\r' | b'\n' => return Ok(selected),
-            b'q' | b'Q' => return Ok(CANCEL),
-            0x1b => {
-                let mut sequence = [0u8; 2];
-                if terminal.tty.read_exact(&mut sequence).is_ok() && sequence[0] == b'[' {
-                    match sequence[1] {
-                        b'A' => selected = selected.checked_sub(1).unwrap_or(CANCEL),
-                        b'B' => selected = (selected + 1) % (CANCEL + 1),
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn select_row_fallback(config: &ControlConfig) -> Result<usize> {
-    println!("\nReview installation\n");
-    for (index, row) in rows(config).iter().enumerate() {
-        println!("  {}. {row}", index + 1);
-    }
-    let answer = prompt_line("\nChoose a value to edit, install, or cancel [1-7]: ")?;
-    let selected = answer
-        .parse::<usize>()
-        .context("enter a number from 1 to 7")?;
-    if !(1..=7).contains(&selected) {
-        bail!("enter a number from 1 to 7");
-    }
-    Ok(selected - 1)
-}
-
 fn choose(config: &ControlConfig) -> Result<usize> {
-    select_row(config).or_else(|_| select_row_fallback(config))
+    let items = rows(config)
+        .into_iter()
+        .map(MenuItem::new)
+        .collect::<Vec<_>>();
+    match menu_select(None, "Review installation", &items)? {
+        MenuChoice::Selected(index) => Ok(index),
+        MenuChoice::Cancelled => Ok(CANCEL),
+    }
 }
 
 fn password_is_valid(value: &str) -> bool {
