@@ -73,6 +73,11 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('apps/web/app/resource-polish.css')
+          path.write_text(path.read_text().rstrip() + '\n')
+          PY
           rm -f scripts/bootstrap-platform-foundation.py
           rm -f .github/workflows/bootstrap-platform-libraries.yml
           rm -f .github/workflows/apply-platform-foundation.yml
