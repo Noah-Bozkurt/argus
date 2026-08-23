@@ -16,7 +16,9 @@ path = "src/installer.rs"
 [dependencies]
 agent = { path = "../agent" }
 anyhow = { workspace = true }
+bollard = "0.21.1"
 clap = { workspace = true }
+futures-util = "0.3"
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
