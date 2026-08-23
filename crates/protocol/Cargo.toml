@@ -5,10 +5,15 @@ edition = "2024"
 publish = false
 license.workspace = true
 
+[features]
+default = []
+openapi = ["dep:utoipa"]
+
 [dependencies]
 chrono = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+utoipa = { workspace = true, optional = true }
 uuid = { workspace = true }
 
 [dev-dependencies]

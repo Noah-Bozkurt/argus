@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "test": "echo \"No JS tests configured yet\"",
-    "lint": "echo \"No JS lint configured yet\""
+    "lint": "echo \"No JS lint configured yet\"",
+    "generate:api": "bash scripts/generate-api-contracts.sh"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

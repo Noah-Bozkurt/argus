@@ -17,6 +17,7 @@ pub struct AgentHandshake {
     pub capabilities: Vec<Capability>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Capability {
     pub name: String,
     pub version: String,
@@ -211,6 +212,7 @@ pub struct CommandResult {
     pub output: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct UpdateState {
     pub supported: bool,
     pub pending_updates: u32,
@@ -219,6 +221,7 @@ pub struct UpdateState {
     pub packages: Vec<PackageUpdate>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PackageUpdate {
     pub name: String,
     pub installed_version: String,
@@ -226,11 +229,13 @@ pub struct PackageUpdate {
     pub security: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ServiceJournal {
     pub service: String,
     pub output: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DiagnosticsState {
     pub failed_units: Vec<String>,
     pub listening_tcp_ports: Vec<u16>,
@@ -238,6 +243,7 @@ pub struct DiagnosticsState {
     pub journals: Vec<ServiceJournal>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DockerContainer {
     pub id: String,
     pub name: String,
@@ -247,17 +253,20 @@ pub struct DockerContainer {
     pub ports: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DockerState {
     pub available: bool,
     pub containers: Vec<DockerContainer>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SecurityFinding {
     pub severity: String,
     pub code: String,
     pub message: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SecurityState {
     pub available: bool,
     pub firewall_status: String,
@@ -268,6 +277,7 @@ pub struct SecurityState {
     pub findings: Vec<SecurityFinding>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct BackupArtifact {
     pub name: String,
     pub profile: String,
@@ -277,12 +287,14 @@ pub struct BackupArtifact {
     pub verified: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct BackupState {
     pub available: bool,
     pub target: String,
     pub artifacts: Vec<BackupArtifact>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MountState {
     pub name: String,
     pub mount_point: String,
@@ -291,6 +303,7 @@ pub struct MountState {
     pub available_bytes: u64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct NetworkInterfaceState {
     pub name: String,
     pub received_bytes: u64,
@@ -299,6 +312,7 @@ pub struct NetworkInterfaceState {
     pub transmit_errors: u64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ProcessState {
     pub pid: u32,
     pub name: String,
@@ -306,6 +320,7 @@ pub struct ProcessState {
     pub memory_bytes: u64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SystemSnapshot {
     pub server_id: Uuid,
     pub hostname: String,
@@ -318,25 +333,34 @@ pub struct SystemSnapshot {
     pub load: f64,
     pub uptime_seconds: u64,
     pub agent_version: String,
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     #[serde(default)]
     pub updates: UpdateState,
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     #[serde(default)]
     pub diagnostics: DiagnosticsState,
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     #[serde(default)]
     pub docker: DockerState,
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     #[serde(default)]
     pub security: SecurityState,
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     #[serde(default)]
     pub backups: BackupState,
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     #[serde(default)]
     pub mounts: Vec<MountState>,
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     #[serde(default)]
     pub network: Vec<NetworkInterfaceState>,
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     #[serde(default)]
     pub top_processes: Vec<ProcessState>,
     pub captured_at: DateTime<Utc>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ServiceState {
     pub name: String,
     pub status: String,

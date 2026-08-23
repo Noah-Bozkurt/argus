@@ -2,11 +2,15 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
-import type { ServerView } from '../../../lib/api'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table'
+import type { ControlApiServerView as ServerView } from '../../../lib/control-api-contract'
 import LucideIcon from '../../lucide-icons'
+import Tooltip from '../../ui/tooltip'
 import usePersistentChoice from '../../use-persistent-choice'
 
 const FAVORITES_KEY = 'argus:favorites:v1'
+const SERVER_QUERY_KEY = ['servers'] as const
 const STATUS_FILTERS = ['all', 'online', 'offline', 'attention'] as const
 const SORTS = ['name', 'heartbeat', 'cpu', 'disk'] as const
 
@@ -18,7 +22,7 @@ function Utilization({ value }: { value: number | undefined }) {
   return <div className="utilization-cell"><div className="utilization-value"><span>{typeof value === 'number' ? `${Math.round(value)}%` : '—'}</span></div><div className="utilization-track"><div className="utilization-fill" style={{ width: `${safe}%` }} /></div></div>
 }
 
-function relativeTime(value: string | null): string {
+function relativeTime(value: string | null | undefined): string {
   if (!value) return 'Never'
   const delta = Date.now() - new Date(value).getTime()
   const seconds = Math.max(0, Math.floor(delta / 1000))
@@ -45,23 +49,42 @@ function initialFavorites(): string[] {
   try { return JSON.parse(window.localStorage.getItem(FAVORITES_KEY) ?? '[]') as string[] } catch { return [] }
 }
 
+async function fetchServers(): Promise<ServerView[]> {
+  const response = await fetch('/api/servers', { cache: 'no-store' })
+  if (!response.ok) throw new Error(`Unable to refresh servers (${response.status})`)
+  return response.json() as Promise<ServerView[]>
+}
+
 export default function ServerFleet({ initialServers }: { initialServers: ServerView[] }) {
-  const [servers, setServers] = useState(initialServers)
   const [live, setLive] = useState(false)
   const [query, setQuery] = useState('')
   const [status, setStatus] = usePersistentChoice<StatusFilter>('argus:servers:status', 'all', STATUS_FILTERS)
   const [sort, setSort] = usePersistentChoice<SortChoice>('argus:servers:sort', 'name', SORTS)
   const [favorites, setFavorites] = useState<string[]>(initialFavorites)
   const [copied, setCopied] = useState<string | null>(null)
+  const queryClient = useQueryClient()
+  const serverQuery = useQuery({
+    queryKey: SERVER_QUERY_KEY,
+    queryFn: fetchServers,
+    initialData: initialServers,
+    staleTime: 5_000,
+    refetchInterval: live ? false : 10_000,
+  })
+  const servers = serverQuery.data
 
   useEffect(() => {
     let lastMessage = 0
     const source = new EventSource('/api/servers/events')
-    source.addEventListener('snapshot', (event) => { setServers(JSON.parse((event as MessageEvent).data)); lastMessage = Date.now(); setLive(true) })
+    source.addEventListener('snapshot', (event) => {
+      const next = JSON.parse((event as MessageEvent).data) as ServerView[]
+      queryClient.setQueryData(SERVER_QUERY_KEY, next)
+      lastMessage = Date.now()
+      setLive(true)
+    })
     source.onerror = () => { if (Date.now() - lastMessage > 20_000) setLive(false) }
     const staleTimer = window.setInterval(() => { if (Date.now() - lastMessage > 20_000) setLive(false) }, 5_000)
     return () => { source.close(); window.clearInterval(staleTimer) }
-  }, [])
+  }, [queryClient])
 
   const online = servers.filter((server) => server.online).length
   const needsAttention = servers.filter(attention).length
@@ -103,6 +126,30 @@ export default function ServerFleet({ initialServers }: { initialServers: Server
     window.setTimeout(() => setCopied((current) => current === key ? null : current), 1200)
   }
 
+  const columns = useMemo<ColumnDef<ServerView>[]>(() => [
+    {
+      id: 'server',
+      header: 'Server',
+      cell: ({ row }) => {
+        const server = row.original
+        const pinned = favorites.includes(`server:${server.server_id}`)
+        return <div className="resource-inline-actions"><Tooltip content={pinned ? `Unpin ${server.hostname}` : `Pin ${server.hostname}`}><button className={`pin-button${pinned ? ' active' : ''}`} type="button" onClick={() => toggleFavorite(server.server_id)} aria-label={pinned ? `Unpin ${server.hostname}` : `Pin ${server.hostname}`}><LucideIcon name="star" /></button></Tooltip><div><div className="row-title"><span className={`status-dot ${server.online ? 'online' : 'danger'}`} /><Link href={`/infrastructure/servers/${server.server_id}`}>{server.hostname}</Link>{attention(server) ? <span className="badge warning">Attention</span> : null}</div><div className="row-subtitle">{server.snapshot?.os ?? 'Unknown OS'} · <code>{server.server_id.slice(0, 12)}</code> <button className="copy-button" type="button" onClick={() => void copy(server.server_id, server.server_id)}>{copied === server.server_id ? 'Copied' : 'Copy ID'}</button></div></div></div>
+      },
+    },
+    { id: 'status', header: 'Status', cell: ({ row }) => <span className={`state-label ${row.original.online ? 'success' : 'danger'}`}>{row.original.online ? 'Online' : 'Offline'}</span> },
+    { id: 'cpu', header: 'CPU', cell: ({ row }) => <Utilization value={row.original.snapshot?.cpu_percent} /> },
+    { id: 'memory', header: 'Memory', cell: ({ row }) => <Utilization value={row.original.snapshot?.ram_percent} /> },
+    { id: 'disk', header: 'Disk', cell: ({ row }) => <Utilization value={row.original.snapshot?.disk_percent} /> },
+    { id: 'services', header: 'Services', cell: ({ row }) => row.original.services.length },
+    { id: 'heartbeat', header: 'Heartbeat', cell: ({ row }) => <span title={row.original.last_heartbeat ? new Date(row.original.last_heartbeat).toLocaleString() : undefined}>{relativeTime(row.original.last_heartbeat)}</span> },
+  ], [copied, favorites])
+
+  const table = useReactTable({
+    data: visible,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  })
+
   return <>
     <div className="stats-grid fleet-summary">
       <div className="stat-card"><div className="stat-label"><span>Servers</span></div><div className="stat-value">{servers.length}</div><div className="stat-meta">registered nodes</div></div>
@@ -118,16 +165,16 @@ export default function ServerFleet({ initialServers }: { initialServers: Server
           <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search servers…" aria-label="Search servers" />
           <select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)} aria-label="Filter server status"><option value="all">All statuses</option><option value="online">Online</option><option value="offline">Offline</option><option value="attention">Needs attention</option></select>
           <select value={sort} onChange={(event) => setSort(event.target.value as SortChoice)} aria-label="Sort servers"><option value="name">Name</option><option value="heartbeat">Latest heartbeat</option><option value="cpu">CPU usage</option><option value="disk">Disk usage</option></select>
-          <span className={`live-state ${live ? 'online' : 'connecting'}`}><span className="status-dot" />{live ? 'Live' : 'Connecting'}</span>
+          <span className={`live-state ${live ? 'online' : 'connecting'}`} title={serverQuery.isError ? 'Live connection unavailable; polling fallback active' : undefined}><span className="status-dot" />{live ? 'Live' : serverQuery.isFetching ? 'Syncing' : 'Polling'}</span>
         </div>
       </div>
 
       {visible.length === 0 ? <div className="empty-state"><strong>No matching servers</strong>Change the search or status filter to show other nodes.</div> : <>
         <div className="desktop-resource-table table-wrap server-table-wrap">
-          <table><thead><tr><th>Server</th><th>Status</th><th>CPU</th><th>Memory</th><th>Disk</th><th>Services</th><th>Heartbeat</th></tr></thead><tbody>{visible.map((server) => {
-            const pinned = favorites.includes(`server:${server.server_id}`)
-            return <tr key={server.server_id}><td><div className="resource-inline-actions"><button className={`pin-button${pinned ? ' active' : ''}`} type="button" onClick={() => toggleFavorite(server.server_id)} aria-label={pinned ? `Unpin ${server.hostname}` : `Pin ${server.hostname}`}><LucideIcon name="star" /></button><div><div className="row-title"><span className={`status-dot ${server.online ? 'online' : 'danger'}`} /><Link href={`/infrastructure/servers/${server.server_id}`}>{server.hostname}</Link>{attention(server) ? <span className="badge warning">Attention</span> : null}</div><div className="row-subtitle">{server.snapshot?.os ?? 'Unknown OS'} · <code>{server.server_id.slice(0, 12)}</code> <button className="copy-button" type="button" onClick={() => void copy(server.server_id, server.server_id)}>{copied === server.server_id ? 'Copied' : 'Copy ID'}</button></div></div></div></td><td><span className={`state-label ${server.online ? 'success' : 'danger'}`}>{server.online ? 'Online' : 'Offline'}</span></td><td><Utilization value={server.snapshot?.cpu_percent} /></td><td><Utilization value={server.snapshot?.ram_percent} /></td><td><Utilization value={server.snapshot?.disk_percent} /></td><td>{server.services.length}</td><td title={server.last_heartbeat ? new Date(server.last_heartbeat).toLocaleString() : undefined}>{relativeTime(server.last_heartbeat)}</td></tr>
-          })}</tbody></table>
+          <table>
+            <thead>{table.getHeaderGroups().map((headerGroup) => <tr key={headerGroup.id}>{headerGroup.headers.map((header) => <th key={header.id}>{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</th>)}</tr>)}</thead>
+            <tbody>{table.getRowModel().rows.map((row) => <tr key={row.id}>{row.getVisibleCells().map((cell) => <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>)}</tr>)}</tbody>
+          </table>
         </div>
 
         <ul className="mobile-server-list">
@@ -136,7 +183,7 @@ export default function ServerFleet({ initialServers }: { initialServers: Server
             return <li key={server.server_id}>
               <div className="mobile-server-head">
                 <Link href={`/infrastructure/servers/${server.server_id}`}><span className={`status-dot ${server.online ? 'online' : 'danger'}`} /><strong>{server.hostname}</strong></Link>
-                <button className={`pin-button${pinned ? ' active' : ''}`} type="button" onClick={() => toggleFavorite(server.server_id)} aria-label={pinned ? `Unpin ${server.hostname}` : `Pin ${server.hostname}`}><LucideIcon name="star" /></button>
+                <Tooltip content={pinned ? `Unpin ${server.hostname}` : `Pin ${server.hostname}`}><button className={`pin-button${pinned ? ' active' : ''}`} type="button" onClick={() => toggleFavorite(server.server_id)} aria-label={pinned ? `Unpin ${server.hostname}` : `Pin ${server.hostname}`}><LucideIcon name="star" /></button></Tooltip>
               </div>
               <div className="mobile-server-meta"><span>{server.snapshot?.os ?? 'Unknown OS'}</span><span>{relativeTime(server.last_heartbeat)}</span>{attention(server) ? <span className="state-label warning">Attention</span> : null}</div>
               <div className="mobile-server-metrics"><div><span>CPU</span><strong>{server.snapshot ? `${Math.round(server.snapshot.cpu_percent)}%` : '—'}</strong></div><div><span>Memory</span><strong>{server.snapshot ? `${Math.round(server.snapshot.ram_percent)}%` : '—'}</strong></div><div><span>Disk</span><strong>{server.snapshot ? `${Math.round(server.snapshot.disk_percent)}%` : '—'}</strong></div></div>

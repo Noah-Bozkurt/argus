@@ -1,0 +1,803 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "control-api",
+    "description": "",
+    "license": {
+      "name": "AGPL-3.0-only",
+      "identifier": "AGPL-3.0-only"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Control API is healthy"
+          }
+        }
+      }
+    },
+    "/servers": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "operationId": "list_servers",
+        "responses": {
+          "200": {
+            "description": "Managed servers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServerView"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Identity is not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "servers"
+        ],
+        "operationId": "create_server",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateServerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Server created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateServerResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid server request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Identity is not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/servers/{server_id}": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "operationId": "get_server",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "description": "Managed server identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Managed server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Identity is not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Server not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BackupArtifact": {
+        "type": "object",
+        "required": [
+          "name",
+          "profile",
+          "size_bytes",
+          "created_unix",
+          "sha256",
+          "verified"
+        ],
+        "properties": {
+          "created_unix": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "verified": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BackupState": {
+        "type": "object",
+        "required": [
+          "available",
+          "target",
+          "artifacts"
+        ],
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackupArtifact"
+            }
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "target": {
+            "type": "string"
+          }
+        }
+      },
+      "Capability": {
+        "type": "object",
+        "required": [
+          "name",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateServerRequest": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "environment_id",
+          "hostname"
+        ],
+        "properties": {
+          "environment_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "CreateServerResponse": {
+        "type": "object",
+        "required": [
+          "server_id"
+        ],
+        "properties": {
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "DiagnosticsState": {
+        "type": "object",
+        "required": [
+          "failed_units",
+          "listening_tcp_ports"
+        ],
+        "properties": {
+          "failed_units": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "journals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServiceJournal"
+            }
+          },
+          "listening_tcp_ports": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "DockerContainer": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "image",
+          "state",
+          "status",
+          "ports"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ports": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "DockerState": {
+        "type": "object",
+        "required": [
+          "available",
+          "containers"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "containers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DockerContainer"
+            }
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "MountState": {
+        "type": "object",
+        "required": [
+          "name",
+          "mount_point",
+          "file_system",
+          "total_bytes",
+          "available_bytes"
+        ],
+        "properties": {
+          "available_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "file_system": {
+            "type": "string"
+          },
+          "mount_point": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "total_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "NetworkInterfaceState": {
+        "type": "object",
+        "required": [
+          "name",
+          "received_bytes",
+          "transmitted_bytes",
+          "receive_errors",
+          "transmit_errors"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "receive_errors": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "received_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "transmit_errors": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "transmitted_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "PackageUpdate": {
+        "type": "object",
+        "required": [
+          "name",
+          "installed_version",
+          "candidate_version",
+          "security"
+        ],
+        "properties": {
+          "candidate_version": {
+            "type": "string"
+          },
+          "installed_version": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "security": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ProcessState": {
+        "type": "object",
+        "required": [
+          "pid",
+          "name",
+          "cpu_percent",
+          "memory_bytes"
+        ],
+        "properties": {
+          "cpu_percent": {
+            "type": "number",
+            "format": "float"
+          },
+          "memory_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "pid": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "SecurityFinding": {
+        "type": "object",
+        "required": [
+          "severity",
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          }
+        }
+      },
+      "SecurityState": {
+        "type": "object",
+        "required": [
+          "available",
+          "firewall_status",
+          "firewall_rules",
+          "ssh_root_login",
+          "automatic_security_updates",
+          "findings"
+        ],
+        "properties": {
+          "automatic_security_updates": {
+            "type": "boolean"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SecurityFinding"
+            }
+          },
+          "firewall_rules": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "firewall_status": {
+            "type": "string"
+          },
+          "ssh_password_auth": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ssh_root_login": {
+            "type": "string"
+          }
+        }
+      },
+      "ServerView": {
+        "type": "object",
+        "required": [
+          "server_id",
+          "project_id",
+          "environment_id",
+          "hostname",
+          "online",
+          "services",
+          "capabilities"
+        ],
+        "properties": {
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            }
+          },
+          "environment_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "last_heartbeat": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServiceState"
+            }
+          },
+          "snapshot": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SystemSnapshot"
+              }
+            ]
+          }
+        }
+      },
+      "ServiceJournal": {
+        "type": "object",
+        "required": [
+          "service",
+          "output"
+        ],
+        "properties": {
+          "output": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          }
+        }
+      },
+      "ServiceState": {
+        "type": "object",
+        "required": [
+          "name",
+          "status"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "SystemSnapshot": {
+        "type": "object",
+        "required": [
+          "server_id",
+          "hostname",
+          "os",
+          "kernel",
+          "architecture",
+          "cpu_percent",
+          "ram_percent",
+          "disk_percent",
+          "load",
+          "uptime_seconds",
+          "agent_version",
+          "updates",
+          "diagnostics",
+          "docker",
+          "security",
+          "backups",
+          "mounts",
+          "network",
+          "top_processes",
+          "captured_at"
+        ],
+        "properties": {
+          "agent_version": {
+            "type": "string"
+          },
+          "architecture": {
+            "type": "string"
+          },
+          "backups": {
+            "$ref": "#/components/schemas/BackupState"
+          },
+          "captured_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "cpu_percent": {
+            "type": "number",
+            "format": "float"
+          },
+          "diagnostics": {
+            "$ref": "#/components/schemas/DiagnosticsState"
+          },
+          "disk_percent": {
+            "type": "number",
+            "format": "float"
+          },
+          "docker": {
+            "$ref": "#/components/schemas/DockerState"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "kernel": {
+            "type": "string"
+          },
+          "load": {
+            "type": "number",
+            "format": "double"
+          },
+          "mounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MountState"
+            }
+          },
+          "network": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetworkInterfaceState"
+            }
+          },
+          "os": {
+            "type": "string"
+          },
+          "ram_percent": {
+            "type": "number",
+            "format": "float"
+          },
+          "security": {
+            "$ref": "#/components/schemas/SecurityState"
+          },
+          "server_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "top_processes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProcessState"
+            }
+          },
+          "updates": {
+            "$ref": "#/components/schemas/UpdateState"
+          },
+          "uptime_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "UpdateState": {
+        "type": "object",
+        "required": [
+          "supported",
+          "pending_updates",
+          "reboot_required"
+        ],
+        "properties": {
+          "packages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PackageUpdate"
+            }
+          },
+          "pending_updates": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "reboot_required": {
+            "type": "boolean"
+          },
+          "supported": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "system",
+      "description": "Control-plane health and metadata"
+    },
+    {
+      "name": "servers",
+      "description": "Managed server inventory"
+    }
+  ]
+}
