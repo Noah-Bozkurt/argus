@@ -37,6 +37,23 @@ jobs:
       - name: Apply source changes
         run: python3 scripts/bootstrap-platform-foundation.py
 
+      - name: Keep response-only snapshot fields required in OpenAPI
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('crates/protocol/src/lib.rs')
+          source = path.read_text()
+          start = source.index('pub struct SystemSnapshot {')
+          end = source.index('\n}', start)
+          block = source[start:end]
+          marker = '#[serde(default)]'
+          required = '#[cfg_attr(feature = "openapi", schema(required = true))]\n    #[serde(default)]'
+          block = block.replace(marker, required)
+          source = source[:start] + block + source[end:]
+          path.write_text(source)
+          PY
+
       - name: Validate Rust and refresh Cargo.lock
         run: |
           cargo fmt --all
