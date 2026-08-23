@@ -82,6 +82,35 @@ set -euo pipefail
   tmp="$(mktemp -d)"
   export ARGUS_STATE_DIR="$tmp/state"
   source scripts/update-first-test.sh --internal-test-library
+  ARGUS_REGISTRY=registry.example/argus
+  REQUESTED_VERSION=main
+  TARGET_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  pulls=()
+  tags=()
+  try_pull_image() {
+    pulls+=("$1")
+    if [[ "$1" == *":$TARGET_REVISION" ]]; then
+      PULL_ERROR="manifest unknown"
+      return 1
+    fi
+  }
+  image_revision() { printf '%s\n' "$TARGET_REVISION"; }
+  docker() { [[ "$1" == tag ]]; tags+=("$2 $3"); }
+  pull_revision_image argus-web
+  [[ "${pulls[*]}" == "registry.example/argus/argus-web:$TARGET_REVISION registry.example/argus/argus-web:main" ]]
+  [[ "${tags[*]}" == "registry.example/argus/argus-web:main registry.example/argus/argus-web:$TARGET_REVISION" ]]
+
+  image_revision() { printf '%s\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }
+  if (pull_revision_image argus-worker); then
+    echo "mismatched promoted image was accepted" >&2
+    exit 1
+  fi
+)
+
+(
+  tmp="$(mktemp -d)"
+  export ARGUS_STATE_DIR="$tmp/state"
+  source scripts/update-first-test.sh --internal-test-library
   mkdir -p "$ARGUS_STATE_DIR"
   exec 9>"$LOCK_FILE"
   flock -n 9

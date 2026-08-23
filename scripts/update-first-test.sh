@@ -320,7 +320,7 @@ image_branch_update_protocol() {
     --format '{{ index .Config.Labels "org.argus.branch-update-protocol" }}'
 }
 
-pull_image() {
+try_pull_image() {
   local ref="$1" output status summary helper
 
   if [[ "${ARGUS_UPDATE_BOLLARD_PULL:-0}" == "1" ]]; then
@@ -330,7 +330,11 @@ pull_image() {
     "$helper" docker-pull "$ref"
     status=$?
     set -e
-    (( status == 0 )) || die "failed to pull $ref through Docker Engine API (exit $status)"
+    if (( status != 0 )); then
+      PULL_ERROR="Docker Engine API helper exited with status $status"
+      return "$status"
+    fi
+    PULL_ERROR=""
     return
   fi
 
@@ -339,7 +343,11 @@ pull_image() {
     docker pull "$ref"
     status=$?
     set -e
-    (( status == 0 )) || die "failed to pull $ref (docker exit $status)"
+    if (( status != 0 )); then
+      PULL_ERROR="docker exited with status $status"
+      return "$status"
+    fi
+    PULL_ERROR=""
     return
   fi
 
@@ -347,11 +355,44 @@ pull_image() {
   output="$(docker pull "$ref" 2>&1)"
   status=$?
   set -e
-  (( status == 0 )) && return
+  if (( status == 0 )); then
+    PULL_ERROR=""
+    return
+  fi
 
   summary="$(printf '%s\n' "$output" | awk 'NF { line=$0 } END { print line }')"
-  summary="${summary:-Docker returned no diagnostic output}"
-  die "failed to pull $ref (docker exit $status): $summary"
+  PULL_ERROR="${summary:-Docker returned no diagnostic output}"
+  return "$status"
+}
+
+pull_image() {
+  local ref="$1"
+  try_pull_image "$ref" \
+    || die "failed to pull $ref: $PULL_ERROR"
+}
+
+pull_revision_image() {
+  local image="$1" immutable_ref promoted_ref promoted_revision immutable_error
+  immutable_ref="${ARGUS_REGISTRY}/${image}:${TARGET_REVISION}"
+  if try_pull_image "$immutable_ref"; then
+    return
+  fi
+  immutable_error="$PULL_ERROR"
+
+  # Installations use the coordinated promoted tag. It is a safe compatibility
+  # fallback for registries where the immutable alias is temporarily unavailable,
+  # provided its embedded revision matches the discovery image exactly.
+  promoted_ref="${ARGUS_REGISTRY}/${image}:${REQUESTED_VERSION}"
+  [[ "$promoted_ref" != "$immutable_ref" ]] \
+    || die "failed to pull $immutable_ref: $immutable_error"
+  warn "immutable image pull failed; verifying promoted fallback $promoted_ref"
+  if ! try_pull_image "$promoted_ref"; then
+    die "failed to pull $immutable_ref ($immutable_error); fallback $promoted_ref also failed: $PULL_ERROR"
+  fi
+  promoted_revision="$(image_revision "$promoted_ref")"
+  [[ "$promoted_revision" == "$TARGET_REVISION" ]] \
+    || die "refusing fallback $promoted_ref: it identifies revision $promoted_revision, expected $TARGET_REVISION"
+  docker tag "$promoted_ref" "$immutable_ref"
 }
 
 running_service_image_id() {
@@ -413,7 +454,7 @@ pull_and_verify_target() {
   for image in argus-web argus-control-api argus-worker argus-content argus-host-tools; do
     ref="${ARGUS_REGISTRY}/${image}:${TARGET_REVISION}"
     log "pre-fetching $ref"
-    pull_image "$ref"
+    pull_revision_image "$image"
   done
 
   verify_target_images
