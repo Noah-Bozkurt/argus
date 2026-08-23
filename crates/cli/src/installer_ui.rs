@@ -1,8 +1,6 @@
 use super::installer_shared::{ControlConfig, InstallMode, parse_os_release};
 use anyhow::{Context, Result, bail};
-use cli::lifecycle::{
-    self, DEFAULT_INSTALL_DIR, DEFAULT_STATE_DIR, env_path, prompt_line,
-};
+use cli::lifecycle::{self, DEFAULT_INSTALL_DIR, DEFAULT_STATE_DIR, env_path, prompt_line};
 use std::{
     env,
     fs::{File, OpenOptions},
@@ -32,10 +30,7 @@ impl MenuItem {
         }
     }
 
-    pub(crate) fn described(
-        label: impl Into<String>,
-        description: impl Into<String>,
-    ) -> Self {
+    pub(crate) fn described(label: impl Into<String>, description: impl Into<String>) -> Self {
         Self {
             label: label.into(),
             description: Some(description.into()),
@@ -138,7 +133,9 @@ fn short_version(value: &str) -> String {
 
 fn welcome_header() -> String {
     let installer_version = env!("CARGO_PKG_VERSION");
-    let revision = env::var("ARGUS_VERSION").ok().map(|value| short_version(&value));
+    let revision = env::var("ARGUS_VERSION")
+        .ok()
+        .map(|value| short_version(&value));
     let os = parse_os_release()
         .ok()
         .and_then(|values| values.get("PRETTY_NAME").cloned())
