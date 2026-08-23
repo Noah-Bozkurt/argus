@@ -1,7 +1,7 @@
 use agent::AgentConfig;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use cli::{domain, lifecycle};
+use cli::{docker, domain, lifecycle};
 use serde_json::json;
 use std::{
     io::{self, IsTerminal, Write},
@@ -125,6 +125,8 @@ enum Commands {
         #[arg(long)]
         retry_failed: bool,
     },
+    #[command(hide = true)]
+    DockerPull { image: String },
     /// Display local host information.
     System {
         #[command(subcommand)]
@@ -162,6 +164,8 @@ enum SystemCommands {
 struct ActiveProgress {
     message: String,
     detail: Option<String>,
+    current: Option<u64>,
+    total: Option<u64>,
     started: Instant,
 }
 
@@ -251,6 +255,19 @@ impl UpdateUi {
         cells.into_iter().collect()
     }
 
+    fn determinate_bar(current: u64, total: u64) -> String {
+        if total == 0 {
+            return Self::indeterminate_bar(0);
+        }
+        let filled =
+            ((current.min(total) as u128 * UPDATE_PROGRESS_WIDTH as u128) / total as u128) as usize;
+        let mut cells = vec!['░'; UPDATE_PROGRESS_WIDTH];
+        for cell in cells.iter_mut().take(filled) {
+            *cell = '█';
+        }
+        cells.into_iter().collect()
+    }
+
     fn elapsed_label(seconds: u64) -> String {
         if seconds >= 60 {
             format!("{}m {:02}s", seconds / 60, seconds % 60)
@@ -276,6 +293,8 @@ impl UpdateUi {
         self.progress = Some(ActiveProgress {
             message,
             detail: None,
+            current: None,
+            total: None,
             started: Instant::now(),
         });
         self.progress_frame = 0;
@@ -285,6 +304,15 @@ impl UpdateUi {
     fn set_progress_detail(&mut self, detail: impl Into<String>) {
         if let Some(progress) = self.progress.as_mut() {
             progress.detail = Some(detail.into());
+        }
+    }
+
+    fn set_progress_value(&mut self, current: u64, total: u64) {
+        if let Some(progress) = self.progress.as_mut()
+            && total > 0
+        {
+            progress.current = Some(current.min(total));
+            progress.total = Some(total);
         }
     }
 
@@ -298,8 +326,20 @@ impl UpdateUi {
         let message = progress.message.clone();
         let detail = progress.detail.clone();
         let elapsed = progress.started.elapsed().as_secs();
-        let bar = Self::indeterminate_bar(self.progress_frame);
-        self.progress_frame = self.progress_frame.wrapping_add(1);
+        let (bar, percentage) = match (progress.current, progress.total) {
+            (Some(current), Some(total)) if total > 0 => {
+                let percent = (current.min(total) as u128 * 100 / total as u128) as u64;
+                (
+                    Self::determinate_bar(current, total),
+                    format!(" · {percent:>3}%"),
+                )
+            }
+            _ => {
+                let bar = Self::indeterminate_bar(self.progress_frame);
+                self.progress_frame = self.progress_frame.wrapping_add(1);
+                (bar, String::new())
+            }
+        };
         let bar = self.paint("36", &format!("[{bar}]"));
         let activity = if elapsed >= 15 {
             " · still working"
@@ -310,7 +350,7 @@ impl UpdateUi {
             .map(|value| format!(" · {value}"))
             .unwrap_or_default();
         print!(
-            "\r\x1b[2K  {bar} {message}{detail} · {}{activity}",
+            "\r\x1b[2K  {bar} {message}{detail}{percentage} · {}{activity}",
             Self::elapsed_label(elapsed)
         );
         let _ = io::stdout().flush();
@@ -319,6 +359,27 @@ impl UpdateUi {
     fn handle_line(&mut self, line: &str) {
         let line = line.trim();
         if line.is_empty() {
+            return;
+        }
+
+        if let Some(payload) = line.strip_prefix("[argus-pull-progress]\t") {
+            let mut fields = payload.splitn(4, '\t');
+            let image = fields.next().unwrap_or_default();
+            let current = fields.next().and_then(|value| value.parse::<u64>().ok());
+            let total = fields.next().and_then(|value| value.parse::<u64>().ok());
+            let status = fields.next().unwrap_or_default();
+            if let (Some(current), Some(total)) = (current, total) {
+                self.set_progress_value(current, total);
+            }
+            if !image.is_empty() {
+                let image = docker::short_image_name(image);
+                let status = status.trim();
+                if status.is_empty() {
+                    self.set_progress_detail(image.to_string());
+                } else {
+                    self.set_progress_detail(format!("{image} · {}", status.to_ascii_lowercase()));
+                }
+            }
             return;
         }
 
@@ -557,6 +618,7 @@ async fn run_concise_update_script(target: &UpdateTarget) -> Result<()> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env(env_key, env_value)
+        .env("ARGUS_UPDATE_BOLLARD_PULL", "1")
         // The embedded updater has a compatibility spinner for direct shell use.
         // argusctl owns the richer progress renderer, so keep the child terminal quiet.
         .env("TERM", "dumb");
@@ -847,6 +909,16 @@ async fn main() -> Result<()> {
             run_first_server_update(&target, verbose).await?
         }
         Commands::Uninstall { yes, purge_data } => run_uninstall(yes, purge_data).await?,
+        Commands::DockerPull { image } => {
+            docker::pull_image(&image, |progress| {
+                let status = progress.status.replace('\t', " ").replace('\n', " ");
+                println!(
+                    "[argus-pull-progress]\t{}\t{}\t{}\t{}",
+                    progress.image, progress.current, progress.total, status
+                );
+            })
+            .await?;
+        }
         Commands::Domain { command } => match command {
             DomainCommands::Show => {
                 let domains = domain::installed_domains()?;

@@ -196,7 +196,10 @@ impl Installer {
             self.ui.working("Configuring Argus services", || {
                 self.ensure_argus_user()?;
                 self.provision_tls(&config)?;
-                self.write_runtime_env(&config)?;
+                self.write_runtime_env(&config)
+            })?;
+            self.pull_control_plane_images()?;
+            self.ui.working("Configuring the reverse proxy", || {
                 self.generate_caddy_config(&config)
             })?;
             self.ui.working("Starting the control plane", || {

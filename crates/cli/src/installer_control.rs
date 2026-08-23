@@ -247,11 +247,24 @@ impl Installer {
         Ok(())
     }
 
-    pub(crate) fn start_control_plane(&self) -> Result<()> {
+    pub(crate) fn pull_control_plane_images(&self) -> Result<()> {
         // Rendered Compose configuration contains credentials. Validation must stay
         // quiet even when verbose diagnostics are enabled.
         self.compose_status(&["config", "--quiet"])?;
-        self.compose_status(&["pull"])?;
+        let images = self.compose_output(&["config", "--images"])?;
+        let images = images
+            .lines()
+            .map(str::trim)
+            .filter(|image| !image.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        if images.is_empty() {
+            bail!("Compose configuration did not resolve any images");
+        }
+        self.ui.pull_images(&images)
+    }
+
+    pub(crate) fn start_control_plane(&self) -> Result<()> {
         self.configure_firewall_if_active()?;
         self.compose_status(&["up", "-d"])?;
         for _ in 0..90 {

@@ -14,7 +14,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use uuid::Uuid;
 
@@ -36,6 +36,18 @@ fn indeterminate_bar(frame: usize) -> String {
     };
     let mut cells = vec!['░'; PROGRESS_WIDTH];
     for cell in cells.iter_mut().skip(position).take(PROGRESS_PULSE) {
+        *cell = '█';
+    }
+    cells.into_iter().collect()
+}
+
+fn determinate_bar(current: u64, total: u64) -> String {
+    if total == 0 {
+        return indeterminate_bar(0);
+    }
+    let filled = ((current.min(total) as u128 * PROGRESS_WIDTH as u128) / total as u128) as usize;
+    let mut cells = vec!['░'; PROGRESS_WIDTH];
+    for cell in cells.iter_mut().take(filled) {
         *cell = '█';
     }
     cells.into_iter().collect()
@@ -151,6 +163,56 @@ impl Ui {
     }
     pub(crate) fn success_title(&self, message: &str) {
         println!("{}", self.paint("1;32", message));
+    }
+
+    pub(crate) fn pull_images(&self, images: &[String]) -> Result<()> {
+        let message = "Downloading control-plane images";
+        self.record(&format!("START: {message}"));
+        let interactive = !self.verbose && std::io::stdout().is_terminal();
+        let started = Instant::now();
+        if interactive {
+            let bar = self.paint("36", &format!("[{}]", indeterminate_bar(0)));
+            print!("\r\x1b[2K  {bar} {message} · connecting");
+            let _ = std::io::stdout().flush();
+        } else {
+            println!("{} {message}", self.paint("36", "  ›"));
+        }
+
+        let result = lifecycle::docker_pull_images(images, |progress| {
+            if !interactive {
+                return;
+            }
+            let (bar, percentage) = if progress.total > 0 {
+                let percent = (progress.current.min(progress.total) as u128 * 100
+                    / progress.total as u128) as u64;
+                (
+                    determinate_bar(progress.current, progress.total),
+                    format!(" · {percent:>3}%"),
+                )
+            } else {
+                (indeterminate_bar(0), String::new())
+            };
+            let bar = self.paint("36", &format!("[{bar}]"));
+            let image = lifecycle::docker_short_image_name(&progress.image);
+            let status = progress.status.to_ascii_lowercase();
+            print!(
+                "\r\x1b[2K  {bar} {message} · {image} · {status}{percentage} · {}",
+                elapsed_label(started.elapsed().as_secs())
+            );
+            let _ = std::io::stdout().flush();
+        });
+
+        if interactive {
+            print!("\r\x1b[2K");
+            let _ = std::io::stdout().flush();
+        }
+        if result.is_ok() {
+            println!("{} {message}", self.paint("32", "  ✓"));
+            self.record(&format!("OK: {message}"));
+        } else if let Err(error) = &result {
+            self.record(&format!("FAILED: {message}: {error:#}"));
+        }
+        result
     }
 
     pub(crate) fn working<T>(&self, message: &str, work: impl FnOnce() -> Result<T>) -> Result<T> {
