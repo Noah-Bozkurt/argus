@@ -158,7 +158,7 @@ The Helper is intended to run as root with a local Unix socket; the Agent should
 
 Do not run the Helper as a network service or add generic shell execution to simplify development.
 
-Docker resource operations in the Helper use Bollard and the local Docker Engine API for typed container listing, inspection, stats, logs, protection-label checks, and start/stop/restart. Docker Compose remains the orchestration boundary for stack-level operations; do not reimplement Compose semantics in Bollard.
+Docker resource operations in the Helper use Bollard and the local Docker Engine API for typed container listing, inspection, stats, logs, protection-label checks, and start/stop/restart. Read-only `docker.inspect`, `docker.stats`, and bounded `docker.logs` operations are exposed through the typed Agent/Helper command path. Docker Compose remains the orchestration boundary for stack-level operations; do not reimplement Compose semantics in Bollard.
 
 ## CLI
 
