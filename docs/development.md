@@ -97,10 +97,9 @@ ARGUS_USER_ID=<development user UUID>
 
 These are backend/server variables. Do not expose the Control API credential through public browser environment variables.
 
-
 ### Generated Control API contract
 
-Core operator-facing Control API routes publish an OpenAPI document from Rust types. Regenerate the committed browser contract after changing a documented route or schema:
+Core operator-facing Control API routes publish an OpenAPI document from Rust types. The running Control API exposes the same generated contract at `GET /openapi.json`. Regenerate the committed browser contract after changing a documented route or schema:
 
 ```bash
 pnpm generate:api
