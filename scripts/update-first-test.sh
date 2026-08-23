@@ -450,6 +450,13 @@ pull_and_verify_target() {
   TARGET_REVISION="$(image_revision "$discovery_image")"
   validate_revision "$TARGET_REVISION"
 
+  # The installed services were already revision-checked and passed smoke.
+  # A no-op update must not depend on pulling redundant remote aliases.
+  if [[ "$TARGET_REVISION" == "$CURRENT_REVISION" ]]; then
+    log "resolved target revision: $TARGET_REVISION"
+    return
+  fi
+
   local image ref
   for image in argus-web argus-control-api argus-worker argus-content argus-host-tools; do
     ref="${ARGUS_REGISTRY}/${image}:${TARGET_REVISION}"

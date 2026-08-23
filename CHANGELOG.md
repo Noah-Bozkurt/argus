@@ -12,6 +12,10 @@ The project is under active development and does not yet promise semantic-versio
 - Actionable Docker image-pull diagnostics for normal and verbose transactional updates.
 
 ### Changed
+
+- Installer and updater Docker downloads now keep each image on one bounded progress line instead of leaving wrapped Docker status fragments behind.
+- No-op updates now stop after resolving the already-installed revision instead of requiring redundant application-image pulls.
+
 - Relicensed Argus from its former proprietary license to the GNU Affero General Public License v3.0 only.
 
 

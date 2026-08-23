@@ -170,11 +170,7 @@ impl Ui {
         self.record(&format!("START: {message}"));
         let interactive = !self.verbose && std::io::stdout().is_terminal();
         let started = Instant::now();
-        if interactive {
-            let bar = self.paint("36", &format!("[{}]", indeterminate_bar(0)));
-            print!("\r\x1b[2K  {bar} {message} · connecting");
-            let _ = std::io::stdout().flush();
-        } else {
+        if !interactive {
             println!("{} {message}", self.paint("36", "  ›"));
         }
 
@@ -192,13 +188,28 @@ impl Ui {
             } else {
                 (indeterminate_bar(0), String::new())
             };
-            let bar = self.paint("36", &format!("[{bar}]"));
-            let image = lifecycle::docker_short_image_name(&progress.image);
-            let status = progress.status.to_ascii_lowercase();
-            print!(
-                "\r\x1b[2K  {bar} {message} · {image} · {status}{percentage} · {}",
+            let bar = format!("[{bar}]");
+            let image = cli::progress::short_image_name(&progress.image);
+            let complete = progress.status.eq_ignore_ascii_case("complete");
+            let state = if complete {
+                "✓".to_string()
+            } else {
+                let percentage = percentage.trim_start_matches(" · ");
+                if percentage.is_empty() {
+                    "working".to_string()
+                } else {
+                    percentage.to_string()
+                }
+            };
+            let line = format!(
+                "  {bar} {image} · {state} · {}",
                 elapsed_label(started.elapsed().as_secs())
             );
+            let line = cli::progress::fit_line(&line, cli::progress::terminal_width());
+            print!("\r\x1b[2K{line}");
+            if complete {
+                println!();
+            }
             let _ = std::io::stdout().flush();
         });
 

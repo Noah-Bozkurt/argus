@@ -167,6 +167,7 @@ struct ActiveProgress {
     current: Option<u64>,
     total: Option<u64>,
     started: Instant,
+    image_pull: bool,
 }
 
 struct UpdateUi {
@@ -296,6 +297,7 @@ impl UpdateUi {
             current: None,
             total: None,
             started: Instant::now(),
+            image_pull: false,
         });
         self.progress_frame = 0;
         self.tick();
@@ -340,20 +342,37 @@ impl UpdateUi {
                 (bar, String::new())
             }
         };
-        let bar = self.paint("36", &format!("[{bar}]"));
+        let bar = format!("[{bar}]");
         let activity = if elapsed >= 15 {
             " · still working"
         } else {
             ""
         };
-        let detail = detail
-            .map(|value| format!(" · {value}"))
-            .unwrap_or_default();
-        print!(
-            "\r\x1b[2K  {bar} {message}{detail}{percentage} · {}{activity}",
-            Self::elapsed_label(elapsed)
-        );
+        let line = if progress.image_pull {
+            let detail = detail.map(|value| format!(" {value}")).unwrap_or_default();
+            format!(
+                "  {bar}{}{percentage} · {}{activity}",
+                detail,
+                Self::elapsed_label(elapsed)
+            )
+        } else {
+            let detail = detail
+                .map(|value| format!(" · {value}"))
+                .unwrap_or_default();
+            format!(
+                "  {bar} {message}{detail}{percentage} · {}{activity}",
+                Self::elapsed_label(elapsed)
+            )
+        };
+        let line = cli::progress::fit_line(&line, cli::progress::terminal_width());
+        print!("\r\x1b[2K{line}");
         let _ = io::stdout().flush();
+    }
+
+    fn finish_progress_line(&mut self) {
+        if self.progress.take().is_some() && self.interactive {
+            println!();
+        }
     }
 
     fn handle_line(&mut self, line: &str) {
@@ -372,12 +391,20 @@ impl UpdateUi {
                 self.set_progress_value(current, total);
             }
             if !image.is_empty() {
-                let image = docker::short_image_name(image);
+                let image = cli::progress::short_image_name(image);
                 let status = status.trim();
-                if status.is_empty() {
-                    self.set_progress_detail(image.to_string());
+                let complete = status.eq_ignore_ascii_case("complete");
+                self.set_progress_detail(if complete {
+                    format!("{image} · ✓")
                 } else {
-                    self.set_progress_detail(format!("{image} · {}", status.to_ascii_lowercase()));
+                    image
+                });
+                if let Some(progress) = self.progress.as_mut() {
+                    progress.image_pull = true;
+                }
+                if complete {
+                    self.tick();
+                    self.finish_progress_line();
                 }
             }
             return;
@@ -424,6 +451,8 @@ impl UpdateUi {
         if let Some(image) = line.strip_prefix("[argus-update] pre-fetching ") {
             if !self.download_announced {
                 self.download_announced = true;
+                self.start_progress("Downloading update");
+            } else if self.progress.is_none() {
                 self.start_progress("Downloading update");
             }
             let image = image

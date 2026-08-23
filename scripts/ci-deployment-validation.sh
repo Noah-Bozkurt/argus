@@ -82,6 +82,25 @@ set -euo pipefail
   tmp="$(mktemp -d)"
   export ARGUS_STATE_DIR="$tmp/state"
   source scripts/update-first-test.sh --internal-test-library
+  CURRENT_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  REQUESTED_VERSION=main
+  ARGUS_REGISTRY=registry.example/argus
+  pulls=()
+  pull_image() { pulls+=("$1"); }
+  image_revision() { printf '%s\n' "$CURRENT_REVISION"; }
+  validate_version_tag() { :; }
+  validate_revision() { :; }
+  log() { :; }
+  verify_target_images() { return 1; }
+  pull_and_verify_target
+  [[ "${pulls[*]}" == "registry.example/argus/argus-host-tools:main" ]]
+  [[ "$TARGET_REVISION" == "$CURRENT_REVISION" ]]
+)
+
+(
+  tmp="$(mktemp -d)"
+  export ARGUS_STATE_DIR="$tmp/state"
+  source scripts/update-first-test.sh --internal-test-library
   ARGUS_REGISTRY=registry.example/argus
   REQUESTED_VERSION=main
   TARGET_REVISION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
