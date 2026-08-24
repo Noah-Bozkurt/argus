@@ -129,8 +129,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Use local pnpm store
-        run: pnpm config set store-dir "${ARGUS_PNPM_STORE_DIR:-$HOME/.cache/argus/pnpm}"
+      - name: Use writable local pnpm caches
+        shell: bash
+        run: |
+          set -euo pipefail
+          store_dir="${ARGUS_PNPM_STORE_DIR:-$HOME/.cache/argus/pnpm}"
+          cache_dir="${ARGUS_PNPM_CACHE_DIR:-${store_dir%/}/cache}"
+          mkdir -p "$store_dir" "$cache_dir"
+          pnpm config set store-dir "$store_dir"
+          pnpm config set cache-dir "$cache_dir"
 
       - name: Build Pages deployment from tested binary
         env:
