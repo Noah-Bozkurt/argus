@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table'
+import { fetchServers } from '../../../lib/control-api-client'
 import type { ControlApiServerView as ServerView } from '../../../lib/control-api-contract'
 import LucideIcon from '../../lucide-icons'
 import Tooltip from '../../ui/tooltip'
@@ -47,12 +48,6 @@ function attention(server: ServerView): boolean {
 function initialFavorites(): string[] {
   if (typeof window === 'undefined') return []
   try { return JSON.parse(window.localStorage.getItem(FAVORITES_KEY) ?? '[]') as string[] } catch { return [] }
-}
-
-async function fetchServers(): Promise<ServerView[]> {
-  const response = await fetch('/api/servers', { cache: 'no-store' })
-  if (!response.ok) throw new Error(`Unable to refresh servers (${response.status})`)
-  return response.json() as Promise<ServerView[]>
 }
 
 export default function ServerFleet({ initialServers }: { initialServers: ServerView[] }) {

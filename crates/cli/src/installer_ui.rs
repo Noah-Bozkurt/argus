@@ -1,13 +1,9 @@
 use super::installer_shared::{ControlConfig, InstallMode, parse_os_release};
 use anyhow::{Context, Result, bail};
-use cli::lifecycle::{self, DEFAULT_INSTALL_DIR, DEFAULT_STATE_DIR, env_path, prompt_line};
-use std::{
-    env,
-    fs::{File, OpenOptions},
-    io::{Read, Write},
-    path::Path,
-    process::{Command, Stdio},
-};
+use cli::lifecycle::{self, DEFAULT_INSTALL_DIR, DEFAULT_STATE_DIR, env_path};
+use dialoguer::{Select, theme::ColorfulTheme};
+use secrecy::ExposeSecret;
+use std::{env, path::Path, process::Command};
 
 const LOGO: &str = r#"    ___
    /   |  _________ ___  ______
@@ -36,70 +32,19 @@ impl MenuItem {
             description: Some(description.into()),
         }
     }
+
+    fn rendered(&self) -> String {
+        match &self.description {
+            Some(description) => format!("{}  —  {description}", self.label),
+            None => self.label.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuChoice {
     Selected(usize),
     Cancelled,
-}
-
-struct TerminalMode {
-    tty: File,
-    original: String,
-    color: bool,
-}
-
-impl TerminalMode {
-    fn enter() -> Result<Self> {
-        let tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
-        let output = Command::new("stty")
-            .arg("-g")
-            .stdin(Stdio::from(tty.try_clone()?))
-            .output()
-            .context("read terminal mode")?;
-        if !output.status.success() {
-            bail!("could not read terminal mode");
-        }
-        let original = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let status = Command::new("stty")
-            .args(["-echo", "-icanon", "min", "1", "time", "0"])
-            .stdin(Stdio::from(tty.try_clone()?))
-            .status()
-            .context("enable terminal navigation")?;
-        if !status.success() {
-            bail!("could not enable terminal navigation");
-        }
-        Ok(Self {
-            tty,
-            original,
-            color: env::var_os("NO_COLOR").is_none(),
-        })
-    }
-
-    fn paint(&self, code: &str, text: &str) -> String {
-        if self.color {
-            format!("\x1b[{code}m{text}\x1b[0m")
-        } else {
-            text.to_string()
-        }
-    }
-}
-
-impl Drop for TerminalMode {
-    fn drop(&mut self) {
-        let _ = Command::new("stty")
-            .arg(&self.original)
-            .stdin(
-                self.tty
-                    .try_clone()
-                    .map(Stdio::from)
-                    .unwrap_or(Stdio::null()),
-            )
-            .status();
-        let _ = write!(self.tty, "\x1b[?25h");
-        let _ = self.tty.flush();
-    }
 }
 
 fn memory_label() -> Option<String> {
@@ -168,104 +113,27 @@ pub(crate) fn menu_select(
     if items.is_empty() {
         bail!("menu has no options");
     }
-
-    match menu_select_terminal(header, title, items) {
-        Ok(choice) => Ok(choice),
-        Err(_) => menu_select_fallback(header, title, items),
+    if !lifecycle::interactive_available() {
+        bail!("interactive input is unavailable");
     }
-}
 
-fn menu_select_terminal(
-    header: Option<&str>,
-    title: &str,
-    items: &[MenuItem],
-) -> Result<MenuChoice> {
-    let mut terminal = TerminalMode::enter()?;
-    let mut selected = 0usize;
-
-    loop {
-        write!(terminal.tty, "\x1b[?25l\x1b[2J\x1b[H")?;
-        if let Some(header) = header {
-            writeln!(terminal.tty, "{header}")?;
-        }
-        writeln!(terminal.tty, "{}\n", terminal.paint("1", title))?;
-
-        let has_descriptions = items.iter().any(|item| item.description.is_some());
-        for (index, item) in items.iter().enumerate() {
-            if index == selected {
-                writeln!(
-                    terminal.tty,
-                    "{}",
-                    terminal.paint("1;36", &format!("  › {}", item.label))
-                )?;
-            } else {
-                writeln!(terminal.tty, "    {}", item.label)?;
-            }
-            if let Some(description) = &item.description {
-                writeln!(
-                    terminal.tty,
-                    "{}",
-                    terminal.paint("2", &format!("      {description}"))
-                )?;
-            }
-            if has_descriptions {
-                writeln!(terminal.tty)?;
-            }
-        }
-
-        writeln!(
-            terminal.tty,
-            "{}",
-            terminal.paint("2", "↑/↓ Select   Enter Continue   q Cancel")
-        )?;
-        terminal.tty.flush()?;
-
-        let mut byte = [0u8; 1];
-        terminal.tty.read_exact(&mut byte)?;
-        match byte[0] {
-            b'\r' | b'\n' => return Ok(MenuChoice::Selected(selected)),
-            b'q' | b'Q' => return Ok(MenuChoice::Cancelled),
-            0x1b => {
-                let mut sequence = [0u8; 2];
-                if terminal.tty.read_exact(&mut sequence).is_ok() && sequence[0] == b'[' {
-                    match sequence[1] {
-                        b'A' => selected = selected.checked_sub(1).unwrap_or(items.len() - 1),
-                        b'B' => selected = (selected + 1) % items.len(),
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn menu_select_fallback(
-    header: Option<&str>,
-    title: &str,
-    items: &[MenuItem],
-) -> Result<MenuChoice> {
+    let term = lifecycle::interactive_term()?;
     if let Some(header) = header {
-        println!("{header}");
+        term.write_line(header).context("render installer header")?;
     }
-    println!("{title}\n");
-    for (index, item) in items.iter().enumerate() {
-        println!("  {}. {}", index + 1, item.label);
-        if let Some(description) = &item.description {
-            println!("     {description}");
-        }
-    }
-    let answer = prompt_line(&format!("\nChoose [1-{}] or q: ", items.len()))?;
-    if answer.eq_ignore_ascii_case("q") {
-        return Ok(MenuChoice::Cancelled);
-    }
-    let selected = answer
-        .parse::<usize>()
-        .with_context(|| format!("enter a number from 1 to {}", items.len()))?;
-    if !(1..=items.len()).contains(&selected) {
-        bail!("enter a number from 1 to {}", items.len());
-    }
-    Ok(MenuChoice::Selected(selected - 1))
+    let rendered = items.iter().map(MenuItem::rendered).collect::<Vec<_>>();
+    let theme = ColorfulTheme::default();
+    let selected = Select::with_theme(&theme)
+        .with_prompt(title)
+        .items(&rendered)
+        .default(0)
+        .report(false)
+        .interact_on_opt(&term)
+        .context("read installer selection")?;
+
+    Ok(selected
+        .map(MenuChoice::Selected)
+        .unwrap_or(MenuChoice::Cancelled))
 }
 
 pub(crate) fn select_install_mode(requested: Option<String>) -> Result<InstallMode> {
@@ -342,7 +210,10 @@ pub(crate) fn print_control_success(config: &ControlConfig) {
     println!("Administrator login");
     println!("  Username     {}", config.basic_auth_user);
     if config.generated_basic_password && lifecycle::interactive_available() {
-        println!("  Password     {}", config.basic_auth_password);
+        println!(
+            "  Password     {}",
+            config.basic_auth_password.expose_secret()
+        );
         println!();
         println!("  Save these credentials somewhere secure.");
     } else {
@@ -374,9 +245,9 @@ mod tests {
     }
 
     #[test]
-    fn menu_items_can_include_descriptions() {
+    fn menu_items_render_descriptions_without_terminal_escape_sequences() {
         let item = MenuItem::described("Control Plane", "Run Argus here.");
-        assert_eq!(item.label, "Control Plane");
-        assert_eq!(item.description.as_deref(), Some("Run Argus here."));
+        assert_eq!(item.rendered(), "Control Plane  —  Run Argus here.");
+        assert!(!item.rendered().contains("\x1b"));
     }
 }

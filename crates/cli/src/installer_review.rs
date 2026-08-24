@@ -4,6 +4,7 @@ use super::{
 };
 use anyhow::{Result, bail};
 use cli::lifecycle::{self, prompt_line, prompt_secret};
+use secrecy::{ExposeSecret, SecretString};
 
 const INSTALL: usize = 5;
 const CANCEL: usize = 6;
@@ -106,7 +107,7 @@ pub(crate) fn review_control_install(config: &mut ControlConfig) -> Result<()> {
                 } else {
                     let second = prompt_secret("Confirm login password: ")?;
                     if first == second {
-                        config.basic_auth_password = first;
+                        config.basic_auth_password = SecretString::from(first);
                         config.generated_basic_password = false;
                     } else {
                         eprintln!("Passwords do not match.");
@@ -133,29 +134,29 @@ mod tests {
             domain: "app.example.com".to_string(),
             content_domain: "content.example.com".to_string(),
             basic_auth_user: "argus".to_string(),
-            basic_auth_password: "never-print-this-password".to_string(),
-            postgres_password: String::new(),
-            web_api_token: String::new(),
-            worker_token: String::new(),
-            content_sync_token: String::new(),
-            payload_secret: String::new(),
+            basic_auth_password: SecretString::from("never-print-this-password".to_string()),
+            postgres_password: SecretString::from(String::new()),
+            web_api_token: SecretString::from(String::new()),
+            worker_token: SecretString::from(String::new()),
+            content_sync_token: SecretString::from(String::new()),
+            payload_secret: SecretString::from(String::new()),
             org_id: String::new(),
             user_id: String::new(),
             bootstrap_project_id: String::new(),
             bootstrap_environment_id: String::new(),
             server_id: String::new(),
-            github_token: String::new(),
+            github_token: SecretString::from(String::new()),
             rust_log: "info".to_string(),
             operator_email: "operator@argus.local".to_string(),
             acme_email: "admin@example.com".to_string(),
             tls_mode: TlsMode::PublicAcme,
-            cloudflare_api_token: String::new(),
+            cloudflare_api_token: SecretString::from(String::new()),
             org_name: "Argus".to_string(),
             generated_basic_password: false,
             existing_install: false,
         };
         let rendered = rows(&config).join("\n");
-        assert!(!rendered.contains(&config.basic_auth_password));
+        assert!(!rendered.contains(config.basic_auth_password.expose_secret()));
     }
 
     #[test]

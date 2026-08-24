@@ -105,7 +105,9 @@ Core operator-facing Control API routes publish an OpenAPI document from Rust ty
 pnpm generate:api
 ```
 
-This writes `apps/web/openapi/control-api.json` and `apps/web/lib/generated/control-api.ts`. The generated TypeScript file is owned by this command and should not be edited by hand. The server fleet is the first UI flow using the generated schema together with TanStack Query and TanStack Table; new migrations should follow the same contract-first pattern instead of introducing duplicate handwritten DTOs.
+This writes `apps/web/openapi/control-api.json` and `apps/web/lib/generated/control-api.ts`. The generated TypeScript file is owned by this command and should not be edited by hand.
+
+Browser/API helpers should derive response types from `apps/web/lib/control-api-contract.ts`. `apps/web/lib/control-api-client.ts` is the small browser-safe adapter for Next.js proxy routes; the server fleet uses it with TanStack Query. Do not restate Rust response DTOs manually when the generated OpenAPI schema already owns the type. The project intentionally keeps this adapter local rather than depending on a second generated-client runtime.
 
 ## Payload content service
 
@@ -164,7 +166,11 @@ Docker resource operations in the Helper use Bollard and the local Docker Engine
 
 Local diagnostic commands are available through `argusctl` (`crates/cli`). They are an operator/developer diagnostic surface, not a replacement for normal UI/API workflows.
 
-Lifecycle image downloads use Bollard against the local Docker Engine API so the installer and concise updater can report Docker layer byte progress without parsing CLI text. Docker Compose remains the owner of Compose configuration and service orchestration (`config`, `up`, `down`, and related stack operations); do not replace transactional update or rollback semantics with direct container calls just to avoid Compose.
+Installer selection and secret/text prompts use `dialoguer` on a `console::Term`; `/dev/tty` remains the input boundary so `curl ... | sudo bash` installations stay interactive without Argus maintaining its own `stty`/escape-sequence parser. Installer and concise-updater progress use `indicatif`. Bollard remains the source of real Docker layer byte progress, while Docker Compose remains the owner of Compose configuration and service orchestration (`config`, `up`, `down`, and related stack operations).
+
+Install, repair, update, and uninstall share an `fs4` file lock under the Argus state directory. An updater-delegated `argusctl` intentionally reuses the parent transaction instead of acquiring a second lock. Temporary staging and atomic environment-file replacement use `tempfile`; generated credentials and installer tokens use `secrecy::SecretString` and should only be exposed explicitly at the narrow file/process/HTTP boundary that needs the plaintext value.
+
+Do not replace transactional update or rollback semantics with direct container calls just to avoid Compose.
 
 ## Branch and PR workflow
 

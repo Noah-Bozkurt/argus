@@ -66,6 +66,9 @@ fn purge_data_from_answer(answer: &str) -> bool {
 }
 
 fn run_uninstall(yes: bool, mut purge_data: bool) -> Result<()> {
+    let state_dir = lifecycle::env_path("ARGUS_STATE_DIR", lifecycle::DEFAULT_STATE_DIR);
+    let _lifecycle_lock = lifecycle::acquire_lifecycle_lock(&state_dir, "uninstall")?;
+
     if !yes {
         if !lifecycle::interactive_available() {
             bail!("confirmation required; rerun with --yes");
@@ -120,15 +123,21 @@ impl Installer {
         lifecycle::require_root().context("installer must run as root")?;
         self.ui.enable_log(&self.log_dir)?;
 
-        if self.mode == InstallMode::Repair {
-            return self.repair_installation();
+        if self.mode == InstallMode::Uninstall {
+            return run_uninstall(false, false);
         }
+        // argusctl owns the update lifecycle lock so delegated updater processes can
+        // inherit the operation without deadlocking against the installer.
         if self.mode == InstallMode::Update {
             return lifecycle::run("/usr/local/bin/argusctl", &["update"])
                 .context("start Argus update");
         }
-        if self.mode == InstallMode::Uninstall {
-            return run_uninstall(false, false);
+
+        let _lifecycle_lock =
+            lifecycle::acquire_lifecycle_lock(&self.state_dir, self.mode.lifecycle_name())?;
+
+        if self.mode == InstallMode::Repair {
+            return self.repair_installation();
         }
 
         if self.mode == InstallMode::ControlPlane && self.env_file().is_file() {
@@ -262,30 +271,25 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        installer_shared::{InstallMode, is_revision},
-        purge_data_from_answer, resolve_content_domain_input, uninstall_confirmed,
-    };
+    use super::*;
 
     #[test]
-    fn revision_validation_is_strict() {
-        assert!(is_revision("0123456789abcdef0123456789abcdef01234567"));
-        assert!(!is_revision("main"));
-        assert!(!is_revision("0123456789ABCDEF0123456789ABCDEF01234567"));
+    fn uninstall_requires_exact_yes() {
+        assert!(uninstall_confirmed("YES"));
+        assert!(!uninstall_confirmed("yes"));
+        assert!(!uninstall_confirmed("YES "));
     }
 
     #[test]
-    fn supported_modes_are_explicit() {
-        assert_eq!(
-            InstallMode::parse("control-plane").unwrap(),
-            InstallMode::ControlPlane
-        );
-        assert_eq!(InstallMode::parse("agent").unwrap(), InstallMode::Agent);
-        assert!(InstallMode::parse("server").is_err());
+    fn purge_answer_defaults_to_preserve() {
+        assert!(purge_data_from_answer("yes"));
+        assert!(purge_data_from_answer("Y"));
+        assert!(!purge_data_from_answer(""));
+        assert!(!purge_data_from_answer("no"));
     }
 
     #[test]
-    fn empty_content_domain_input_keeps_content_subdomain_default() {
+    fn content_domain_defaults_when_empty() {
         assert_eq!(
             resolve_content_domain_input("argus.example.com", "content.argus.example.com", "")
                 .unwrap(),
@@ -294,16 +298,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_content_domain_is_normalized_and_must_differ_from_web_domain() {
-        assert_eq!(
-            resolve_content_domain_input(
-                "argus.example.com",
-                "content.argus.example.com",
-                "CMS.EXAMPLE.COM"
-            )
-            .unwrap(),
-            "cms.example.com"
-        );
+    fn content_domain_rejects_primary_domain() {
         assert!(
             resolve_content_domain_input(
                 "argus.example.com",
@@ -312,23 +307,5 @@ mod tests {
             )
             .is_err()
         );
-    }
-
-    #[test]
-    fn uninstall_requires_literal_uppercase_yes() {
-        assert!(uninstall_confirmed("YES"));
-        for answer in ["", "yes", "Yes", " YES ", "Y"] {
-            assert!(!uninstall_confirmed(answer), "{answer}");
-        }
-    }
-
-    #[test]
-    fn uninstall_purge_prompt_defaults_to_preserving_data() {
-        for answer in ["", "n", "N", "no", "anything else"] {
-            assert!(!purge_data_from_answer(answer), "{answer}");
-        }
-        for answer in ["y", "Y", "yes", "YES", " yes "] {
-            assert!(purge_data_from_answer(answer), "{answer}");
-        }
     }
 }

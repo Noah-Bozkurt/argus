@@ -3,6 +3,7 @@ use anyhow::{Context, Result, bail};
 use cli::lifecycle::{
     self, RegistryConfig, copy_file, output, prompt_line, prompt_secret, read_env_file, temp_dir,
 };
+use secrecy::{ExposeSecret, SecretString};
 use std::{
     collections::BTreeMap,
     env, fs,
@@ -18,13 +19,21 @@ impl Installer {
             lifecycle::require_root().context("installer must run as root")?;
             let os = parse_os_release()?;
             let id = os.get("ID").map(String::as_str).unwrap_or("");
-            if id != "ubuntu" && id != "debian" { bail!("Argus currently supports Ubuntu or Debian only"); }
+            if id != "ubuntu" && id != "debian" {
+                bail!("Argus currently supports Ubuntu or Debian only");
+            }
             let architecture = output("dpkg", &["--print-architecture"])?;
-            if architecture != "amd64" { bail!("Argus currently supports amd64 only"); }
+            if architecture != "amd64" {
+                bail!("Argus currently supports amd64 only");
+            }
             if self.mode == InstallMode::ControlPlane && !self.compose_file().exists() {
                 let sockets = output("ss", &["-ltnH"])?;
                 for port in [80, 443] {
-                    if sockets.lines().any(|line| line.split_whitespace().nth(3).is_some_and(|local| local.ends_with(&format!(":{port}")))) {
+                    if sockets.lines().any(|line| {
+                        line.split_whitespace()
+                            .nth(3)
+                            .is_some_and(|local| local.ends_with(&format!(":{port}")))
+                    }) {
                         bail!("TCP port {port} is already in use; free the port before installing Argus");
                     }
                 }
@@ -268,7 +277,9 @@ impl Installer {
         let version = if existing_install {
             if let (Some(requested), Some(installed)) = (&requested_version, &installed_version) {
                 if requested != installed {
-                    self.ui.warning(&format!("Ignoring requested ARGUS_VERSION={requested}; use argusctl update for version changes"));
+                    self.ui.warning(&format!(
+                        "Ignoring requested ARGUS_VERSION={requested}; use argusctl update for version changes"
+                    ));
                 }
             }
             installed_version.unwrap_or_else(|| {
@@ -321,7 +332,7 @@ impl Installer {
         let (basic_auth_password, generated_basic_password) = if let Some(value) =
             requested_password.or_else(|| existing_values.get("ARGUS_BASIC_AUTH_PASSWORD").cloned())
         {
-            (value, false)
+            (SecretString::from(value), false)
         } else if lifecycle::interactive_available() {
             loop {
                 let first = prompt_secret("Login password (Enter to generate): ")?;
@@ -335,14 +346,17 @@ impl Installer {
                 }
                 let second = prompt_secret("Confirm login password: ")?;
                 if first == second {
-                    break (first, false);
+                    break (SecretString::from(first), false);
                 }
                 self.ui.warning("Passwords do not match; try again.");
             }
         } else {
             (new_secret(24), true)
         };
-        if !existing_install && !generated_basic_password && basic_auth_password.len() < 12 {
+        if !existing_install
+            && !generated_basic_password
+            && basic_auth_password.expose_secret().len() < 12
+        {
             bail!("ARGUS_BASIC_AUTH_PASSWORD must be at least 12 characters");
         }
         Ok(ControlConfig {
@@ -365,10 +379,12 @@ impl Installer {
                 "ARGUS_BOOTSTRAP_ENVIRONMENT_ID",
             ),
             server_id: value_or_uuid(&existing_values, "ARGUS_SERVER_ID"),
-            github_token: env::var("ARGUS_GITHUB_TOKEN")
-                .ok()
-                .or_else(|| existing_values.get("ARGUS_GITHUB_TOKEN").cloned())
-                .unwrap_or_default(),
+            github_token: SecretString::from(
+                env::var("ARGUS_GITHUB_TOKEN")
+                    .ok()
+                    .or_else(|| existing_values.get("ARGUS_GITHUB_TOKEN").cloned())
+                    .unwrap_or_default(),
+            ),
             rust_log: env::var("ARGUS_RUST_LOG")
                 .ok()
                 .or_else(|| existing_values.get("ARGUS_RUST_LOG").cloned())
@@ -383,10 +399,12 @@ impl Installer {
             } else {
                 TlsMode::PublicAcme
             },
-            cloudflare_api_token: env::var("ARGUS_CLOUDFLARE_API_TOKEN")
-                .ok()
-                .or(saved_cloudflare_token)
-                .unwrap_or_default(),
+            cloudflare_api_token: SecretString::from(
+                env::var("ARGUS_CLOUDFLARE_API_TOKEN")
+                    .ok()
+                    .or(saved_cloudflare_token)
+                    .unwrap_or_default(),
+            ),
             org_name: env::var("ARGUS_ORG_NAME").unwrap_or_else(|_| "Argus".to_string()),
             generated_basic_password,
             existing_install,
