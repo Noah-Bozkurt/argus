@@ -1,7 +1,7 @@
 FROM rust:1.97-bookworm AS build
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends musl-tools \
+    && apt-get install -y --no-install-recommends binutils musl-tools \
     && rm -rf /var/lib/apt/lists/* \
     && rustup target add x86_64-unknown-linux-musl
 
@@ -29,7 +29,19 @@ RUN for package in crates/agent crates/cli crates/common crates/helper crates/pr
 COPY crates crates
 COPY scripts scripts
 RUN find crates -type f -name '*.rs' -exec touch {} +
-RUN cargo build --locked --release --target x86_64-unknown-linux-musl -p agent -p helper -p cli
+RUN cargo build --locked --release --target x86_64-unknown-linux-musl -p agent -p helper -p cli \
+    && strip \
+        target/x86_64-unknown-linux-musl/release/argus-agent \
+        target/x86_64-unknown-linux-musl/release/argus-helper \
+        target/x86_64-unknown-linux-musl/release/argusctl \
+        target/x86_64-unknown-linux-musl/release/argus-installer \
+    && installer_size="$(stat -c '%s' target/x86_64-unknown-linux-musl/release/argus-installer)" \
+    && installer_limit="$((25 * 1024 * 1024))" \
+    && echo "argus-installer size after stripping: ${installer_size} bytes" \
+    && if [ "$installer_size" -gt "$installer_limit" ]; then \
+         echo "argus-installer exceeds the Cloudflare Pages 25 MiB file limit" >&2; \
+         exit 1; \
+       fi
 
 FROM scratch AS artifact
 COPY --from=build /src/target/x86_64-unknown-linux-musl/release/argus-agent /out/argus-agent

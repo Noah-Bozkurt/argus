@@ -33,7 +33,7 @@ jobs:
           - control-api
           - worker
           - host-tools
-    runs-on: [self-hosted, linux, x64, argus]
+    runs-on: [self-hosted, linux, x64, argus, general]
     steps:
       - name: Check out release-gated revision
         uses: actions/checkout@v4
@@ -60,7 +60,7 @@ jobs:
 
   verify-immutable-release:
     needs: build-immutable-release
-    runs-on: [self-hosted, linux, x64, argus]
+    runs-on: [self-hosted, linux, x64, argus, general]
     steps:
       - name: Check out tested revision
         uses: actions/checkout@v4
@@ -89,7 +89,7 @@ jobs:
 
   deploy-installer-pages:
     needs: verify-immutable-release
-    runs-on: [self-hosted, linux, x64, argus]
+    runs-on: [self-hosted, linux, x64, argus, general]
     env:
       TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -129,6 +129,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Use local pnpm store
+        run: pnpm config set store-dir "${ARGUS_PNPM_STORE_DIR:-$HOME/.cache/argus/pnpm}"
 
       - name: Build Pages deployment from tested binary
         env:
@@ -154,7 +156,7 @@ jobs:
     needs:
       - verify-immutable-release
       - deploy-installer-pages
-    runs-on: [self-hosted, linux, x64, argus]
+    runs-on: [self-hosted, linux, x64, argus, general]
     steps:
       - name: Check out tested revision
         uses: actions/checkout@v4
