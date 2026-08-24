@@ -3,62 +3,29 @@ use cli::lifecycle::{
     self, DEFAULT_CONFIG_DIR, DEFAULT_INSTALL_DIR, DEFAULT_LOG_DIR, DEFAULT_STATE_DIR, env_path,
     prompt_line,
 };
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
+use secrecy::SecretString;
 use std::{
     collections::BTreeMap,
     env, fs,
     io::{IsTerminal, Write},
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread,
-    time::{Duration, Instant},
+    sync::{Arc, Mutex},
+    time::Duration,
 };
 use uuid::Uuid;
 
-const PROGRESS_WIDTH: usize = 24;
-const PROGRESS_PULSE: usize = 6;
-
-fn indeterminate_bar(frame: usize) -> String {
-    let travel = PROGRESS_WIDTH - PROGRESS_PULSE;
-    let cycle = travel * 2;
-    let position = if cycle == 0 {
-        0
-    } else {
-        let phase = frame % cycle;
-        if phase <= travel {
-            phase
-        } else {
-            cycle - phase
-        }
-    };
-    let mut cells = vec!['░'; PROGRESS_WIDTH];
-    for cell in cells.iter_mut().skip(position).take(PROGRESS_PULSE) {
-        *cell = '█';
-    }
-    cells.into_iter().collect()
+fn spinner_style() -> ProgressStyle {
+    ProgressStyle::with_template("  {spinner:.cyan} {msg} · {elapsed_precise}")
+        .expect("valid Argus spinner template")
+        .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
 }
 
-fn determinate_bar(current: u64, total: u64) -> String {
-    if total == 0 {
-        return indeterminate_bar(0);
-    }
-    let filled = ((current.min(total) as u128 * PROGRESS_WIDTH as u128) / total as u128) as usize;
-    let mut cells = vec!['░'; PROGRESS_WIDTH];
-    for cell in cells.iter_mut().take(filled) {
-        *cell = '█';
-    }
-    cells.into_iter().collect()
-}
-
-fn elapsed_label(seconds: u64) -> String {
-    if seconds >= 60 {
-        format!("{}m {:02}s", seconds / 60, seconds % 60)
-    } else {
-        format!("{seconds}s")
-    }
+fn pull_style() -> ProgressStyle {
+    ProgressStyle::with_template("  [{bar:24.cyan}] {msg} · {percent:>3}% · {elapsed_precise}")
+        .expect("valid Argus progress template")
+        .progress_chars("█░")
 }
 
 #[derive(Clone)]
@@ -153,14 +120,17 @@ impl Ui {
         self.record("Argus installer");
         println!("{}\n", self.paint("1;36", "Argus installer"));
     }
+
     pub(crate) fn detail(&self, message: &str) {
         self.record(&format!("DETAIL: {message}"));
         println!("{}", self.paint("2", &format!("    {message}")));
     }
+
     pub(crate) fn warning(&self, message: &str) {
         self.record(&format!("WARNING: {message}"));
         eprintln!("{} {message}", self.paint("33", "  !"));
     }
+
     pub(crate) fn success_title(&self, message: &str) {
         println!("{}", self.paint("1;32", message));
     }
@@ -169,53 +139,40 @@ impl Ui {
         let message = "Downloading control-plane images";
         self.record(&format!("START: {message}"));
         let interactive = !self.verbose && std::io::stdout().is_terminal();
-        let started = Instant::now();
         if !interactive {
             println!("{} {message}", self.paint("36", "  ›"));
         }
 
+        let multi = MultiProgress::with_draw_target(ProgressDrawTarget::stdout());
+        let mut bars = BTreeMap::<String, ProgressBar>::new();
         let result = lifecycle::docker_pull_images(images, |progress| {
             if !interactive {
                 return;
             }
-            let (bar, percentage) = if progress.total > 0 {
-                let percent = (progress.current.min(progress.total) as u128 * 100
-                    / progress.total as u128) as u64;
-                (
-                    determinate_bar(progress.current, progress.total),
-                    format!(" · {percent:>3}%"),
-                )
-            } else {
-                (indeterminate_bar(0), String::new())
-            };
-            let bar = format!("[{bar}]");
+            let image_key = progress.image.clone();
+            let bar = bars.entry(image_key).or_insert_with(|| {
+                let bar = ProgressBar::new_spinner();
+                bar.set_style(spinner_style());
+                bar.enable_steady_tick(Duration::from_millis(100));
+                multi.add(bar)
+            });
             let image = cli::progress::short_image_name(&progress.image);
-            let complete = progress.status.eq_ignore_ascii_case("complete");
-            let state = if complete {
-                "✓".to_string()
-            } else {
-                let percentage = percentage.trim_start_matches(" · ");
-                if percentage.is_empty() {
-                    "working".to_string()
-                } else {
-                    percentage.to_string()
-                }
-            };
-            let line = format!(
-                "  {bar} {image} · {state} · {}",
-                elapsed_label(started.elapsed().as_secs())
-            );
-            let line = cli::progress::fit_line(&line, cli::progress::terminal_width());
-            print!("\r\x1b[2K{line}");
-            if complete {
-                println!();
+            if progress.total > 0 {
+                bar.set_length(progress.total);
+                bar.set_position(progress.current.min(progress.total));
+                bar.set_style(pull_style());
             }
-            let _ = std::io::stdout().flush();
+            bar.set_message(image.clone());
+            if progress.status.eq_ignore_ascii_case("complete") {
+                if progress.total > 0 {
+                    bar.set_position(progress.total);
+                }
+                bar.finish_with_message(format!("{image} · ✓"));
+            }
         });
 
-        if interactive {
-            print!("\r\x1b[2K");
-            let _ = std::io::stdout().flush();
+        if result.is_err() {
+            let _ = multi.clear();
         }
         if result.is_ok() {
             println!("{} {message}", self.paint("32", "  ✓"));
@@ -239,40 +196,14 @@ impl Ui {
             }
             return result;
         }
-        let running = Arc::new(AtomicBool::new(true));
-        let flag = Arc::clone(&running);
-        let message_owned = message.to_string();
-        let color = self.color;
-        let progress = thread::spawn(move || {
-            let mut frame = 0usize;
-            let started = std::time::Instant::now();
-            while flag.load(Ordering::Relaxed) {
-                let elapsed = started.elapsed().as_secs();
-                let bar = indeterminate_bar(frame);
-                let bar = if color {
-                    format!("\x1b[36m[{bar}]\x1b[0m")
-                } else {
-                    format!("[{bar}]")
-                };
-                let activity = if elapsed >= 15 {
-                    " · still working"
-                } else {
-                    ""
-                };
-                print!(
-                    "\r\x1b[2K  {bar} {message_owned} · {}{activity}",
-                    elapsed_label(elapsed)
-                );
-                let _ = std::io::stdout().flush();
-                frame = frame.wrapping_add(1);
-                thread::sleep(Duration::from_millis(100));
-            }
-        });
+
+        let bar = ProgressBar::new_spinner();
+        bar.set_draw_target(ProgressDrawTarget::stdout());
+        bar.set_style(spinner_style());
+        bar.set_message(message.to_string());
+        bar.enable_steady_tick(Duration::from_millis(100));
         let result = work();
-        running.store(false, Ordering::Relaxed);
-        let _ = progress.join();
-        print!("\r\x1b[2K");
-        let _ = std::io::stdout().flush();
+        bar.finish_and_clear();
         if result.is_ok() {
             println!("{} {message}", self.paint("32", "  ✓"));
             self.record(&format!("OK: {message}"));
@@ -303,6 +234,16 @@ impl InstallMode {
             _ => bail!(
                 "ARGUS_INSTALL_MODE must be control-plane, agent, repair, update, or uninstall"
             ),
+        }
+    }
+
+    pub(crate) fn lifecycle_name(self) -> &'static str {
+        match self {
+            Self::ControlPlane => "install-control-plane",
+            Self::Agent => "install-managed-server",
+            Self::Repair => "repair",
+            Self::Update => "update",
+            Self::Uninstall => "uninstall",
         }
     }
 }
@@ -356,23 +297,23 @@ pub(crate) struct ControlConfig {
     pub(crate) domain: String,
     pub(crate) content_domain: String,
     pub(crate) basic_auth_user: String,
-    pub(crate) basic_auth_password: String,
-    pub(crate) postgres_password: String,
-    pub(crate) web_api_token: String,
-    pub(crate) worker_token: String,
-    pub(crate) content_sync_token: String,
-    pub(crate) payload_secret: String,
+    pub(crate) basic_auth_password: SecretString,
+    pub(crate) postgres_password: SecretString,
+    pub(crate) web_api_token: SecretString,
+    pub(crate) worker_token: SecretString,
+    pub(crate) content_sync_token: SecretString,
+    pub(crate) payload_secret: SecretString,
     pub(crate) org_id: String,
     pub(crate) user_id: String,
     pub(crate) bootstrap_project_id: String,
     pub(crate) bootstrap_environment_id: String,
     pub(crate) server_id: String,
-    pub(crate) github_token: String,
+    pub(crate) github_token: SecretString,
     pub(crate) rust_log: String,
     pub(crate) operator_email: String,
     pub(crate) acme_email: String,
     pub(crate) tls_mode: TlsMode,
-    pub(crate) cloudflare_api_token: String,
+    pub(crate) cloudflare_api_token: SecretString,
     pub(crate) org_name: String,
     pub(crate) generated_basic_password: bool,
     pub(crate) existing_install: bool,
@@ -457,25 +398,34 @@ pub(crate) fn is_revision(value: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
-pub(crate) fn new_secret(length: usize) -> String {
+pub(crate) fn new_secret(length: usize) -> SecretString {
     let mut value = String::new();
     while value.len() < length {
         value.push_str(&Uuid::new_v4().simple().to_string());
     }
     value.truncate(length);
-    value
+    SecretString::from(value)
 }
 
 pub(crate) fn value_or_secret(
     values: &BTreeMap<String, String>,
     key: &str,
     length: usize,
-) -> String {
-    env::var(key)
-        .ok()
-        .or_else(|| values.get(key).cloned())
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| new_secret(length))
+) -> SecretString {
+    SecretString::from(
+        env::var(key)
+            .ok()
+            .or_else(|| values.get(key).cloned())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| {
+                let mut value = String::new();
+                while value.len() < length {
+                    value.push_str(&Uuid::new_v4().simple().to_string());
+                }
+                value.truncate(length);
+                value
+            }),
+    )
 }
 
 pub(crate) fn value_or_uuid(values: &BTreeMap<String, String>, key: &str) -> String {
@@ -489,6 +439,7 @@ pub(crate) fn value_or_uuid(values: &BTreeMap<String, String>, key: &str) -> Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use secrecy::ExposeSecret;
 
     #[test]
     fn installer_log_redacts_sensitive_lines() {
@@ -500,22 +451,11 @@ mod tests {
     }
 
     #[test]
-    fn installer_progress_bar_is_fixed_width_and_moves() {
-        let first = indeterminate_bar(0);
-        let later = indeterminate_bar(7);
-        assert_eq!(first.chars().count(), PROGRESS_WIDTH);
-        assert_eq!(later.chars().count(), PROGRESS_WIDTH);
-        assert_ne!(first, later);
-        assert_eq!(
-            first.chars().filter(|cell| *cell == '█').count(),
-            PROGRESS_PULSE
-        );
-    }
-
-    #[test]
-    fn installer_elapsed_time_becomes_compact_minutes() {
-        assert_eq!(elapsed_label(8), "8s");
-        assert_eq!(elapsed_label(65), "1m 05s");
+    fn generated_secrets_are_redacted_by_debug() {
+        let secret = new_secret(32);
+        let raw = secret.expose_secret().to_string();
+        assert_eq!(raw.len(), 32);
+        assert!(!format!("{secret:?}").contains(&raw));
     }
 
     #[test]

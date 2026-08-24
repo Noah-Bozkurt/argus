@@ -4,6 +4,7 @@ use cli::{
     domain,
     lifecycle::{self, output, write_env_file},
 };
+use secrecy::ExposeSecret;
 use serde_json::{Value, json};
 use std::{
     env, fs,
@@ -88,16 +89,19 @@ impl Installer {
             ("ARGUS_BASIC_AUTH_USER", config.basic_auth_user.as_str()),
             (
                 "ARGUS_BASIC_AUTH_PASSWORD",
-                config.basic_auth_password.as_str(),
+                config.basic_auth_password.expose_secret(),
             ),
-            ("ARGUS_POSTGRES_PASSWORD", config.postgres_password.as_str()),
-            ("ARGUS_WEB_API_TOKEN", config.web_api_token.as_str()),
-            ("ARGUS_WORKER_TOKEN", config.worker_token.as_str()),
+            (
+                "ARGUS_POSTGRES_PASSWORD",
+                config.postgres_password.expose_secret(),
+            ),
+            ("ARGUS_WEB_API_TOKEN", config.web_api_token.expose_secret()),
+            ("ARGUS_WORKER_TOKEN", config.worker_token.expose_secret()),
             (
                 "ARGUS_CONTENT_SYNC_TOKEN",
-                config.content_sync_token.as_str(),
+                config.content_sync_token.expose_secret(),
             ),
-            ("PAYLOAD_SECRET", config.payload_secret.as_str()),
+            ("PAYLOAD_SECRET", config.payload_secret.expose_secret()),
             ("ARGUS_ORG_ID", config.org_id.as_str()),
             ("ARGUS_USER_ID", config.user_id.as_str()),
             (
@@ -109,7 +113,7 @@ impl Installer {
                 config.bootstrap_environment_id.as_str(),
             ),
             ("ARGUS_SERVER_ID", config.server_id.as_str()),
-            ("ARGUS_GITHUB_TOKEN", config.github_token.as_str()),
+            ("ARGUS_GITHUB_TOKEN", config.github_token.expose_secret()),
             ("ARGUS_RUST_LOG", config.rust_log.as_str()),
             ("ARGUS_ACME_EMAIL", config.acme_email.as_str()),
             (
@@ -155,7 +159,7 @@ impl Installer {
             "caddy",
             "hash-password",
             "--plaintext",
-            &config.basic_auth_password,
+            config.basic_auth_password.expose_secret(),
         ])?;
         let template = fs::read_to_string(self.install_dir.join("Caddyfile.template"))?;
         let (global_options, tls) = match config.tls_mode {
@@ -212,8 +216,6 @@ impl Installer {
             .compose_output(&["logs", "--tail=300", "caddy"])
             .unwrap_or_default();
 
-        // Once a certificate exists, restoring the normal order does not trigger another
-        // issuance. It only makes Let's Encrypt the preferred issuer for future renewals.
         self.generate_caddy_config_with(config, true, false)?;
         self.compose_status(&[
             "exec",
@@ -248,8 +250,6 @@ impl Installer {
     }
 
     pub(crate) fn pull_control_plane_images(&self) -> Result<()> {
-        // Rendered Compose configuration contains credentials. Validation must stay
-        // quiet even when verbose diagnostics are enabled.
         self.compose_status(&["config", "--quiet"])?;
         let images = self.compose_output(&["config", "--images"])?;
         let images = images
@@ -403,12 +403,16 @@ VALUES (:'server_id'::uuid, :'org_id'::uuid, :'project_id'::uuid, :'environment_
             return Ok(());
         }
         let payload = json!({"server_id": config.server_id, "ttl_seconds": 1800}).to_string();
+        let authorization = format!(
+            "Authorization: Bearer {}",
+            config.web_api_token.expose_secret()
+        );
         let response = output(
             "curl",
             &[
                 "-fsS",
                 "-H",
-                &format!("Authorization: Bearer {}", config.web_api_token),
+                &authorization,
                 "-H",
                 &format!("x-argus-org-id: {}", config.org_id),
                 "-H",
@@ -565,12 +569,17 @@ VALUES (:'server_id'::uuid, :'org_id'::uuid, :'project_id'::uuid, :'environment_
                 config.content_domain
             );
         }
+        let basic_auth = format!(
+            "{}:{}",
+            config.basic_auth_user,
+            config.basic_auth_password.expose_secret()
+        );
         lifecycle::run_quiet(
             "curl",
             &[
                 "-fsS",
                 "-u",
-                &format!("{}:{}", config.basic_auth_user, config.basic_auth_password),
+                &basic_auth,
                 &format!("https://{}/healthz", config.domain),
             ],
         )?;
@@ -579,7 +588,7 @@ VALUES (:'server_id'::uuid, :'org_id'::uuid, :'project_id'::uuid, :'environment_
             &[
                 "-fsS",
                 "-u",
-                &format!("{}:{}", config.basic_auth_user, config.basic_auth_password),
+                &basic_auth,
                 &format!("https://{}/healthz", config.content_domain),
             ],
         )?;

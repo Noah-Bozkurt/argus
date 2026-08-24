@@ -2,6 +2,7 @@ use super::installer_shared::{ControlConfig, Installer, TlsMode};
 use anyhow::{Context, Result, bail};
 use cli::lifecycle::{self, prompt_line, prompt_secret, temp_dir, write_env_file};
 use reqwest::{Client, StatusCode};
+use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Value, json};
 use std::{fs, os::unix::fs::PermissionsExt, time::Duration};
 
@@ -75,21 +76,24 @@ impl Installer {
             }
         } else {
             std::env::var("ARGUS_TLS_MODE").as_deref() == Ok("cloudflare-origin")
-                || !config.cloudflare_api_token.is_empty()
+                || !config.cloudflare_api_token.expose_secret().is_empty()
         };
         if !use_cloudflare {
             config.tls_mode = TlsMode::PublicAcme;
             return Ok(());
         }
 
-        if config.cloudflare_api_token.is_empty() && lifecycle::interactive_available() {
+        if config.cloudflare_api_token.expose_secret().is_empty()
+            && lifecycle::interactive_available()
+        {
             println!("The token needs Zone / SSL and Certificates / Edit permission.");
             println!(
                 "It will be saved root-only for certificate repair and domain changes. Keep Cloudflare SSL/TLS mode set to Full (strict).\n"
             );
-            config.cloudflare_api_token = prompt_secret("Cloudflare API token: ")?;
+            config.cloudflare_api_token =
+                SecretString::from(prompt_secret("Cloudflare API token: ")?);
         }
-        if config.cloudflare_api_token.is_empty() {
+        if config.cloudflare_api_token.expose_secret().is_empty() {
             bail!("Cloudflare Origin CA was selected but no API token was supplied");
         } else {
             config.tls_mode = TlsMode::CloudflareOrigin;
@@ -160,7 +164,7 @@ impl Installer {
             let (status, body) = runtime()?.block_on(async {
                 let response = client
                     .post(ORIGIN_CA_ENDPOINT)
-                    .bearer_auth(&config.cloudflare_api_token)
+                    .bearer_auth(config.cloudflare_api_token.expose_secret())
                     .json(&origin_ca_request(
                         &config.domain,
                         &config.content_domain,
@@ -206,7 +210,7 @@ impl Installer {
             &self.config_dir.join("cloudflare.env"),
             &[(
                 "ARGUS_CLOUDFLARE_API_TOKEN",
-                config.cloudflare_api_token.as_str(),
+                config.cloudflare_api_token.expose_secret(),
             )],
             0o600,
         )?;

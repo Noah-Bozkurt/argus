@@ -4,10 +4,9 @@ use clap::{Parser, Subcommand};
 use cli::{docker, domain, lifecycle};
 use serde_json::json;
 use std::{
-    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process::Stdio,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -19,16 +18,16 @@ use uuid::Uuid;
 mod doctor;
 mod logs;
 mod update_source;
+mod update_ui;
 
 use update_source::UpdateTarget;
+use update_ui::UpdateUi;
 
 const FIRST_SERVER_SMOKE: &str = include_str!("../../../scripts/first-server-smoke.sh");
 const FIRST_SERVER_UPDATE: &str = include_str!("../../../scripts/update-first-test.sh");
 const INTERRUPTED_UPDATE_RECOVERY: &str =
     include_str!("../../../scripts/recover-interrupted-update.sh");
 const UNINSTALL: &str = include_str!("../../../scripts/uninstall.sh");
-const UPDATE_PROGRESS_WIDTH: usize = 24;
-const UPDATE_PROGRESS_PULSE: usize = 6;
 
 #[derive(Debug, Parser)]
 #[command(name = "argusctl", about = "Argus local diagnostics and lifecycle CLI")]
@@ -161,431 +160,6 @@ enum SystemCommands {
     Info,
 }
 
-struct ActiveProgress {
-    message: String,
-    detail: Option<String>,
-    current: Option<u64>,
-    total: Option<u64>,
-    started: Instant,
-    image_pull: bool,
-}
-
-struct UpdateUi {
-    color: bool,
-    interactive: bool,
-    post_start: bool,
-    download_announced: bool,
-    rollback_started: bool,
-    rollback_completed: bool,
-    finished: bool,
-    progress: Option<ActiveProgress>,
-    progress_frame: usize,
-}
-
-impl UpdateUi {
-    fn new() -> Self {
-        let interactive = io::stdout().is_terminal();
-        Self {
-            color: interactive && std::env::var_os("NO_COLOR").is_none(),
-            interactive,
-            post_start: false,
-            download_announced: false,
-            rollback_started: false,
-            rollback_completed: false,
-            finished: false,
-            progress: None,
-            progress_frame: 0,
-        }
-    }
-
-    fn paint(&self, code: &str, text: &str) -> String {
-        if self.color {
-            format!("\x1b[{code}m{text}\x1b[0m")
-        } else {
-            text.to_string()
-        }
-    }
-
-    fn begin(&self, target: &UpdateTarget) {
-        println!("{}", self.paint("1;36", "Argus update"));
-        self.detail(&format!("Source: {}", target.display()));
-        println!();
-    }
-
-    fn step(&self, message: &str) {
-        println!("{} {message}", self.paint("36", "  ›"));
-    }
-
-    fn success(&self, message: &str) {
-        println!("{} {message}", self.paint("32", "  ✓"));
-    }
-
-    fn warning(&self, message: &str) {
-        eprintln!("{} {message}", self.paint("33", "  !"));
-    }
-
-    fn error(&self, message: &str) {
-        eprintln!("{} {message}", self.paint("31", "  ✗"));
-    }
-
-    fn detail(&self, message: &str) {
-        println!("{}", self.paint("2", &format!("    {message}")));
-    }
-
-    fn short_revision(revision: &str) -> &str {
-        revision.get(..12).unwrap_or(revision)
-    }
-
-    fn indeterminate_bar(frame: usize) -> String {
-        let travel = UPDATE_PROGRESS_WIDTH - UPDATE_PROGRESS_PULSE;
-        let cycle = travel * 2;
-        let position = if cycle == 0 {
-            0
-        } else {
-            let phase = frame % cycle;
-            if phase <= travel {
-                phase
-            } else {
-                cycle - phase
-            }
-        };
-        let mut cells = vec!['░'; UPDATE_PROGRESS_WIDTH];
-        for cell in cells.iter_mut().skip(position).take(UPDATE_PROGRESS_PULSE) {
-            *cell = '█';
-        }
-        cells.into_iter().collect()
-    }
-
-    fn determinate_bar(current: u64, total: u64) -> String {
-        if total == 0 {
-            return Self::indeterminate_bar(0);
-        }
-        let filled =
-            ((current.min(total) as u128 * UPDATE_PROGRESS_WIDTH as u128) / total as u128) as usize;
-        let mut cells = vec!['░'; UPDATE_PROGRESS_WIDTH];
-        for cell in cells.iter_mut().take(filled) {
-            *cell = '█';
-        }
-        cells.into_iter().collect()
-    }
-
-    fn elapsed_label(seconds: u64) -> String {
-        if seconds >= 60 {
-            format!("{}m {:02}s", seconds / 60, seconds % 60)
-        } else {
-            format!("{seconds}s")
-        }
-    }
-
-    fn stop_progress(&mut self) {
-        if self.progress.take().is_some() && self.interactive {
-            print!("\r\x1b[2K");
-            let _ = io::stdout().flush();
-        }
-    }
-
-    fn start_progress(&mut self, message: impl Into<String>) {
-        self.stop_progress();
-        let message = message.into();
-        if !self.interactive {
-            self.step(&message);
-            return;
-        }
-        self.progress = Some(ActiveProgress {
-            message,
-            detail: None,
-            current: None,
-            total: None,
-            started: Instant::now(),
-            image_pull: false,
-        });
-        self.progress_frame = 0;
-        self.tick();
-    }
-
-    fn set_progress_detail(&mut self, detail: impl Into<String>) {
-        if let Some(progress) = self.progress.as_mut() {
-            progress.detail = Some(detail.into());
-        }
-    }
-
-    fn set_progress_value(&mut self, current: u64, total: u64) {
-        if let Some(progress) = self.progress.as_mut()
-            && total > 0
-        {
-            progress.current = Some(current.min(total));
-            progress.total = Some(total);
-        }
-    }
-
-    fn tick(&mut self) {
-        if !self.interactive {
-            return;
-        }
-        let Some(progress) = self.progress.as_ref() else {
-            return;
-        };
-        let message = progress.message.clone();
-        let detail = progress.detail.clone();
-        let elapsed = progress.started.elapsed().as_secs();
-        let (bar, percentage) = match (progress.current, progress.total) {
-            (Some(current), Some(total)) if total > 0 => {
-                let percent = (current.min(total) as u128 * 100 / total as u128) as u64;
-                (
-                    Self::determinate_bar(current, total),
-                    format!(" · {percent:>3}%"),
-                )
-            }
-            _ => {
-                let bar = Self::indeterminate_bar(self.progress_frame);
-                self.progress_frame = self.progress_frame.wrapping_add(1);
-                (bar, String::new())
-            }
-        };
-        let bar = format!("[{bar}]");
-        let activity = if elapsed >= 15 {
-            " · still working"
-        } else {
-            ""
-        };
-        let line = if progress.image_pull {
-            let detail = detail.map(|value| format!(" {value}")).unwrap_or_default();
-            format!(
-                "  {bar}{}{percentage} · {}{activity}",
-                detail,
-                Self::elapsed_label(elapsed)
-            )
-        } else {
-            let detail = detail
-                .map(|value| format!(" · {value}"))
-                .unwrap_or_default();
-            format!(
-                "  {bar} {message}{detail}{percentage} · {}{activity}",
-                Self::elapsed_label(elapsed)
-            )
-        };
-        let line = cli::progress::fit_line(&line, cli::progress::terminal_width());
-        print!("\r\x1b[2K{line}");
-        let _ = io::stdout().flush();
-    }
-
-    fn finish_progress_line(&mut self) {
-        if self.progress.take().is_some() && self.interactive {
-            println!();
-        }
-    }
-
-    fn handle_line(&mut self, line: &str) {
-        let line = line.trim();
-        if line.is_empty() {
-            return;
-        }
-
-        if let Some(payload) = line.strip_prefix("[argus-pull-progress]\t") {
-            let mut fields = payload.splitn(4, '\t');
-            let image = fields.next().unwrap_or_default();
-            let current = fields.next().and_then(|value| value.parse::<u64>().ok());
-            let total = fields.next().and_then(|value| value.parse::<u64>().ok());
-            let status = fields.next().unwrap_or_default();
-            if let (Some(current), Some(total)) = (current, total) {
-                self.set_progress_value(current, total);
-            }
-            if !image.is_empty() {
-                let image = cli::progress::short_image_name(image);
-                let status = status.trim();
-                let complete = status.eq_ignore_ascii_case("complete");
-                self.set_progress_detail(if complete {
-                    format!("{image} · ✓")
-                } else {
-                    image
-                });
-                if let Some(progress) = self.progress.as_mut() {
-                    progress.image_pull = true;
-                }
-                if complete {
-                    self.tick();
-                    self.finish_progress_line();
-                }
-            }
-            return;
-        }
-
-        if let Some(revision) = line.strip_prefix("[argus-update] current installed revision: ") {
-            self.stop_progress();
-            self.step(&format!(
-                "Checking current installation ({})",
-                Self::short_revision(revision)
-            ));
-            return;
-        }
-        if line == "[argus-update] verifying current installation before update" {
-            return;
-        }
-        if line.starts_with("Argus first-server smoke test passed:") {
-            self.stop_progress();
-            if self.post_start {
-                self.success("Updated installation is healthy");
-            } else {
-                self.success("Current installation is healthy");
-            }
-            return;
-        }
-        if line.starts_with("[argus-update] resolving branch '") {
-            self.start_progress("Downloading branch source");
-            return;
-        }
-        if line.starts_with("[argus-update] building branch '") {
-            self.start_progress("Building branch locally");
-            self.set_progress_detail("Docker BuildKit");
-            return;
-        }
-        if line.starts_with("[argus-update] using prepared branch build ") {
-            self.stop_progress();
-            self.step("Using verified local branch build");
-            return;
-        }
-        if line.starts_with("[argus-update] resolving target '") {
-            self.start_progress("Resolving update target");
-            return;
-        }
-        if let Some(image) = line.strip_prefix("[argus-update] pre-fetching ") {
-            if !self.download_announced {
-                self.download_announced = true;
-                self.start_progress("Downloading update");
-            } else if self.progress.is_none() {
-                self.start_progress("Downloading update");
-            }
-            let image = image
-                .rsplit('/')
-                .next()
-                .unwrap_or(image)
-                .split(':')
-                .next()
-                .unwrap_or(image);
-            self.set_progress_detail(format!("pulling {image}"));
-            return;
-        }
-        if let Some(revision) = line.strip_prefix("[argus-update] resolved target revision: ") {
-            self.stop_progress();
-            self.success(&format!(
-                "Update ready ({})",
-                Self::short_revision(revision)
-            ));
-            return;
-        }
-        if let Some(revision) =
-            line.strip_prefix("[argus-update] already running requested revision ")
-        {
-            self.stop_progress();
-            self.success(&format!(
-                "Already up to date ({})",
-                Self::short_revision(revision)
-            ));
-            self.finished = true;
-            return;
-        }
-        if line.starts_with("[argus-update] storage preflight: ") {
-            self.stop_progress();
-            self.step("Checking backup storage");
-            return;
-        }
-        if line == "[argus-update] quiescing native Agent/Helper and control-plane writers" {
-            self.stop_progress();
-            self.success("Backup storage is sufficient");
-            self.step("Stopping Argus services");
-            return;
-        }
-        if line == "[argus-update] creating consistent PostgreSQL backup" {
-            self.start_progress("Creating rollback backup");
-            return;
-        }
-        if line == "[argus-update] installing target deployment assets and native binaries" {
-            self.start_progress("Installing update");
-            return;
-        }
-        if let Some(revision) = line.strip_prefix("[argus-update] starting target control plane ") {
-            self.post_start = true;
-            self.start_progress(format!("Starting Argus {}", Self::short_revision(revision)));
-            return;
-        }
-        if self.post_start && line == "[argus-smoke] validating deployed configuration" {
-            self.start_progress("Verifying updated installation");
-            return;
-        }
-        if let Some(change) = line.strip_prefix("[argus-update] update succeeded: ") {
-            self.stop_progress();
-            let change = change
-                .split(" -> ")
-                .map(Self::short_revision)
-                .collect::<Vec<_>>()
-                .join(" → ");
-            println!();
-            self.success(&format!("Update complete: {change}"));
-            self.finished = true;
-            return;
-        }
-        if let Some(path) = line.strip_prefix("[argus-update] rollback snapshot retained at ") {
-            self.stop_progress();
-            self.detail(&format!("Rollback snapshot: {path}"));
-            return;
-        }
-        if let Some(message) = line.strip_prefix("[argus-update] warning: ") {
-            self.stop_progress();
-            if message.starts_with("update failed; automatically rolling back transaction ") {
-                self.rollback_started = true;
-                println!();
-                self.warning("Update failed; restoring the previous version");
-                self.start_progress("Restoring previous version");
-            } else if message.starts_with("rollback completed successfully; restored revision ") {
-                self.rollback_completed = true;
-                let revision = message
-                    .trim_start_matches("rollback completed successfully; restored revision ");
-                self.success(&format!(
-                    "Rollback completed ({})",
-                    Self::short_revision(revision)
-                ));
-            } else {
-                self.warning(message);
-            }
-            return;
-        }
-        if let Some(message) = line.strip_prefix("[argus-update] error: ") {
-            self.stop_progress();
-            self.error(message);
-            return;
-        }
-        if let Some(message) = line.strip_prefix("[argus-smoke] FAIL: ") {
-            self.stop_progress();
-            self.error(message);
-            return;
-        }
-
-        let lower = line.to_ascii_lowercase();
-        if lower.starts_with("error:")
-            || lower.starts_with("error response from daemon")
-            || lower.contains("permission denied")
-        {
-            self.stop_progress();
-            self.error(line);
-        }
-    }
-
-    fn finish_failure(&mut self) {
-        self.stop_progress();
-        if !self.finished {
-            println!();
-            if self.rollback_completed {
-                self.error("Update did not complete; the previous version was restored");
-            } else if self.rollback_started {
-                self.error("Update and automatic rollback did not complete cleanly");
-            } else {
-                self.error("Update failed");
-            }
-            self.detail("Re-run with --verbose for full diagnostics");
-        }
-    }
-}
-
 async fn service_state(name: &str) -> String {
     match Command::new("systemctl")
         .arg("is-active")
@@ -676,8 +250,6 @@ async fn run_concise_update_script(target: &UpdateTarget) -> Result<()> {
     let mut stdout_open = true;
     let mut stderr_open = true;
     let mut ui = UpdateUi::new();
-    let mut ticker = tokio::time::interval(Duration::from_millis(100));
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     ui.begin(target);
 
     while stdout_open || stderr_open {
@@ -694,7 +266,6 @@ async fn run_concise_update_script(target: &UpdateTarget) -> Result<()> {
                     None => stderr_open = false,
                 }
             }
-            _ = ticker.tick() => ui.tick(),
         }
     }
 
@@ -927,6 +498,13 @@ async fn main() -> Result<()> {
             verbose,
             yes,
         } => {
+            let _lifecycle_lock = if std::env::var_os("ARGUS_UPDATE_DELEGATED_REVISION").is_none() {
+                let state_dir =
+                    lifecycle::env_path("ARGUS_STATE_DIR", lifecycle::DEFAULT_STATE_DIR);
+                Some(lifecycle::acquire_lifecycle_lock(&state_dir, "update")?)
+            } else {
+                None
+            };
             let target = update_source::resolve(version, branch)?;
             confirm_action(
                 &format!(
@@ -1230,33 +808,5 @@ mod tests {
                 }
             } if domain == "argus.example.com" && content_domain == "content.argus.example.com"
         ));
-    }
-
-    #[test]
-    fn update_progress_bar_is_fixed_width_and_moves() {
-        let first = UpdateUi::indeterminate_bar(0);
-        let later = UpdateUi::indeterminate_bar(8);
-        assert_eq!(first.chars().count(), UPDATE_PROGRESS_WIDTH);
-        assert_eq!(later.chars().count(), UPDATE_PROGRESS_WIDTH);
-        assert_ne!(first, later);
-        assert_eq!(
-            first.chars().filter(|cell| *cell == '█').count(),
-            UPDATE_PROGRESS_PULSE
-        );
-    }
-
-    #[test]
-    fn update_elapsed_time_becomes_compact_minutes() {
-        assert_eq!(UpdateUi::elapsed_label(9), "9s");
-        assert_eq!(UpdateUi::elapsed_label(125), "2m 05s");
-    }
-
-    #[test]
-    fn update_ui_shortens_full_revisions() {
-        assert_eq!(
-            UpdateUi::short_revision("0123456789abcdef0123456789abcdef01234567"),
-            "0123456789ab"
-        );
-        assert_eq!(UpdateUi::short_revision("main"), "main");
     }
 }

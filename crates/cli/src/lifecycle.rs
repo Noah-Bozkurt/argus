@@ -1,14 +1,17 @@
 use anyhow::{Context, Result, bail};
+use console::Term;
+use dialoguer::{Input, Password};
+use fs4::{FileExt, TryLockError};
 use std::{
     collections::BTreeMap,
     env,
     fs::{self, File, OpenOptions},
-    io::{self, BufRead, BufReader, IsTerminal, Read, Write},
+    io::{self, IsTerminal, Read, Write},
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
 };
-use uuid::Uuid;
+use tempfile::{Builder as TempBuilder, NamedTempFile};
 
 pub const DEFAULT_INSTALL_DIR: &str = "/opt/argus";
 pub const DEFAULT_CONFIG_DIR: &str = "/etc/argus";
@@ -44,10 +47,50 @@ impl UninstallOptions {
     }
 }
 
+/// Holds the process-wide lifecycle lock until dropped.
+pub struct LifecycleLock {
+    file: File,
+}
+
+impl Drop for LifecycleLock {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.file);
+    }
+}
+
 pub fn env_path(name: &str, default: &str) -> PathBuf {
     env::var_os(name)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(default))
+}
+
+pub fn acquire_lifecycle_lock(state_dir: &Path, operation: &str) -> Result<LifecycleLock> {
+    fs::create_dir_all(state_dir)
+        .with_context(|| format!("create lifecycle state directory {}", state_dir.display()))?;
+    let path = state_dir.join("lifecycle.lock");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        .open(&path)
+        .with_context(|| format!("open lifecycle lock {}", path.display()))?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    match FileExt::try_lock(&file) {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => {
+            bail!(
+                "another Argus install, update, repair, or uninstall operation is already running"
+            )
+        }
+        Err(TryLockError::Error(error)) => {
+            return Err(error).with_context(|| format!("lock {}", path.display()));
+        }
+    }
+    file.set_len(0)?;
+    writeln!(file, "{operation} pid={}", std::process::id())?;
+    file.sync_data()?;
+    Ok(LifecycleLock { file })
 }
 
 pub fn require_root() -> Result<()> {
@@ -170,77 +213,38 @@ pub fn interactive_available() -> bool {
     io::stdin().is_terminal() || open_tty().is_some()
 }
 
+/// Returns an interactive terminal even when stdin is occupied by a piped bootstrap script.
+pub fn interactive_term() -> Result<Term> {
+    if let Some(tty) = open_tty() {
+        let read = tty.try_clone().context("clone /dev/tty for input")?;
+        return Ok(Term::read_write_pair(read, tty));
+    }
+    if io::stdin().is_terminal() {
+        return Ok(Term::stderr());
+    }
+    bail!("interactive input is unavailable")
+}
+
+fn prompt_label(prompt: &str) -> &str {
+    prompt.trim().trim_end_matches(':').trim()
+}
+
 pub fn prompt_line(prompt: &str) -> Result<String> {
-    if let Some(mut tty) = open_tty() {
-        write!(tty, "{prompt}")?;
-        tty.flush()?;
-        let mut value = String::new();
-        BufReader::new(tty.try_clone()?).read_line(&mut value)?;
-        return Ok(value.trim().to_string());
-    }
-    if !io::stdin().is_terminal() {
-        bail!("interactive input is unavailable");
-    }
-    print!("{prompt}");
-    io::stdout().flush()?;
-    let mut value = String::new();
-    io::stdin().read_line(&mut value)?;
-    Ok(value.trim().to_string())
-}
-
-struct EchoGuard {
-    tty: Option<File>,
-}
-
-impl EchoGuard {
-    fn set(tty: Option<&File>, enabled: bool) -> Result<()> {
-        let mut command = Command::new("stty");
-        command.arg(if enabled { "echo" } else { "-echo" });
-        if let Some(tty) = tty {
-            command.stdin(Stdio::from(tty.try_clone()?));
-        }
-        let status = command.status().context("change terminal echo")?;
-        if !status.success() {
-            bail!("could not change terminal echo");
-        }
-        Ok(())
-    }
-}
-
-impl Drop for EchoGuard {
-    fn drop(&mut self) {
-        let _ = Self::set(self.tty.as_ref(), true);
-    }
+    let term = interactive_term()?;
+    Input::<String>::new()
+        .with_prompt(prompt_label(prompt))
+        .allow_empty(true)
+        .interact_text_on(&term)
+        .context("read interactive input")
 }
 
 pub fn prompt_secret(prompt: &str) -> Result<String> {
-    if let Some(mut tty) = open_tty() {
-        write!(tty, "{prompt}")?;
-        tty.flush()?;
-        EchoGuard::set(Some(&tty), false)?;
-        let guard = EchoGuard {
-            tty: Some(tty.try_clone()?),
-        };
-        let mut value = String::new();
-        let read = BufReader::new(tty.try_clone()?).read_line(&mut value);
-        drop(guard);
-        writeln!(tty)?;
-        read?;
-        return Ok(value.trim().to_string());
-    }
-    if !io::stdin().is_terminal() {
-        bail!("interactive input is unavailable");
-    }
-    print!("{prompt}");
-    io::stdout().flush()?;
-    EchoGuard::set(None, false)?;
-    let guard = EchoGuard { tty: None };
-    let mut value = String::new();
-    let read = io::stdin().read_line(&mut value);
-    drop(guard);
-    println!();
-    read?;
-    Ok(value.trim().to_string())
+    let term = interactive_term()?;
+    Password::new()
+        .with_prompt(prompt_label(prompt))
+        .allow_empty_password(true)
+        .interact_on(&term)
+        .context("read secret input")
 }
 
 pub fn docker_pull_images<F>(images: &[String], report: F) -> Result<()>
@@ -300,24 +304,26 @@ fn unquote_env(value: &str) -> String {
 pub fn write_env_file(path: &Path, values: &[(&str, &str)], mode: u32) -> Result<()> {
     let parent = path.parent().context("environment file has no parent")?;
     fs::create_dir_all(parent)?;
-    let tmp = parent.join(format!(
-        ".{}.tmp-{}-{}",
-        path.file_name().and_then(|v| v.to_str()).unwrap_or("env"),
-        std::process::id(),
-        Uuid::new_v4().simple()
-    ));
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .mode(mode)
-        .open(&tmp)
-        .with_context(|| format!("create {}", tmp.display()))?;
+    let prefix = format!(
+        ".{}.tmp-",
+        path.file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("env")
+    );
+    let mut temp = TempBuilder::new()
+        .prefix(&prefix)
+        .tempfile_in(parent)
+        .with_context(|| format!("create temporary environment file in {}", parent.display()))?;
+    fs::set_permissions(temp.path(), fs::Permissions::from_mode(mode))?;
     for (key, value) in values {
-        writeln!(file, "{key}={}", quote_env(value))?;
+        writeln!(temp.as_file_mut(), "{key}={}", quote_env(value))?;
     }
-    file.sync_all()?;
-    fs::set_permissions(&tmp, fs::Permissions::from_mode(mode))?;
-    fs::rename(&tmp, path).with_context(|| format!("replace {}", path.display()))?;
+    temp.as_file_mut().flush()?;
+    temp.as_file().sync_all()?;
+    temp.persist(path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("replace {}", path.display()))?;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
     Ok(())
 }
 
@@ -332,14 +338,9 @@ pub fn quote_env(value: &str) -> String {
 }
 
 pub fn temp_dir(prefix: &str) -> Result<PathBuf> {
-    let path = env::temp_dir().join(format!(
-        "{prefix}-{}-{}",
-        std::process::id(),
-        Uuid::new_v4().simple()
-    ));
-    fs::create_dir(&path)?;
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
-    Ok(path)
+    let dir = TempBuilder::new().prefix(prefix).tempdir()?;
+    fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700))?;
+    Ok(dir.keep())
 }
 
 pub fn copy_file(source: &Path, target: &Path, mode: u32) -> Result<()> {
@@ -507,6 +508,33 @@ mod tests {
         remove_legacy_registry_credentials(&dir).unwrap();
         remove_legacy_registry_credentials(&dir).unwrap();
         assert!(!dir.join("registry.env").exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn lifecycle_lock_rejects_a_second_holder() {
+        let dir = temp_dir("argus-lifecycle-lock-test").unwrap();
+        let first = acquire_lifecycle_lock(&dir, "test").unwrap();
+        let second = acquire_lifecycle_lock(&dir, "test");
+        assert!(second.is_err());
+        drop(first);
+        acquire_lifecycle_lock(&dir, "test-after-release").unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn env_files_are_atomically_replaced() {
+        let dir = temp_dir("argus-env-write-test").unwrap();
+        let path = dir.join("runtime.env");
+        write_env_file(&path, &[("ARGUS_DOMAIN", "old.example.com")], 0o600).unwrap();
+        write_env_file(&path, &[("ARGUS_DOMAIN", "new.example.com")], 0o600).unwrap();
+        assert_eq!(
+            read_env_file(&path)
+                .unwrap()
+                .get("ARGUS_DOMAIN")
+                .map(String::as_str),
+            Some("new.example.com")
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 }
