@@ -25,6 +25,10 @@ The project is under active development and does not yet promise semantic-versio
 - Installer, repair, branch update, and transactional update flows now use the public GitHub repository and public GHCR packages without stored GitHub package credentials.
 - Repository documentation and installer guidance now describe anonymous public package access.
 
+### Fixed
+
+- Non-interactive transactional updates no longer let a cosmetic `/dev/tty` progress failure trigger rollback concurrently with the live update.
+
 ### Removed
 
 - GitHub/GHCR package credential prompts, `registry-login` commands, and the legacy registry-login compatibility script.

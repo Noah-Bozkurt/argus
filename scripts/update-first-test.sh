@@ -43,7 +43,11 @@ if [[ -z "$REQUESTED_VERSION" && -z "$REQUESTED_BRANCH" ]]; then
   REQUESTED_VERSION="main"
 fi
 
-if [[ ! -t 1 && -w /dev/tty && "${TERM:-}" != "dumb" ]]; then
+tty_available() {
+  [[ -c /dev/tty ]] && { : </dev/tty >/dev/tty; } 2>/dev/null
+}
+
+if [[ ! -t 1 && "${TERM:-}" != "dumb" ]] && tty_available; then
   PROGRESS_ENABLED=1
 fi
 
@@ -60,10 +64,13 @@ progress_stop() {
 
 progress_start() {
   local message="$1"
-  [[ "$PROGRESS_ENABLED" == "1" ]] || return
+  [[ "$PROGRESS_ENABLED" == "1" ]] || return 0
   progress_stop
   PROGRESS_MESSAGE="$message"
   (
+    # Progress is cosmetic and must never inherit the transaction's ERR trap.
+    trap - ERR INT TERM
+    set +e
     local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏') i=0 frame
     local started_at=$SECONDS elapsed detail
     while :; do
