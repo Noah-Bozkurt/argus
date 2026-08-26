@@ -17,6 +17,7 @@ export async function resolveProjectScope(req: PayloadRequest, projectValue: unk
     id: projectID,
     depth: 0,
     overrideAccess: true,
+    req,
   }) as {
     id: string | number
     argusProjectId?: string
