@@ -4,6 +4,7 @@ import { getPayload } from 'payload'
 
 import { internalIdentity } from '@/lib/argusCmsContract'
 import { formSubmissionsCsv, MAX_FORM_EXPORT_ROWS, type FormField } from '@/lib/argusFormsContract'
+import { authorizeInternalProject } from '@/lib/internalProjectAccess'
 import { isUUID } from '@/lib/projectScope'
 
 export async function GET(request: Request, { params }: { params: Promise<{ projectId: string; formId: string }> }) {
@@ -14,8 +15,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
   const payload = await getPayload({ config })
   const projects = await payload.find({ collection: 'project-spaces', depth: 0, limit: 1, overrideAccess: true, pagination: false,
     where: { and: [{ argusProjectId: { equals: projectId } }, { organizationId: { equals: identity.organizationId } }] } })
-  const project = projects.docs[0]
+  const project = projects.docs[0] as { id: string; organizationId?: string } | undefined
   if (!project) return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
+  if (!await authorizeInternalProject(payload, identity, project, 'viewer')) return NextResponse.json({ code: 'PERMISSION_DENIED' }, { status: 403 })
   const forms = await payload.find({ collection: 'form-definitions', depth: 0, limit: 1, overrideAccess: true, pagination: false,
     where: { and: [{ id: { equals: formId } }, { project: { equals: project.id } }] } })
   const form = forms.docs[0] as { id: string; slug?: string; fields?: Array<Record<string, unknown>> } | undefined
