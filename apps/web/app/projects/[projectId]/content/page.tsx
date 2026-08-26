@@ -78,13 +78,20 @@ function ContentModelForm({ projectId, model, models, components }: { projectId:
   </form>
 }
 
-export default async function ProjectContentPage({ params, searchParams }: { params: { projectId: string }; searchParams: { submission_page?: string } }) {
-  const parsedPage = Number.parseInt(searchParams.submission_page ?? '1', 10)
-  const submissionPage = Number.isFinite(parsedPage) ? Math.max(1, parsedPage) : 1
-  const [workspace, media, forms] = await Promise.all([getContentWorkspace(params.projectId), getMediaLibrary(params.projectId), getFormsWorkspace(params.projectId, submissionPage)])
+function pageHref(projectId: string, recordPage: number, submissionPage: number) {
+  return `/projects/${projectId}/content?record_page=${recordPage}&submission_page=${submissionPage}`
+}
+
+export default async function ProjectContentPage({ params, searchParams }: { params: { projectId: string }; searchParams: { submission_page?: string; record_page?: string } }) {
+  const parsedSubmissionPage = Number.parseInt(searchParams.submission_page ?? '1', 10)
+  const submissionPage = Number.isFinite(parsedSubmissionPage) ? Math.max(1, parsedSubmissionPage) : 1
+  const parsedRecordPage = Number.parseInt(searchParams.record_page ?? '1', 10)
+  const recordPage = Number.isFinite(parsedRecordPage) ? Math.max(1, parsedRecordPage) : 1
+  const [workspace, media, forms] = await Promise.all([getContentWorkspace(params.projectId, recordPage), getMediaLibrary(params.projectId), getFormsWorkspace(params.projectId, submissionPage)])
   const componentModels = workspace.models.filter((model) => model.content_role === 'component' && model.status === 'active')
   const publicBase = process.env.ARGUS_CONTENT_PUBLIC_URL?.replace(/\/$/, '')
   const publishedRecords = workspace.records.filter((record) => record.editorial_status === 'published' && record.lifecycle_status === 'active').length
+  const recordPagination = workspace.pagination.records
 
   return (
     <main className="detail-page">
@@ -97,7 +104,7 @@ export default async function ProjectContentPage({ params, searchParams }: { par
 
       <div className="stats-grid">
         <div className="stat-card"><div className="stat-label">Content types</div><div className="stat-value">{workspace.models.length}</div><div className="stat-meta">Schemas in this project</div></div>
-        <div className="stat-card"><div className="stat-label">Records</div><div className="stat-value">{workspace.pagination?.records.total_docs ?? workspace.records.length}</div><div className="stat-meta">{publishedRecords} published on this page</div></div>
+        <div className="stat-card"><div className="stat-label">Records</div><div className="stat-value">{recordPagination.total_docs}</div><div className="stat-meta">{publishedRecords} published on this page</div></div>
         <div className="stat-card"><div className="stat-label">Media</div><div className="stat-value">{media.length}</div><div className="stat-meta">Project-owned image assets</div></div>
         <div className="stat-card"><div className="stat-label">Forms</div><div className="stat-value">{forms.forms.length}</div><div className="stat-meta">Public submission endpoints</div></div>
       </div>
@@ -173,7 +180,7 @@ export default async function ProjectContentPage({ params, searchParams }: { par
                   <article className="resource-card" key={model.id}>
                     <div className="resource-card-head">
                       <div><h3>{model.name}</h3><div className="resource-meta">{model.description || 'No description'} · <code>{model.slug}</code> · schema v{model.schema_version}</div></div>
-                      <div className="action-row"><span className="badge info">{model.content_role}</span><span className={`badge ${model.status === 'active' ? 'success' : 'warning'}`}>{model.status}</span><span className={`badge ${model.public_read ? 'success' : ''}`}>{model.public_read ? 'Public published records' : 'Private'}</span><span className="badge">{records.length} loaded</span></div>
+                      <div className="action-row"><span className="badge info">{model.content_role}</span><span className={`badge ${model.status === 'active' ? 'success' : 'warning'}`}>{model.status}</span><span className={`badge ${model.public_read ? 'success' : ''}`}>{model.public_read ? 'Public published records' : 'Private'}</span><span className="badge">{records.length} on page</span></div>
                     </div>
                     <div className="content-lifecycle">
                       <details className="resource-editor"><summary className="button small">Edit content type</summary><div className="resource-editor-body"><ContentModelForm projectId={params.projectId} model={model} models={workspace.models} components={componentModels.filter((component) => component.id !== model.id)} /></div></details>
@@ -187,7 +194,7 @@ export default async function ProjectContentPage({ params, searchParams }: { par
                           <summary className="button small">+ New record</summary>
                           <div className="resource-editor-body"><RecordForm projectId={params.projectId} model={model} components={allowedComponents} workspace={workspace} media={media} publicBase={publicBase} /></div>
                         </details>
-                        {records.length === 0 ? <div className="empty-state"><strong>No records</strong>Create the first {model.name.toLowerCase()} record.</div> : (
+                        {records.length === 0 ? <div className="empty-state"><strong>No records on this page</strong>{recordPagination.total_pages > 1 ? 'This content type may have records on another result page.' : `Create the first ${model.name.toLowerCase()} record.`}</div> : (
                           <div className="resource-list" style={{ marginTop: 12 }}>
                             {records.map((record) => {
                               const label = String(record.values.title ?? record.values.name ?? record.values.slug ?? record.id)
@@ -212,6 +219,13 @@ export default async function ProjectContentPage({ params, searchParams }: { par
               })}
             </div>
           )}
+          {recordPagination.total_pages > 1 ? <div className="content-pagination">
+            <span>Records page {recordPagination.page} of {recordPagination.total_pages} · {recordPagination.total_docs} total</span>
+            <div className="action-row">
+              {recordPagination.has_prev_page ? <Link className="button small" href={pageHref(params.projectId, recordPagination.page - 1, submissionPage)}>← Previous</Link> : null}
+              {recordPagination.has_next_page ? <Link className="button small" href={pageHref(params.projectId, recordPagination.page + 1, submissionPage)}>Next →</Link> : null}
+            </div>
+          </div> : null}
         </div>
       </section>
     </main>
