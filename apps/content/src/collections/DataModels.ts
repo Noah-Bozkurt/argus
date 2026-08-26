@@ -50,6 +50,7 @@ const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation
     limit: 1,
     overrideAccess: true,
     pagination: false,
+    req,
     where: {
       and: [
         { project: { equals: scope.projectID } },
@@ -88,6 +89,7 @@ const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation
         id: targetModelID,
         depth: 0,
         overrideAccess: true,
+        req,
       }) as { project?: unknown }
       if (relationshipID(targetModel.project) !== scope.projectID) {
         throw new Error(`Relationship field '${key}' cannot target a model in another project`)
@@ -116,7 +118,7 @@ const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation
   }
   for (const componentID of allowedComponents) {
     const component = await req.payload.findByID({
-      collection: 'data-models', id: componentID, depth: 0, overrideAccess: true,
+      collection: 'data-models', id: componentID, depth: 0, overrideAccess: true, req,
     }) as { project?: unknown; kind?: string; contentRole?: string }
     if (relationshipID(component.project) !== scope.projectID || component.kind !== 'content' || component.contentRole !== 'component') {
       throw new Error('Page schemas can only allow component schemas from the same project')
