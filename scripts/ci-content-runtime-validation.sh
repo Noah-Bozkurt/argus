@@ -51,6 +51,10 @@ export PAYLOAD_PUBLIC_URL=http://127.0.0.1:3000
 export ARGUS_CONTENT_SYNC_TOKEN=content-sync-runtime-000000000000
 export ARGUS_MEDIA_DIR="$RUNNER_TEMP/argus-content-media"
 export PAYLOAD_DB_PUSH=false
+export ARGUS_ORG_ID=00000000-0000-4000-8000-000000000001
+export ARGUS_USER_ID=00000000-0000-4000-8000-000000000002
+export ARGUS_OPERATOR_EMAIL=owner@argus.test
+export ARGUS_OPERATOR_PASSWORD=argus-runtime-owner-password
 
 pnpm --filter @argus/content exec payload migrate
 content_log="$RUNNER_TEMP/argus-content.log"
@@ -68,8 +72,8 @@ for _ in $(seq 1 180); do
     bash scripts/test-media-runtime.sh
     bash scripts/test-forms-runtime.sh
     ARGUS_TEST_PROJECT_ID=00000000-0000-4000-8000-000000000003 \
-      ARGUS_TEST_ORG_ID=00000000-0000-4000-8000-000000000001 \
-      ARGUS_TEST_USER_ID=00000000-0000-4000-8000-000000000002 \
+      ARGUS_TEST_ORG_ID="$ARGUS_ORG_ID" \
+      ARGUS_TEST_USER_ID="$ARGUS_USER_ID" \
       node scripts/first-server-content-acceptance.mjs >/dev/null
     exit 0
   fi
