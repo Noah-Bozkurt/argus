@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { getPayload, type Payload } from 'payload'
 
 import { internalIdentity, normalizeModelInput, type CmsFieldInput, type ContentRole, validateValues } from '@/lib/argusCmsContract'
+import { authorizeInternalProject } from '@/lib/internalProjectAccess'
 import { isUUID } from '@/lib/projectScope'
 
 type Project = { id: string; organizationId?: string; status?: string }
@@ -19,6 +20,8 @@ type Model = {
   status?: string
   fields?: Array<CmsFieldInput & { id?: string | null; targetModel?: unknown }>
 }
+
+type WorkspaceUser = { id: string | number }
 
 async function projectFor(payload: Payload, projectId: string, organizationId: string): Promise<Project | null> {
   const result = await payload.find({
@@ -53,6 +56,20 @@ function modelView(model: Model) {
   }
 }
 
+function recordView(record: Record<string, unknown>) {
+  const model = record.model
+  const modelId = typeof model === 'object' && model && 'id' in model ? String(model.id) : String(model ?? '')
+  return {
+    id: String(record.id), model_id: modelId, values: record.values ?? {}, layout: Array.isArray(record.layout) ? record.layout : [],
+    editorial_status: record._status ?? 'draft', lifecycle_status: record.status ?? 'active',
+    published_at: record.publishedAt ?? null, updated_at: record.updatedAt ?? null,
+  }
+}
+
+async function requireRole(payload: Payload, identity: NonNullable<ReturnType<typeof internalIdentity>>, project: Project, role: 'viewer' | 'editor' | 'manager') {
+  return authorizeInternalProject(payload, identity, project, role)
+}
+
 export async function GET(request: Request, { params }: { params: Promise<{ projectId: string }> }) {
   const identity = internalIdentity(request)
   const { projectId } = await params
@@ -62,16 +79,21 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
   const kind = routeKind(request)
   const project = await projectFor(payload, projectId, identity.organizationId)
   if (!project) return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
+  if (!await requireRole(payload, identity, project, 'viewer')) return NextResponse.json({ code: 'PERMISSION_DENIED' }, { status: 403 })
 
   const models = await payload.find({
     collection: 'data-models', depth: 0, limit: 100, overrideAccess: true, pagination: false,
     sort: 'name', where: { and: [{ project: { equals: project.id } }, { kind: { equals: kind } }] },
   })
   const modelIds = models.docs.filter((model) => (model as Model).contentRole !== 'component').map((model) => String(model.id))
-  const records = modelIds.length === 0 ? { docs: [] } : await payload.find({
-    collection: 'data-records', depth: 0, draft: true, limit: 500, overrideAccess: true, pagination: false,
-    sort: '-updatedAt', where: { and: [{ project: { equals: project.id } }, { model: { in: modelIds } }] },
-  })
+  const requestedPage = Number.parseInt(new URL(request.url).searchParams.get('record_page') ?? '1', 10)
+  const recordPage = Number.isFinite(requestedPage) ? Math.max(1, requestedPage) : 1
+  const records = modelIds.length === 0
+    ? { docs: [], page: 1, totalPages: 0, totalDocs: 0, hasNextPage: false, hasPrevPage: false }
+    : await payload.find({
+        collection: 'data-records', depth: 0, draft: true, limit: 100, page: recordPage, overrideAccess: true,
+        sort: '-updatedAt', where: { and: [{ project: { equals: project.id } }, { model: { in: modelIds } }] },
+      })
   const recordIds = records.docs.map((record) => String(record.id))
   const relations = recordIds.length === 0 ? { docs: [] } : await payload.find({
     collection: 'data-relations', depth: 0, limit: 1000, overrideAccess: true, pagination: false,
@@ -80,16 +102,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
   return NextResponse.json({
     project_status: project.status ?? 'active',
     models: models.docs.map((model) => modelView(model as Model)),
-    records: records.docs.map((record) => {
-      const doc = record as { id: string | number; model?: unknown; values?: unknown; layout?: unknown; _status?: string; status?: string; publishedAt?: string | null; updatedAt?: string }
-      const modelId = typeof doc.model === 'object' && doc.model && 'id' in doc.model ? String(doc.model.id) : String(doc.model ?? '')
-      return { id: doc.id, model_id: modelId, values: doc.values ?? {}, layout: Array.isArray(doc.layout) ? doc.layout : [], editorial_status: doc._status ?? 'draft', lifecycle_status: doc.status ?? 'active', published_at: doc.publishedAt ?? null, updated_at: doc.updatedAt ?? null }
-    }),
+    records: records.docs.map((record) => recordView(record as unknown as Record<string, unknown>)),
     relations: relations.docs.map((relation) => {
       const doc = relation as { id: string; sourceRecord?: unknown; targetRecord?: unknown; fieldKey?: string }
       const idOf = (value: unknown) => typeof value === 'object' && value && 'id' in value ? String(value.id) : String(value ?? '')
       return { id: doc.id, source_record_id: idOf(doc.sourceRecord), target_record_id: idOf(doc.targetRecord), field_key: doc.fieldKey ?? '' }
     }),
+    pagination: { records: { page: records.page ?? 1, total_pages: records.totalPages ?? 0, total_docs: records.totalDocs ?? 0, has_next_page: records.hasNextPage ?? false, has_prev_page: records.hasPrevPage ?? false } },
   })
 }
 
@@ -106,18 +125,89 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
   if (!project || project.status !== 'active') return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
 
   try {
-    if (body.operation === 'create_model') {
+    if (body.operation === 'create_model' || body.operation === 'update_model') {
+      const actor = await requireRole(payload, identity, project, 'editor')
+      if (!actor) return NextResponse.json({ code: 'PERMISSION_DENIED' }, { status: 403 })
       const normalized = normalizeModelInput(body.model)
       if (!normalized) return NextResponse.json({ code: 'INVALID_REQUEST' }, { status: 400 })
       if (kind === 'data' && normalized.contentRole !== 'collection') return NextResponse.json({ code: 'INVALID_REQUEST' }, { status: 400 })
+
+      if (body.operation === 'update_model') {
+        const modelId = typeof body.model_id === 'string' ? body.model_id : ''
+        const existing = await modelFor(payload, project, modelId, kind)
+        if (!existing) return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
+        if (normalized.slug !== existing.slug || normalized.contentRole !== (existing.contentRole ?? 'collection')) {
+          return NextResponse.json({ code: 'IMMUTABLE_MODEL_SHAPE' }, { status: 409 })
+        }
+        const model = await payload.update({
+          collection: 'data-models', id: modelId, depth: 0, overrideAccess: true,
+          data: { name: normalized.name, description: normalized.description, allowedComponents: kind === 'data' ? [] : normalized.allowedComponentIds,
+            publicRead: kind === 'content' && normalized.publicRead, fields: normalized.fields },
+          user: actor as any,
+        })
+        return NextResponse.json({ model: modelView(model as Model) })
+      }
+
       const model = await payload.create({
         collection: 'data-models', depth: 0, draft: false, overrideAccess: true,
         data: { organizationId: identity.organizationId, argusProjectId: projectId, project: project.id, name: normalized.name, slug: normalized.slug, description: normalized.description, kind, contentRole: kind === 'data' ? 'collection' : normalized.contentRole, allowedComponents: kind === 'data' ? [] : normalized.allowedComponentIds, publicRead: kind === 'content' && normalized.publicRead, schemaVersion: 1, status: 'active', fields: normalized.fields },
+        user: actor as any,
       })
       return NextResponse.json({ model: modelView(model as Model) }, { status: 201 })
     }
 
+    if (body.operation === 'set_model_status' || body.operation === 'delete_model') {
+      const actor = await requireRole(payload, identity, project, 'manager')
+      if (!actor) return NextResponse.json({ code: 'PERMISSION_DENIED' }, { status: 403 })
+      const modelId = typeof body.model_id === 'string' ? body.model_id : ''
+      const model = await modelFor(payload, project, modelId, kind)
+      if (!model) return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
+      if (body.operation === 'set_model_status') {
+        const status = body.status === 'active' || body.status === 'archived' ? body.status : null
+        if (!status) return NextResponse.json({ code: 'INVALID_REQUEST' }, { status: 400 })
+        const updated = await payload.update({ collection: 'data-models', id: model.id, depth: 0, overrideAccess: true, data: { status }, user: actor as any })
+        return NextResponse.json({ model: modelView(updated as Model) })
+      }
+      const records = await payload.find({ collection: 'data-records', depth: 0, draft: true, limit: 1, overrideAccess: true, pagination: false,
+        where: { and: [{ project: { equals: project.id } }, { model: { equals: model.id } }] } })
+      if (records.docs.length > 0) return NextResponse.json({ code: 'MODEL_NOT_EMPTY' }, { status: 409 })
+      await payload.delete({ collection: 'data-models', id: model.id, overrideAccess: true, user: actor as any })
+      return new NextResponse(null, { status: 204 })
+    }
+
+    if (body.operation === 'set_record_status' || body.operation === 'delete_record') {
+      const requiredRole = body.operation === 'delete_record' ? 'manager' : 'editor'
+      const actor = await requireRole(payload, identity, project, requiredRole)
+      if (!actor) return NextResponse.json({ code: 'PERMISSION_DENIED' }, { status: 403 })
+      const recordId = typeof body.record_id === 'string' ? body.record_id : ''
+      if (!isUUID(recordId)) return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
+      const existing = await payload.find({ collection: 'data-records', depth: 0, draft: true, limit: 1, overrideAccess: true, pagination: false,
+        where: { and: [{ id: { equals: recordId } }, { project: { equals: project.id } }] } })
+      if (existing.docs.length !== 1) return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
+      if (body.operation === 'set_record_status') {
+        const status = body.status === 'active' || body.status === 'archived' ? body.status : null
+        if (!status) return NextResponse.json({ code: 'INVALID_REQUEST' }, { status: 400 })
+        const updated = await payload.update({ collection: 'data-records', id: recordId, depth: 0, draft: true, overrideAccess: true, data: { status }, user: actor as any })
+        return NextResponse.json({ record: recordView(updated as unknown as Record<string, unknown>) })
+      }
+      const transactionID = await payload.db.beginTransaction()
+      try {
+        const req = { transactionID, user: actor } as any
+        const relations = await payload.find({ collection: 'data-relations', depth: 0, limit: 1000, overrideAccess: true, pagination: false, req,
+          where: { and: [{ project: { equals: project.id } }, { or: [{ sourceRecord: { equals: recordId } }, { targetRecord: { equals: recordId } }] }] } })
+        for (const relation of relations.docs) await payload.delete({ collection: 'data-relations', id: relation.id, overrideAccess: true, req })
+        await payload.delete({ collection: 'data-records', id: recordId, overrideAccess: true, req })
+        await payload.db.commitTransaction(transactionID)
+      } catch (error) {
+        await payload.db.rollbackTransaction(transactionID)
+        throw error
+      }
+      return new NextResponse(null, { status: 204 })
+    }
+
     if (body.operation === 'save_record') {
+      const actor = await requireRole(payload, identity, project, 'editor') as WorkspaceUser | null
+      if (!actor) return NextResponse.json({ code: 'PERMISSION_DENIED' }, { status: 403 })
       const modelId = typeof body.model_id === 'string' ? body.model_id : ''
       const model = await modelFor(payload, project, modelId, kind)
       if (!model || model.status !== 'active') return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
@@ -147,32 +237,40 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
       const recordId = typeof body.record_id === 'string' ? body.record_id : ''
       if (recordId) {
         if (!isUUID(recordId)) return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
-        const existing = await payload.find({
-          collection: 'data-records', depth: 0, draft: true, limit: 1, overrideAccess: true, pagination: false,
-          where: { and: [{ id: { equals: recordId } }, { project: { equals: project.id } }, { model: { equals: model.id } }] },
-        })
+        const existing = await payload.find({ collection: 'data-records', depth: 0, draft: true, limit: 1, overrideAccess: true, pagination: false,
+          where: { and: [{ id: { equals: recordId } }, { project: { equals: project.id } }, { model: { equals: model.id } }] } })
         if (existing.docs.length !== 1) return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
       }
-      const saved = recordId
-        ? publish
-          ? await payload.update({ collection: 'data-records', id: recordId, depth: 0, draft: false, overrideAccess: true, data })
-          : await payload.update({ collection: 'data-records', id: recordId, depth: 0, draft: true, overrideAccess: true, data })
-        : publish
-          ? await payload.create({ collection: 'data-records', depth: 0, draft: false, overrideAccess: true, data })
-          : await payload.create({ collection: 'data-records', depth: 0, draft: true, overrideAccess: true, data })
-      const record = saved as { id: string; values?: unknown; layout?: unknown; _status?: string; publishedAt?: string | null; updatedAt?: string }
-      const existingRelations = await payload.find({ collection: 'data-relations', depth: 0, limit: 1000, overrideAccess: true, pagination: false,
-        where: { and: [{ project: { equals: project.id } }, { sourceRecord: { equals: record.id } }] } })
-      for (const relation of existingRelations.docs) await payload.delete({ collection: 'data-relations', id: relation.id, overrideAccess: true })
-      for (const [fieldKey, targetIds] of relationTargets) for (const targetRecord of targetIds) await payload.create({
-        collection: 'data-relations', depth: 0, overrideAccess: true,
-        data: { organizationId: identity.organizationId, argusProjectId: projectId, project: project.id,
-          sourceModel: model.id, sourceRecord: record.id, targetModel: fields.find((field) => field.key === fieldKey)?.targetModel ?? '', targetRecord, fieldKey },
-      })
-      return NextResponse.json({ record: { id: record.id, model_id: model.id, values: record.values ?? {}, layout: Array.isArray(record.layout) ? record.layout : [], editorial_status: record._status ?? (publish ? 'published' : 'draft'), published_at: record.publishedAt ?? null, updated_at: record.updatedAt } }, { status: recordId ? 200 : 201 })
+
+      const transactionID = await payload.db.beginTransaction()
+      try {
+        const req = { transactionID, user: actor } as any
+        const saved = recordId
+          ? publish
+            ? await payload.update({ collection: 'data-records', id: recordId, depth: 0, draft: false, overrideAccess: true, data, req })
+            : await payload.update({ collection: 'data-records', id: recordId, depth: 0, draft: true, overrideAccess: true, data, req })
+          : publish
+            ? await payload.create({ collection: 'data-records', depth: 0, draft: false, overrideAccess: true, data, req })
+            : await payload.create({ collection: 'data-records', depth: 0, draft: true, overrideAccess: true, data, req })
+        const record = saved as unknown as Record<string, unknown>
+        const savedId = String(record.id)
+        const existingRelations = await payload.find({ collection: 'data-relations', depth: 0, limit: 1000, overrideAccess: true, pagination: false, req,
+          where: { and: [{ project: { equals: project.id } }, { sourceRecord: { equals: savedId } }] } })
+        for (const relation of existingRelations.docs) await payload.delete({ collection: 'data-relations', id: relation.id, overrideAccess: true, req })
+        for (const [fieldKey, targetIds] of relationTargets) for (const targetRecord of targetIds) await payload.create({
+          collection: 'data-relations', depth: 0, overrideAccess: true, req,
+          data: { organizationId: identity.organizationId, argusProjectId: projectId, project: project.id,
+            sourceModel: model.id, sourceRecord: savedId, targetModel: fields.find((field) => field.key === fieldKey)?.targetModel ?? '', targetRecord, fieldKey },
+        })
+        await payload.db.commitTransaction(transactionID)
+        return NextResponse.json({ record: recordView({ ...record, model: model.id }) }, { status: recordId ? 200 : 201 })
+      } catch (error) {
+        await payload.db.rollbackTransaction(transactionID)
+        throw error
+      }
     }
   } catch (error) {
-    console.error('Argus CMS operation failed', { operation: body.operation, projectId, userId: identity.userId, error })
+    console.error('Argus CMS operation failed', { operation: body.operation, projectId, userId: identity.userId, workspaceUserId: identity.workspaceUserId, error })
     return NextResponse.json({ code: 'CONTENT_OPERATION_FAILED' }, { status: 409 })
   }
   return NextResponse.json({ code: 'INVALID_REQUEST' }, { status: 400 })
