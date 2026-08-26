@@ -66,16 +66,27 @@ cleanup_all() {
 }
 trap cleanup_all EXIT
 
+run_runtime_test() {
+  local label="$1"
+  shift
+  if ! "$@"; then
+    echo "[argus-ci] $label failed; content service log follows" >&2
+    cat "$content_log" >&2 || true
+    return 1
+  fi
+}
+
 for _ in $(seq 1 180); do
   if curl -fsS http://127.0.0.1:3000/healthz >/dev/null 2>&1; then
-    bash scripts/test-native-cms-runtime.sh
-    bash scripts/test-cms-lifecycle-runtime.sh
-    bash scripts/test-media-runtime.sh
-    bash scripts/test-forms-runtime.sh
-    ARGUS_TEST_PROJECT_ID=00000000-0000-4000-8000-000000000003 \
+    run_runtime_test "native CMS runtime" bash scripts/test-native-cms-runtime.sh
+    run_runtime_test "CMS lifecycle runtime" bash scripts/test-cms-lifecycle-runtime.sh
+    run_runtime_test "media runtime" bash scripts/test-media-runtime.sh
+    run_runtime_test "forms runtime" bash scripts/test-forms-runtime.sh
+    run_runtime_test "first-server content acceptance" env \
+      ARGUS_TEST_PROJECT_ID=00000000-0000-4000-8000-000000000003 \
       ARGUS_TEST_ORG_ID="$ARGUS_ORG_ID" \
       ARGUS_TEST_USER_ID="$ARGUS_USER_ID" \
-      node scripts/first-server-content-acceptance.mjs >/dev/null
+      node scripts/first-server-content-acceptance.mjs
     exit 0
   fi
   if ! kill -0 "$pid" >/dev/null 2>&1; then
