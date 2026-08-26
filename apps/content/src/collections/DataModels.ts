@@ -23,7 +23,7 @@ function fieldShape(rawField: Record<string, unknown>) {
 }
 
 function componentShape(values: unknown[]) {
-  return values.map(relationshipID).filter((id): id is string | number => id !== null).map(String).sort()
+  return values.map((value) => relationshipID(value)).filter((id): id is string | number => id !== null).map(String).sort()
 }
 
 const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation, originalDoc, req }) => {
@@ -103,11 +103,14 @@ const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation
   if (!['collection', 'page', 'component'].includes(contentRole)) {
     throw new Error('Invalid content role')
   }
-  const allowedComponents = contentRole === 'page' && Array.isArray(data.allowedComponents)
-    ? data.allowedComponents.map(relationshipID).filter((id): id is string | number => id !== null)
+  const rawAllowedComponents: unknown[] = contentRole === 'page' && Array.isArray(data.allowedComponents)
+    ? data.allowedComponents
     : contentRole === 'page' && Array.isArray(originalDoc?.allowedComponents)
-      ? originalDoc.allowedComponents.map(relationshipID).filter((id): id is string | number => id !== null)
+      ? originalDoc.allowedComponents
       : []
+  const allowedComponents = rawAllowedComponents
+    .map((value) => relationshipID(value))
+    .filter((id): id is string | number => id !== null)
   if (new Set(allowedComponents.map(String)).size !== allowedComponents.length) {
     throw new Error('Allowed component schemas must be unique')
   }
