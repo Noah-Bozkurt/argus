@@ -52,24 +52,7 @@ The operator UI provides global **Overview**, **Projects**, **Servers**, **Jobs*
 
 ## Architecture
 
-```text
-                         public HTTPS
-                              │
-                         Caddy proxy
-                      ┌───────┴────────┐
-                      │                │
-                  Web / UI       Content / CMS
-                      │                │
-                      └──────┬─────────┘
-                             │ loopback/private network
-                        Control API ───── Worker
-                             │               │
-                             └──── PostgreSQL┘
-                             │ authenticated protocol
-                       managed-node Agent
-                             │ local Unix socket
-                       privileged Helper
-```
+![Argus runtime architecture](docs/assets/architecture.svg)
 
 The control plane runs application services through Docker Compose. Agent and Helper run as native systemd services. PostgreSQL and the Control API are not exposed on public host interfaces. Host actions use typed protocol operations; the Helper is not a general-purpose network shell.
 
