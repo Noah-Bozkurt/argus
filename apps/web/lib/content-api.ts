@@ -41,6 +41,7 @@ export type ContentBlock = {
 
 export type ContentWorkspace = {
   project_status: string
+  permissions: { can_edit: boolean; can_manage: boolean }
   models: ContentModel[]
   records: ContentRecord[]
   relations: Array<{ id: string; source_record_id: string; target_record_id: string; field_key: string }>
