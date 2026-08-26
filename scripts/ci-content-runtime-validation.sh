@@ -69,6 +69,7 @@ trap cleanup_all EXIT
 for _ in $(seq 1 180); do
   if curl -fsS http://127.0.0.1:3000/healthz >/dev/null 2>&1; then
     bash scripts/test-native-cms-runtime.sh
+    bash scripts/test-cms-lifecycle-runtime.sh
     bash scripts/test-media-runtime.sh
     bash scripts/test-forms-runtime.sh
     ARGUS_TEST_PROJECT_ID=00000000-0000-4000-8000-000000000003 \
