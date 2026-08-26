@@ -1,4 +1,4 @@
-import type { Payload } from 'payload'
+import type { Payload, Where } from 'payload'
 
 import type { ArgusCmsIdentity } from './argusCmsContract'
 
@@ -27,10 +27,8 @@ export async function internalWorkspaceUser(
   payload: Payload,
   identity: ArgusCmsIdentity,
 ): Promise<WorkspaceUser | null> {
-  const candidates = [
-    ...(identity.workspaceUserId ? [{ id: { equals: identity.workspaceUserId } }] : []),
-    { argusUserId: { equals: identity.userId } },
-  ]
+  const candidates: Where[] = [{ argusUserId: { equals: identity.userId } }]
+  if (identity.workspaceUserId) candidates.unshift({ id: { equals: identity.workspaceUserId } })
   const users = await payload.find({
     collection: 'workspace-users',
     depth: 0,
