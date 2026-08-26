@@ -44,7 +44,7 @@ export type ContentWorkspace = {
   models: ContentModel[]
   records: ContentRecord[]
   relations: Array<{ id: string; source_record_id: string; target_record_id: string; field_key: string }>
-  pagination?: {
+  pagination: {
     records: { page: number; total_pages: number; total_docs: number; has_next_page: boolean; has_prev_page: boolean }
   }
 }
@@ -113,8 +113,8 @@ async function headers(): Promise<Record<string, string>> {
   }
 }
 
-async function request<T>(projectId: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${contentApi}/internal/argus/cms/projects/${projectId}`, {
+async function request<T>(projectId: string, init: RequestInit = {}, query = ''): Promise<T> {
+  const response = await fetch(`${contentApi}/internal/argus/cms/projects/${projectId}${query}`, {
     ...init,
     cache: 'no-store',
     headers: { ...(await headers()), ...(init.headers ?? {}) },
@@ -124,7 +124,7 @@ async function request<T>(projectId: string, init: RequestInit = {}): Promise<T>
   return response.json()
 }
 
-export const getContentWorkspace = (projectId: string): Promise<ContentWorkspace> => request(projectId)
+export const getContentWorkspace = (projectId: string, recordPage = 1): Promise<ContentWorkspace> => request(projectId, {}, `?record_page=${encodeURIComponent(String(recordPage))}`)
 
 export async function createContentModel(projectId: string, model: {
   name: string
