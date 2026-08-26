@@ -79,12 +79,18 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
   const kind = routeKind(request)
   const project = await projectFor(payload, projectId, identity.organizationId)
   if (!project) return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
-  if (!await requireRole(payload, identity, project, 'viewer')) return NextResponse.json({ code: 'PERMISSION_DENIED' }, { status: 403 })
+  const viewer = await requireRole(payload, identity, project, 'viewer')
+  if (!viewer) return NextResponse.json({ code: 'PERMISSION_DENIED' }, { status: 403 })
+  const [editor, manager] = await Promise.all([
+    requireRole(payload, identity, project, 'editor'),
+    requireRole(payload, identity, project, 'manager'),
+  ])
 
   const models = await payload.find({
-    collection: 'data-models', depth: 0, limit: 100, overrideAccess: true, pagination: false,
+    collection: 'data-models', depth: 0, limit: 101, overrideAccess: true, pagination: false,
     sort: 'name', where: { and: [{ project: { equals: project.id } }, { kind: { equals: kind } }] },
   })
+  if (models.docs.length > 100) return NextResponse.json({ code: 'MODEL_WORKSPACE_TOO_LARGE', max_models: 100 }, { status: 422 })
   const modelIds = models.docs.filter((model) => (model as Model).contentRole !== 'component').map((model) => String(model.id))
   const requestedPage = Number.parseInt(new URL(request.url).searchParams.get('record_page') ?? '1', 10)
   const recordPage = Number.isFinite(requestedPage) ? Math.max(1, requestedPage) : 1
@@ -96,11 +102,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
       })
   const recordIds = records.docs.map((record) => String(record.id))
   const relations = recordIds.length === 0 ? { docs: [] } : await payload.find({
-    collection: 'data-relations', depth: 0, limit: 1000, overrideAccess: true, pagination: false,
+    collection: 'data-relations', depth: 0, limit: 1001, overrideAccess: true, pagination: false,
     where: { and: [{ project: { equals: project.id } }, { sourceRecord: { in: recordIds } }] },
   })
+  if (relations.docs.length > 1000) return NextResponse.json({ code: 'RELATION_WORKSPACE_TOO_LARGE', max_relations: 1000 }, { status: 422 })
   return NextResponse.json({
     project_status: project.status ?? 'active',
+    permissions: { can_edit: Boolean(editor), can_manage: Boolean(manager) },
     models: models.docs.map((model) => modelView(model as Model)),
     records: records.docs.map((record) => recordView(record as unknown as Record<string, unknown>)),
     relations: relations.docs.map((relation) => {
@@ -191,6 +199,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
         return NextResponse.json({ record: recordView(updated as unknown as Record<string, unknown>) })
       }
       const transactionID = await payload.db.beginTransaction()
+      if (transactionID === null) throw new Error('DATABASE_TRANSACTION_UNAVAILABLE')
       try {
         const req = { transactionID, user: actor } as any
         const relations = await payload.find({ collection: 'data-relations', depth: 0, limit: 1000, overrideAccess: true, pagination: false, req,
@@ -243,6 +252,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
       }
 
       const transactionID = await payload.db.beginTransaction()
+      if (transactionID === null) throw new Error('DATABASE_TRANSACTION_UNAVAILABLE')
       try {
         const req = { transactionID, user: actor } as any
         const saved = recordId
