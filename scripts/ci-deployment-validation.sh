@@ -47,6 +47,16 @@ set -euo pipefail
 )
 
 (
+  export TERM=xterm
+  source scripts/update-first-test.sh --internal-test-library
+  [[ "$PROGRESS_ENABLED" == "0" ]]
+  trap -p ERR | grep -Fq 'on_error'
+  progress_start "non-interactive progress must stay disabled"
+  [[ "$?" == "0" ]]
+  [[ -z "$PROGRESS_PID" ]]
+)
+
+(
   tmp="$(mktemp -d)"
   export ARGUS_STATE_DIR="$tmp/state"
   source scripts/update-first-test.sh --internal-test-library

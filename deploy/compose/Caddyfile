@@ -1,0 +1,34 @@
+__ARGUS_GLOBAL_OPTIONS__
+
+__ARGUS_DOMAIN__ {
+__ARGUS_TLS__
+	encode zstd gzip
+
+	@agent path /enrollment/complete /agent/*
+	handle @agent {
+		reverse_proxy control-api:8080
+	}
+
+	@public_status path /public/status/*
+	handle @public_status {
+		reverse_proxy control-api:8080
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}
+
+__ARGUS_CONTENT_DOMAIN__ {
+__ARGUS_TLS__
+	encode zstd gzip
+
+	@public path /public/* /api/media/file/*
+	handle @public {
+		reverse_proxy content:3000
+	}
+
+	handle {
+		reverse_proxy content:3000
+	}
+}
