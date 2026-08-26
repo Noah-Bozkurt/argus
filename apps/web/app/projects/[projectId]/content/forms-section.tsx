@@ -11,12 +11,12 @@ function statusClass(status: string): string {
   return ''
 }
 
-export function FormsSection({ projectId, workspace, publicBase }: { projectId: string; workspace: FormsWorkspace; publicBase?: string }) {
+export function FormsSection({ projectId, workspace, publicBase, canEdit, canManage }: { projectId: string; workspace: FormsWorkspace; publicBase?: string; canEdit: boolean; canManage: boolean }) {
   return (
     <section className="detail-card">
       <div className="detail-card-header"><div><h2>Forms &amp; submissions</h2><p>Typed public form endpoints with private, durably rate-limited submissions.</p></div><span className="badge">{workspace.forms.length} forms</span></div>
       <div className="detail-card-body">
-        <details className="create-drawer">
+        {canEdit ? <details className="create-drawer">
           <summary className="button">+ Create form</summary>
           <div className="drawer-content">
             <form action={async (formData) => { 'use server'; await createProjectFormAction(projectId, formData) }}>
@@ -31,9 +31,9 @@ export function FormsSection({ projectId, workspace, publicBase }: { projectId: 
               <button className="primary" type="submit">Create form</button>
             </form>
           </div>
-        </details>
+        </details> : <div className="callout">Read-only access: an editor or manager is required to change forms or submission status.</div>}
 
-        {workspace.forms.length === 0 ? <div className="empty-state"><strong>No forms</strong>Create a form when this project needs a public submission endpoint.</div> : (
+        {workspace.forms.length === 0 ? <div className="empty-state"><strong>No forms</strong>{canEdit ? 'Create a form when this project needs a public submission endpoint.' : 'No forms are configured for this project.'}</div> : (
           <div className="resource-list">
             {workspace.forms.map((form) => {
               const submissions = workspace.submissions.filter((submission) => submission.form_id === form.id)
@@ -49,7 +49,7 @@ export function FormsSection({ projectId, workspace, publicBase }: { projectId: 
                   <div className="action-row">
                     {endpoint ? <a className="button small" href={endpoint} target="_blank" rel="noreferrer">Open endpoint ↗</a> : null}
                     <a className="button small" href={`/projects/${encodeURIComponent(projectId)}/content/forms/${encodeURIComponent(form.id)}/submissions.csv`}>Download CSV</a>
-                    {(['draft', 'published', 'archived'] as const).filter((status) => status !== form.status).map((status) => <form key={status} action={async () => { 'use server'; await updateProjectFormStatusAction(projectId, form.id, status) }}><button className="small" type="submit">Set {status}</button></form>)}
+                    {canEdit ? (['draft', 'published', 'archived'] as const).filter((status) => status !== form.status).map((status) => <form key={status} action={async () => { 'use server'; await updateProjectFormStatusAction(projectId, form.id, status) }}><button className="small" type="submit">Set {status}</button></form>) : null}
                   </div>
 
                   <details className="log-details" style={{ marginTop: 12 }}>
@@ -59,11 +59,11 @@ export function FormsSection({ projectId, workspace, publicBase }: { projectId: 
                         <article className="resource-card" key={submission.id}>
                           <div className="resource-card-head"><div><strong>{submission.submitted_at ? new Date(submission.submitted_at).toLocaleString() : 'Unknown time'}</strong></div><span className={`badge ${statusClass(submission.status)}`}>{submission.status}</span></div>
                           <div className="info-grid" style={{ marginTop: 10 }}>{form.fields.map((field) => <div className="info-item" key={field.key}><span className="info-label">{field.label}</span><span className="info-value">{typeof submission.values[field.key] === 'object' ? JSON.stringify(submission.values[field.key]) : String(submission.values[field.key] ?? '—')}</span></div>)}</div>
-                          <div className="action-row">{(['new', 'reviewed', 'spam', 'archived'] as const).filter((status) => status !== submission.status).map((status) => <form key={status} action={async () => { 'use server'; await updateFormSubmissionStatusAction(projectId, submission.id, status) }}><button className="small" type="submit">Mark {status}</button></form>)}</div>
-                          <details className="resource-editor">
+                          {canEdit ? <div className="action-row">{(['new', 'reviewed', 'spam', 'archived'] as const).filter((status) => status !== submission.status).map((status) => <form key={status} action={async () => { 'use server'; await updateFormSubmissionStatusAction(projectId, submission.id, status) }}><button className="small" type="submit">Mark {status}</button></form>)}</div> : null}
+                          {canManage ? <details className="resource-editor">
                             <summary className="button small danger">Delete submission</summary>
                             <div className="resource-editor-body"><form action={async (formData) => { 'use server'; await deleteFormSubmissionAction(projectId, submission.id, formData) }}><label style={{ display: 'flex', gridTemplateColumns: 'auto 1fr', alignItems: 'center' }}><input type="checkbox" name="confirm_delete" required /> Confirm permanent deletion</label><button className="danger" type="submit">Delete permanently</button></form></div>
-                          </details>
+                          </details> : null}
                         </article>
                       ))}
                     </div>
