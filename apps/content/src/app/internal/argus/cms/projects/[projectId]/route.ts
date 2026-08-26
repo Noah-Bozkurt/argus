@@ -195,7 +195,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
       if (body.operation === 'set_record_status') {
         const status = body.status === 'active' || body.status === 'archived' ? body.status : null
         if (!status) return NextResponse.json({ code: 'INVALID_REQUEST' }, { status: 400 })
-        const updated = await payload.update({ collection: 'data-records', id: recordId, depth: 0, draft: true, overrideAccess: true, data: { status }, user: actor as any })
+        const current = existing.docs[0] as { _status?: string }
+        const updated = await payload.update({
+          collection: 'data-records', id: recordId, depth: 0, draft: current._status !== 'published', overrideAccess: true,
+          data: { status }, user: actor as any,
+        })
         return NextResponse.json({ record: recordView(updated as unknown as Record<string, unknown>) })
       }
       const transactionID = await payload.db.beginTransaction()
