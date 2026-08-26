@@ -92,6 +92,9 @@ export default async function ProjectContentPage({ params, searchParams }: { par
   const publicBase = process.env.ARGUS_CONTENT_PUBLIC_URL?.replace(/\/$/, '')
   const publishedRecords = workspace.records.filter((record) => record.editorial_status === 'published' && record.lifecycle_status === 'active').length
   const recordPagination = workspace.pagination.records
+  const canEdit = workspace.permissions.can_edit
+  const canManage = workspace.permissions.can_manage
+  const accessLabel = canManage ? 'Manager' : canEdit ? 'Editor' : 'Viewer'
 
   return (
     <main className="detail-page">
@@ -100,7 +103,10 @@ export default async function ProjectContentPage({ params, searchParams }: { par
           <Link className="panel-link" href={`/projects/${params.projectId}`}>← Project</Link>
           <div style={{ marginTop: 10 }}><span className="eyebrow">Content workspace</span><h1>Content</h1><p>Model project content, compose pages visually, manage media and forms, then draft or publish through one project-owned CMS.</p></div>
         </div>
+        <span className={`badge ${canEdit ? 'success' : ''}`}>{accessLabel} access</span>
       </div>
+
+      {!canEdit ? <div className="callout">You have read-only Content access for this Project. An editor can author and publish; a manager is required for permanent deletion.</div> : null}
 
       <div className="stats-grid">
         <div className="stat-card"><div className="stat-label">Content types</div><div className="stat-value">{workspace.models.length}</div><div className="stat-meta">Schemas in this project</div></div>
@@ -112,7 +118,7 @@ export default async function ProjectContentPage({ params, searchParams }: { par
       <section className="detail-card">
         <div className="detail-card-header"><div><h2>Media library</h2><p>Images up to 10 MiB with generated thumbnail, medium and large variants. Public delivery is explicit.</p></div><span className="badge">{media.length} assets</span></div>
         <div className="detail-card-body">
-          <details className="create-drawer">
+          {canEdit ? <details className="create-drawer">
             <summary className="button">+ Upload image</summary>
             <div className="drawer-content">
               <form action={async (formData) => { 'use server'; await uploadMediaAction(params.projectId, formData) }}>
@@ -125,9 +131,9 @@ export default async function ProjectContentPage({ params, searchParams }: { par
                 <button className="primary" type="submit">Upload image</button>
               </form>
             </div>
-          </details>
+          </details> : null}
 
-          {media.length === 0 ? <div className="empty-state"><strong>No media</strong>Upload the first image for this project.</div> : (
+          {media.length === 0 ? <div className="empty-state"><strong>No media</strong>{canEdit ? 'Upload the first image for this project.' : 'No media is configured for this project.'}</div> : (
             <div className="resource-list">
               {media.map((asset) => (
                 <article className="resource-card" key={asset.id}>
@@ -138,7 +144,7 @@ export default async function ProjectContentPage({ params, searchParams }: { par
                   {asset.caption ? <div className="resource-meta">{asset.caption}</div> : null}
                   <div className="action-row">
                     {asset.public_read && asset.url && publicBase ? <a className="button small" href={`${publicBase}${asset.url}`} target="_blank" rel="noreferrer">View image ↗</a> : null}
-                    <details className="resource-editor">
+                    {canEdit ? <details className="resource-editor">
                       <summary className="button small">Edit asset</summary>
                       <div className="resource-editor-body">
                         <form action={async (formData) => { 'use server'; await updateMediaAction(params.projectId, asset.id, formData) }}>
@@ -147,12 +153,12 @@ export default async function ProjectContentPage({ params, searchParams }: { par
                           <label className="check-label"><input name="public_read" type="checkbox" defaultChecked={asset.public_read} /> Allow public delivery</label>
                           <button type="submit">Save media details</button>
                         </form>
-                        <form action={async (formData) => { 'use server'; await deleteMediaAction(params.projectId, asset.id, formData) }}>
+                        {canManage ? <form action={async (formData) => { 'use server'; await deleteMediaAction(params.projectId, asset.id, formData) }}>
                           <label className="check-label"><input type="checkbox" name="confirm_delete" required /> Confirm permanent deletion of original and variants</label>
                           <button className="danger" type="submit">Delete media</button>
-                        </form>
+                        </form> : null}
                       </div>
-                    </details>
+                    </details> : null}
                   </div>
                 </article>
               ))}
@@ -161,17 +167,17 @@ export default async function ProjectContentPage({ params, searchParams }: { par
         </div>
       </section>
 
-      <FormsSection projectId={params.projectId} workspace={forms} publicBase={publicBase} />
+      <FormsSection projectId={params.projectId} workspace={forms} publicBase={publicBase} canEdit={canEdit} canManage={canManage} />
 
       <section className="detail-card">
         <div className="detail-card-header"><div><h2>Content types &amp; records</h2><p>Create stable schemas, edit their fields over time, and manage the complete draft/publish/archive lifecycle.</p></div><span className="badge">{workspace.models.length} types</span></div>
         <div className="detail-card-body">
-          <details className="create-drawer">
+          {canEdit ? <details className="create-drawer">
             <summary className="button">+ New content type</summary>
             <div className="drawer-content"><ContentModelForm projectId={params.projectId} models={workspace.models} components={componentModels} /></div>
-          </details>
+          </details> : null}
 
-          {workspace.models.length === 0 ? <div className="empty-state"><strong>No content types</strong>Create a schema for pages, collections or reusable components.</div> : (
+          {workspace.models.length === 0 ? <div className="empty-state"><strong>No content types</strong>{canEdit ? 'Create a schema for pages, collections or reusable components.' : 'No content types are configured for this project.'}</div> : (
             <div className="resource-list">
               {workspace.models.map((model) => {
                 const records = workspace.records.filter((record) => record.model_id === model.id)
@@ -182,19 +188,19 @@ export default async function ProjectContentPage({ params, searchParams }: { par
                       <div><h3>{model.name}</h3><div className="resource-meta">{model.description || 'No description'} · <code>{model.slug}</code> · schema v{model.schema_version}</div></div>
                       <div className="action-row"><span className="badge info">{model.content_role}</span><span className={`badge ${model.status === 'active' ? 'success' : 'warning'}`}>{model.status}</span><span className={`badge ${model.public_read ? 'success' : ''}`}>{model.public_read ? 'Public published records' : 'Private'}</span><span className="badge">{records.length} on page</span></div>
                     </div>
-                    <div className="content-lifecycle">
-                      <details className="resource-editor"><summary className="button small">Edit content type</summary><div className="resource-editor-body"><ContentModelForm projectId={params.projectId} model={model} models={workspace.models} components={componentModels.filter((component) => component.id !== model.id)} /></div></details>
-                      <form action={async () => { 'use server'; await setContentModelStatusAction(params.projectId, model.id, model.status === 'active' ? 'archived' : 'active') }}><button className="small" type="submit">{model.status === 'active' ? 'Archive type' : 'Restore type'}</button></form>
-                    </div>
-                    <details className="content-danger-zone"><summary>Danger zone</summary><form action={async (formData) => { 'use server'; await deleteContentModelAction(params.projectId, model.id, formData) }}><p className="muted">Permanent deletion is only allowed when the type has no records.</p><label className="check-label"><input type="checkbox" name="confirm_delete" required /> Confirm permanent deletion</label><button className="danger small" type="submit">Delete content type</button></form></details>
+                    {canEdit || canManage ? <div className="content-lifecycle">
+                      {canEdit ? <details className="resource-editor"><summary className="button small">Edit content type</summary><div className="resource-editor-body"><ContentModelForm projectId={params.projectId} model={model} models={workspace.models} components={componentModels.filter((component) => component.id !== model.id)} /></div></details> : null}
+                      {canManage ? <form action={async () => { 'use server'; await setContentModelStatusAction(params.projectId, model.id, model.status === 'active' ? 'archived' : 'active') }}><button className="small" type="submit">{model.status === 'active' ? 'Archive type' : 'Restore type'}</button></form> : null}
+                    </div> : null}
+                    {canManage ? <details className="content-danger-zone"><summary>Danger zone</summary><form action={async (formData) => { 'use server'; await deleteContentModelAction(params.projectId, model.id, formData) }}><p className="muted">Permanent deletion is only allowed when the type has no records.</p><label className="check-label"><input type="checkbox" name="confirm_delete" required /> Confirm permanent deletion</label><button className="danger small" type="submit">Delete content type</button></form></details> : null}
 
-                    {model.content_role === 'component' ? <div className="callout" style={{ marginTop: 12 }}>Reusable visual block schema. Allow it on a page type to make it appear in that page's visual editor.</div> : model.status === 'archived' ? <div className="callout" style={{ marginTop: 12 }}>This content type is archived. Restore it before creating or editing records.</div> : (
+                    {model.content_role === 'component' ? <div className="callout" style={{ marginTop: 12 }}>Reusable visual block schema. Allow it on a page type to make it appear in that page's visual editor.</div> : model.status === 'archived' ? <div className="callout" style={{ marginTop: 12 }}>This content type is archived. A manager can restore it before records are edited again.</div> : (
                       <>
-                        <details className="resource-editor" style={{ marginTop: 12 }}>
+                        {canEdit ? <details className="resource-editor" style={{ marginTop: 12 }}>
                           <summary className="button small">+ New record</summary>
                           <div className="resource-editor-body"><RecordForm projectId={params.projectId} model={model} components={allowedComponents} workspace={workspace} media={media} publicBase={publicBase} /></div>
-                        </details>
-                        {records.length === 0 ? <div className="empty-state"><strong>No records on this page</strong>{recordPagination.total_pages > 1 ? 'This content type may have records on another result page.' : `Create the first ${model.name.toLowerCase()} record.`}</div> : (
+                        </details> : null}
+                        {records.length === 0 ? <div className="empty-state"><strong>No records on this page</strong>{recordPagination.total_pages > 1 ? 'This content type may have records on another result page.' : canEdit ? `Create the first ${model.name.toLowerCase()} record.` : 'No records are available.'}</div> : (
                           <div className="resource-list" style={{ marginTop: 12 }}>
                             {records.map((record) => {
                               const label = String(record.values.title ?? record.values.name ?? record.values.slug ?? record.id)
@@ -203,9 +209,9 @@ export default async function ProjectContentPage({ params, searchParams }: { par
                                   <div className="resource-card-head"><div><h4>{label}</h4><div className="resource-meta">{record.published_at ? `Published ${new Date(record.published_at).toLocaleString()}` : 'Not published yet'}</div></div><div className="action-row"><span className={`badge ${record.editorial_status === 'published' ? 'success' : 'warning'}`}>{record.editorial_status}</span><span className={`badge ${record.lifecycle_status === 'active' ? '' : 'warning'}`}>{record.lifecycle_status}</span></div></div>
                                   <div className="action-row">
                                     <Link className="button small" href={`/projects/${params.projectId}/content/preview/${record.id}`}>Preview</Link>
-                                    {record.lifecycle_status === 'active' ? <details className="resource-editor"><summary className="button small">Edit record</summary><div className="resource-editor-body"><RecordForm projectId={params.projectId} model={model} record={record} components={allowedComponents} workspace={workspace} media={media} publicBase={publicBase} /></div></details> : null}
-                                    <form action={async () => { 'use server'; await setContentRecordStatusAction(params.projectId, record.id, record.lifecycle_status === 'active' ? 'archived' : 'active') }}><button className="small" type="submit">{record.lifecycle_status === 'active' ? 'Archive' : 'Restore'}</button></form>
-                                    <details className="resource-editor"><summary className="button small danger">Delete</summary><div className="resource-editor-body"><form action={async (formData) => { 'use server'; await deleteContentRecordAction(params.projectId, record.id, formData) }}><label className="check-label"><input type="checkbox" name="confirm_delete" required /> Permanently delete this record</label><button className="danger small" type="submit">Delete record</button></form></div></details>
+                                    {canEdit && record.lifecycle_status === 'active' ? <details className="resource-editor"><summary className="button small">Edit record</summary><div className="resource-editor-body"><RecordForm projectId={params.projectId} model={model} record={record} components={allowedComponents} workspace={workspace} media={media} publicBase={publicBase} /></div></details> : null}
+                                    {canEdit ? <form action={async () => { 'use server'; await setContentRecordStatusAction(params.projectId, record.id, record.lifecycle_status === 'active' ? 'archived' : 'active') }}><button className="small" type="submit">{record.lifecycle_status === 'active' ? 'Archive' : 'Restore'}</button></form> : null}
+                                    {canManage ? <details className="resource-editor"><summary className="button small danger">Delete</summary><div className="resource-editor-body"><form action={async (formData) => { 'use server'; await deleteContentRecordAction(params.projectId, record.id, formData) }}><label className="check-label"><input type="checkbox" name="confirm_delete" required /> Permanently delete this record</label><button className="danger small" type="submit">Delete record</button></form></div></details> : null}
                                   </div>
                                 </article>
                               )
