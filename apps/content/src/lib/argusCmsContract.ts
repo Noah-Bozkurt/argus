@@ -18,6 +18,7 @@ export type ContentRole = 'collection' | 'page' | 'component'
 export type ArgusCmsIdentity = {
   organizationId: string
   userId: string
+  workspaceUserId?: string
 }
 
 export function internalIdentity(request: Request): ArgusCmsIdentity | null {
@@ -28,7 +29,10 @@ export function internalIdentity(request: Request): ArgusCmsIdentity | null {
 
   const organizationId = request.headers.get('x-argus-org-id') ?? ''
   const userId = request.headers.get('x-argus-user-id') ?? ''
-  return UUID_PATTERN.test(organizationId) && UUID_PATTERN.test(userId) ? { organizationId, userId } : null
+  const workspaceUserId = request.headers.get('x-argus-workspace-user-id') ?? ''
+  if (!UUID_PATTERN.test(organizationId) || !UUID_PATTERN.test(userId)) return null
+  if (workspaceUserId && !UUID_PATTERN.test(workspaceUserId)) return null
+  return { organizationId, userId, ...(workspaceUserId ? { workspaceUserId } : {}) }
 }
 
 export function normalizeModelInput(input: unknown): {
