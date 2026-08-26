@@ -31,12 +31,14 @@ const validateRelation: CollectionBeforeValidateHook = async ({ data, req }) => 
       id: sourceRecordID,
       depth: 0,
       overrideAccess: true,
+      req,
     }),
     req.payload.findByID({
       collection: 'data-records',
       id: targetRecordID,
       depth: 0,
       overrideAccess: true,
+      req,
     }),
   ]) as Array<{ project?: unknown; model?: unknown }>
 
@@ -56,6 +58,7 @@ const validateRelation: CollectionBeforeValidateHook = async ({ data, req }) => 
     id: sourceModelID,
     depth: 0,
     overrideAccess: true,
+    req,
   }) as { fields?: RelationField[] }
   const field = (sourceModel.fields ?? []).find(
     (candidate) => candidate.key === fieldKey && candidate.type === 'relationship',
@@ -73,6 +76,7 @@ const validateRelation: CollectionBeforeValidateHook = async ({ data, req }) => 
     limit: 1,
     overrideAccess: true,
     pagination: false,
+    req,
     where: {
       and: [
         { sourceRecord: { equals: sourceRecordID } },
@@ -92,6 +96,7 @@ const validateRelation: CollectionBeforeValidateHook = async ({ data, req }) => 
       limit: 1,
       overrideAccess: true,
       pagination: false,
+      req,
       where: {
         and: [
           { sourceRecord: { equals: sourceRecordID } },
