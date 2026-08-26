@@ -1,184 +1,190 @@
 # Content Platform
 
-Argus uses Payload as the application-data and content layer instead of building a second generic CMS/database framework inside the Rust control plane.
+Argus uses Payload as its project-scoped application-data and CMS engine instead of implementing a second generic database/CMS framework in the Rust control plane. For author-facing instructions, see [Using the Argus CMS](cms.md).
 
-## Service boundary
+## Service and data boundary
 
-`apps/content` is a standalone Payload 3 / Next.js service. It can run alongside the older operator web application without forcing both applications onto the same Next.js version.
+`apps/content` is a standalone Payload 3 / Next.js service. It shares the PostgreSQL instance with the Control API but owns the isolated `argus_content` schema. Rust control-plane tables remain owned by the Rust services.
 
-Payload uses the same PostgreSQL database instance as the Control API but is isolated to the `argus_content` schema. Control-plane tables remain owned by the Rust services.
+The Argus Control API is the source of truth for Project identity. A background synchronization mirrors each Argus Project into a Payload `project-space`; Payload does not become a second project-management authority.
 
-Production configuration uses committed Payload migrations; automatic development schema push must not be treated as the production migration strategy.
+Production schema changes use committed Payload migrations. Development schema push is not a production migration strategy.
 
-## Project ownership and synchronization
+## Workspace identity and Project authorization
 
-The Argus Control API remains the source of truth for Project identity. Payload stores a mirrored `project-space` containing the Argus Project UUID, organization boundary, name/status metadata and an optional client reference.
+Payload `workspace-users` are the shared human identity provider for the Argus Web application and Payload CMS. Organization roles are `owner`, `admin`, `member` and `client`. Project content permissions are separate:
 
-A background organization-level job periodically reconciles current Argus Projects into Payload. Existing projects are therefore backfilled as well as newly created ones.
+- `manager` — manage Project structure/memberships and destructive content lifecycle actions;
+- `editor` — create and edit Project data/content, media and forms;
+- `viewer` — read Project data/content, media, forms and submissions.
 
-Synchronization is idempotent and bounded. Payload unavailability must not block creation of a Project in the core Control API; the worker can retry synchronization later.
+Organization owners/admins inherit access to Projects in their organization. Other users require an explicit Project membership.
 
-## Workspace users and project roles
+The native Argus Content UI never receives the internal Content service credential. Server actions resolve the current `payload-token`, fetch the authenticated workspace user and forward that user's organization, Argus user ID and Payload workspace-user ID together with the server-side machine credential.
 
-Payload has its own authenticated workspace users scoped to an organization. Project membership is separate from organization membership.
+Every privileged native Content route then re-resolves the workspace user inside Payload and checks the required Project role. `overrideAccess` is used only after that explicit human + organization + Project authorization boundary has passed. A caller cannot gain native CMS access merely by presenting a valid machine token plus arbitrary identity headers.
 
-Project roles:
+This same authorization layer protects the shared App Data handler, CMS, media, forms and private form CSV exports.
 
-- `manager` — manage project data structure/memberships;
-- `editor` — edit project application/content data;
-- `viewer` — read project data.
+## Models
 
-Organization admins can manage their organization while access filters prevent cross-organization reads/writes. Project scope is immutable after creation for records/models where moving data between projects would bypass authorization assumptions.
+`data-models` are dynamic Project-scoped schemas. A model has:
 
-Client identity is optional metadata. Personal projects do not need a client object to use any App Data/CMS capability.
+- stable immutable slug;
+- immutable kind (`data` or `content`);
+- immutable content role (`collection`, `page` or `component` for content models);
+- active/archived lifecycle;
+- up to 50 typed fields;
+- a schema version.
 
-## App Data models
+Supported fields are short text, long text, number, boolean, date/date-time, JSON, relationship and media.
 
-`data-models` define dynamic project-scoped schemas. Models have a stable slug, kind, status and versioned field definitions.
+The native schema editor supports adding, removing and reordering fields. Relationship targets must be models in the same Project. Page models can allow only component schemas from the same Project.
 
-Supported scalar concepts include text, long text, number, boolean, date/date-time and JSON. Relationship fields point to another data model in the same project.
+`schemaVersion` increases only when the actual schema shape changes (field definitions or a Page's allowed Component set). Display-name, description, public-read and lifecycle-only edits do not create a false schema revision.
 
-Model slugs and model kind are immutable after creation because they form stable API/storage semantics. Schema updates increment the model schema version.
+Models can be archived/restored. Permanent deletion requires `manager` access and is rejected while records still exist.
 
-## Records
+## Data versus editorial content
 
-`data-records` hold validated scalar values for a selected model. Record writes validate:
+Models share one substrate but have different semantics:
 
-- project/model scope;
-- archived model state;
-- known field keys;
-- scalar type compatibility;
-- required scalar fields;
-- separation of relationship fields from scalar JSON.
+- `kind=data` — application data, direct-write and always-published semantics;
+- `kind=content` — editorial drafts/publication.
 
-Record project/model ownership is immutable after creation.
+The internal App Data route re-exports the same scoped model/record implementation using the `data` kind. It does not maintain a parallel authorization or persistence implementation.
 
-The Argus-native internal App Data API exposes these validated models and records at `/internal/argus/data/projects/:projectId`. It uses the same high-entropy service credential and explicit Organization/User headers as the Content workflow, resolves the mirrored Project before every operation and never exposes Payload collection internals to the browser. App Data models are always private collections, writes publish immediately and relationship validation remains project-local. The Content route remains editorial and draft-aware; the two APIs share Payload's model/record/relation substrate rather than maintaining parallel storage.
+## Records, drafts and publication
+
+`data-records` validate values against their model. Project/model ownership is immutable. A record has two separate state dimensions:
+
+- Payload editorial `_status=draft|published`;
+- Argus lifecycle `status=active|archived`.
+
+Content records retain up to 50 Payload versions. Application-data records are forced published.
+
+The native editor supports create/edit, draft save, publish, archive/restore and permanent delete. Archived records are not delivered publicly. Permanent deletion requires `manager` access.
+
+Record values and the complete relationship edge set are written in one Payload/PostgreSQL transaction. A failed relationship replacement therefore rolls back the record change instead of leaving partial relationship state. Permanent record deletion removes incoming/outgoing relationship edges and the record in one transaction as well.
 
 ## Relationships
 
-`data-relations` store explicit record-to-record relationships rather than hiding foreign references inside arbitrary JSON.
+`data-relations` store explicit record-to-record edges instead of hiding foreign references in arbitrary JSON. Validation enforces:
 
-The relationship validator checks:
+- same Project for source and target;
+- declared relationship field on the source model;
+- declared target model;
+- required/cardinality rules;
+- active target record.
 
-- source and target records belong to the same project;
-- the source model actually declares the relationship field;
-- the target record belongs to the relationship's declared target model;
-- single-value relationships do not receive multiple targets.
+Public relationship expansion is opt-in with `?expand=relationships`, limited to one bounded level, and only returns independently public/published/active targets. Draft, private, archived and cross-Project targets are omitted.
 
-The native Content workspace exposes relationship target/cardinality settings and project-local record pickers. Relationship writes are validated before persistence: the field must belong to the source model, every target must use the declared target model in the same Project, required/cardinality rules are enforced, and immutable edges are replaced as a set when a record is saved.
+Component-block relationship fields are still not stored as `data-relations`; blocks should use scalar/media configuration and site renderers can query related public collections independently.
 
-Public reads do not expand relationships by default. Callers may explicitly request one bounded level with `?expand=relationships`. Expansion is capped at 100 edges per response and includes a target only when its Project, model and record are active, the target model permits public reads, and the target record is independently published. Draft, private, archived and cross-project targets are omitted rather than leaked; recursive expansion is not supported.
+## Pages, Components and the visual editor
 
-## Data vs content
+Content models have three roles:
 
-A model's `kind` distinguishes two semantics on the same substrate:
+- `collection` — repeatable standalone entries;
+- `component` — reusable embedded page-block schema, no standalone records;
+- `page` — normal fields plus an ordered list of allowed component blocks.
 
-- `data` — application data, direct-write semantics;
-- `content` — editorial content, draft/publish semantics.
+A Page layout is bounded to 100 blocks. Every block has a stable UUID, component slug and values validated against the component's current schema. Unknown, archived or disallowed components are rejected by the backend.
 
-This avoids maintaining two unrelated databases for structurally similar project data.
+The native visual editor is a structured canvas rather than a free-form HTML designer. It includes:
 
-## CMS drafts and publication
+- a Project component palette;
+- drag-and-drop block ordering;
+- desktop/tablet/mobile canvas widths;
+- structured live previews using authored text/media;
+- a typed field inspector;
+- duplicate/remove actions.
 
-`data-records` uses Payload Versions/Drafts and retains up to 50 versions per record.
+The website maps component slugs such as `hero` or `cta` to real frontend components. Argus therefore owns authored layout/content while the repository remains the source of truth for rendering, CSS and application behavior. Stored content is not executable HTML.
 
-For `kind=data`, Argus forces Payload `_status=published`, preserving immediate application-data behavior.
+## Native workspace loading
 
-For `kind=content`:
+The internal CMS workspace returns models plus a paginated record set. Records are loaded 100 per page and relations are scoped to the loaded records. This removes the previous silent 500-record workspace truncation and keeps large Projects bounded.
 
-- draft edits can exist without replacing the currently published main record;
-- publishing updates the main record;
-- `publishedAt` tracks draft-to-published transitions;
-- manual draft saves are used in CMS V1.
+Public content delivery has independent pagination and is not coupled to the native authoring workspace page size.
 
-Autosave is intentionally not enabled yet because Argus performs dynamic required-field validation; partial autosave needs explicit draft-aware validation rules first.
+## Public content API
 
-The existing Argus record lifecycle remains `status=active|archived`. Payload's editorial `_status=draft|published` is a separate concept.
+Content is private by default. Public delivery requires:
 
-## Public content access
+- active mirrored Project;
+- `kind=content`;
+- active model;
+- `publicRead=true`;
+- active record;
+- published Payload version.
 
-Content is private by default. A model must explicitly set `publicRead=true`, be active and be `kind=content` before its published records can be returned through the public endpoint.
+Endpoint:
 
 ```text
 GET /public/projects/:argusProjectId/content/:modelSlug
 ```
 
-The endpoint also requires an active mirrored Project and active/published record. It returns only the public record ID, scalar values, publication/update timestamps and pagination metadata. Internal organization/project IDs, memberships, users, drafts and model internals are not included.
+Pagination is bounded to 100 records per request. Public responses expose only content-facing values/layout, publication timestamps and pagination metadata. Internal organizations, memberships, users and drafts are not returned.
 
-Pagination is bounded. Public CORS/cache headers are intentional because only explicitly public content reaches this route.
-
-## Argus-native content workflow
-
-The Project workspace links to an Argus-native Content screen. Operators can create project-scoped content types with typed scalar fields, create and edit records, save drafts, and publish without navigating Payload collections or copying internal IDs. Public visibility remains an explicit content-type setting; draft records are never returned by the public endpoint.
-
-Every saved record has an operator preview inside the protected Argus Web interface. The preview renders stored values as text/structured data through React rather than injecting stored HTML, so draft content cannot introduce executable markup. Published records on public content types also link to their real public read endpoint; drafts never receive a public link.
-
-Content schemas have an explicit role:
-
-- `collection` stores repeatable standalone entries;
-- `component` defines a reusable block schema and cannot create standalone records or be public by itself;
-- `page` stores page fields plus an ordered layout of explicitly allowed component schemas.
-
-The native page editor can add, edit, reorder and remove typed blocks. Every block has a stable UUID, component slug and values validated against the current component schema. Page schemas can only allow active component schemas from the same Project, layouts are bounded to 100 blocks, and unknown/disallowed blocks fail the write. The protected preview renders draft page fields and blocks; published public page responses include the same validated layout without exposing Payload relationship IDs or model internals.
-
-The Web server talks to Payload through `/internal/argus/cms/projects/:projectId`. This route is not a public browser API. It requires the high-entropy internal content token plus Argus organization and user headers, and resolves the mirrored Project by both Argus Project UUID and organization before every query or mutation. Payload access checks are bypassed only after that explicit server-to-server scope check; normal Payload user endpoints retain their existing membership rules.
-
-The native editor supports scalar fields (text, long text, number, boolean, date/date-time and JSON) plus single/multiple media pickers in collection records, page fields and component blocks. Collection/page schemas can also declare single- or multi-value relationships and authors select targets from active records in the same Project. Component-block relationship fields remain a future richer-editor extension.
+CORS is intentionally permissive for this explicitly public read surface. A public website must never receive the internal Content synchronization credential.
 
 ## Media library
 
-Each Project has an Argus-native image library backed by Payload uploads. Operators can upload JPEG, PNG, WebP and AVIF images up to 10 MiB with required alternative text and an optional caption. Payload records the original dimensions and generates bounded 320 px thumbnail, 960 px medium and 1920 px large variants without enlarging the source.
+Each Project has a Payload-backed image library. Accepted formats are JPEG, PNG, WebP and AVIF up to 10 MiB. Alternative text is required; captions are optional. Payload generates bounded thumbnail, medium and large variants without enlarging the source.
 
-Media ownership is immutable and scoped to the mirrored Project and organization. The internal list/upload/update/delete API repeats that scope check before using privileged Payload local operations. Anonymous file delivery is denied unless the individual asset has `publicRead=true` and its Project is active; changing either condition revokes delivery immediately. Private and public assets can coexist in the same Project. Caddy exposes only Payload's checked `/api/media/file/*` delivery handler on the public content hostname, not the Payload admin or generic collection API.
+Native media permissions are:
 
-Content and component schemas can declare single- or multi-image media fields. The native editors select from the current Project's library, and record validation resolves every UUID against that same Project before saving. Public content never returns stored references directly: it emits metadata and variant descriptors only for assets currently marked public, while private, deleted or cross-Project assets become `null` or are omitted from multi-value results. The same sanitization applies inside component blocks and explicitly expanded related records.
+- viewer: list;
+- editor: upload/edit metadata and public visibility;
+- manager: permanent delete.
 
-Production Compose stores originals and generated variants in the named `content_media` volume mounted at `/app/media`, so replacing the immutable content container does not discard uploads. Deleting an asset removes its original and generated files as well as its metadata. This persistence is not yet a media backup: full volume backup/restore remains part of the broader disaster-recovery roadmap.
+Media ownership is immutable. Content records and component blocks can reference only media in the same Project. Public content resolves media metadata only for assets currently marked public; private/deleted assets do not leak through stale UUID references.
+
+Production media bytes live in the persistent `content_media` volume. This is persistence, not a complete media backup strategy.
 
 ## Forms and submissions
 
-Forms are Project-owned Payload definitions with a stable public slug, draft/published/archived lifecycle, success message and up to 30 typed fields. Supported fields are short text, email, long text, number, boolean/consent and bounded select choices. The Argus-native Content workspace creates and publishes forms, shows their public endpoint, paginates private submissions and lets operators triage submissions as new, reviewed, spam or archived. An explicitly confirmed scoped deletion permanently removes a submission when retention is no longer appropriate.
+Forms are Project-owned definitions with a stable slug, success message and `draft|published|archived` lifecycle. Supported fields are short text, email, long text, number, boolean/consent and bounded select choices.
+
+Public endpoints:
 
 ```text
 GET  /public/projects/:argusProjectId/forms/:formSlug
 POST /public/projects/:argusProjectId/forms/:formSlug
 ```
 
-Only active Projects and published forms resolve publicly. The GET response exposes the renderable schema without Payload IDs. POST accepts a JSON object containing `values`; unknown keys, missing required values, invalid email/type/choice values and bodies above 64 KiB are rejected. CORS allows credential-free use from a separately hosted Project site. The optional `_company` honeypot receives a non-distinguishing accepted response without creating a submission.
+Only active Projects and published forms resolve publicly. Public POST validates body size, known fields, required fields, types and choices. A honeypot and durable PostgreSQL-backed rate limit protect submissions without storing raw source addresses.
 
-Submission values are never exposed by a public read endpoint. Argus derives an HMAC source fingerprint from the proxy-provided address and Payload secret; raw source addresses are not stored. A PostgreSQL-backed fixed ten-minute window permits ten submissions per form/source. Unique durable rate slots prevent concurrent requests from racing past the cap, and rate state therefore survives application restarts. Operational database failures return a retryable service-unavailable response rather than being mislabeled as throttling.
+Submission values have no anonymous read endpoint. Native permissions are viewer for private reads/exports, editor for triage/form lifecycle, and manager for permanent submission deletion.
 
-Operators can download a private CSV for one form through the Argus Web surface. The Web route keeps the Content integration credential server-side, while Content revalidates Organization, Project and form ownership. Exports use the form's stable field order, are capped at 10,000 submissions, disable caching/sniffing, and prefix spreadsheet-formula-like cells before RFC-style CSV quoting. Source/rate fingerprints are never included.
+CSV export is capped at 10,000 rows, preserves form field order, prevents spreadsheet-formula injection, disables caching/sniffing and excludes rate/source fingerprints.
 
-## Production migrations
+## Site integration
 
-Payload schema changes are committed as migrations under `apps/content/src/migrations/`.
+Sites consume public content using the Project UUID and model slug. Static-site generators such as Astro can fetch during build; SSR sites can fetch on each request or according to their own cache policy.
 
-The initial App Data migration was generated with Payload and validated on PostgreSQL 16. The CMS migration also starts from Payload-generated schema/snapshot output but includes an explicit ordering correction for upgrading existing App Data records safely.
+Argus does not currently trigger arbitrary external site rebuilds when a record is published. A static deployment therefore needs its normal rebuild/deploy mechanism before newly published content appears.
 
-During CMS upgrade:
+See [Using the Argus CMS](cms.md) for a concrete integration pattern and a migration design based on `Noah-Bozkurt/youpspace.com`.
 
-- existing record lifecycle `status` values are preserved;
-- the existing lifecycle enum is renamed for clarity;
-- Payload receives a separate draft/published enum for `_status`;
-- existing records are marked published when `_status` is introduced so previously visible app-data does not disappear;
-- the versions table and public-content fields are added.
+## Migrations and runtime validation
 
-The page/component migration is additive: existing content models default to `collection`, existing current/versioned records receive an empty layout, and the page allowlist uses a Payload-managed self-relationship table.
+Payload schema changes live under `apps/content/src/migrations/`. CI validates migrations against PostgreSQL 16 and starts a real Content runtime.
 
-The media migration adds a separate project-scoped upload collection and Payload lock relationship. Media bytes remain outside PostgreSQL in the persistent media volume.
+The Content runtime suite covers CMS drafts/publication, relationships, page/component layouts, media, forms and first-server acceptance. Runtime CI bootstraps a real owner account so the same human/Project authorization checks used in production are active during acceptance tests.
 
-The forms migration adds definitions, normalized field/options rows and private submission records. Its unique rate-key index is part of the abuse-control correctness boundary.
+Contract tests additionally cover internal Project role ranking and organization isolation.
 
-Migration validation covers a fresh PostgreSQL 16 database, schema isolation, repeated/idempotent production startup and a production Payload build.
+## Current limits
 
-## What CMS V1 is not
+The Content platform is still pre-production. Notable limits include:
 
-CMS V1 now includes a basic Argus-native model, draft/publication workflow and typed block editor. It does not yet include:
+- visual previews are structured approximations; they do not iframe/render arbitrary external site templates inside Argus;
+- no autosave for partially invalid dynamic records yet;
+- no client approval workflow;
+- no recursive relationship graph expansion;
+- no automatic external-site rebuild hook on publish;
+- no general rich portable long-form field beyond current typed values/JSON/long text.
 
-- rich drag-and-drop or site-template-aware visual design (the current editor uses explicit add/move/remove controls and a safe generic preview);
-- client approvals/portal;
-- recursive or arbitrarily deep public relationship graph expansion.
-
-Those features should build on the existing project/data/content boundaries instead of introducing new ownership models.
+These limits should extend the existing Project/content ownership model rather than introduce parallel CMS authority.

@@ -10,6 +10,22 @@ import { resolveProjectScope } from '@/lib/projectScope'
 
 const KEY_PATTERN = /^[a-z][a-z0-9_]*$/
 
+function fieldShape(rawField: Record<string, unknown>) {
+  return {
+    key: String(rawField.key ?? '').trim().toLowerCase(),
+    label: String(rawField.label ?? ''),
+    type: String(rawField.type ?? ''),
+    required: rawField.required === true,
+    hasMany: rawField.hasMany === true,
+    targetModel: relationshipID(rawField.targetModel),
+    settings: rawField.settings ?? null,
+  }
+}
+
+function componentShape(values: unknown[]) {
+  return values.map((value) => relationshipID(value)).filter((id): id is string | number => id !== null).map(String).sort()
+}
+
 const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation, originalDoc, req }) => {
   if (!data) return data
   if (operation === 'update' && originalDoc) {
@@ -34,6 +50,7 @@ const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation
     limit: 1,
     overrideAccess: true,
     pagination: false,
+    req,
     where: {
       and: [
         { project: { equals: scope.projectID } },
@@ -72,6 +89,7 @@ const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation
         id: targetModelID,
         depth: 0,
         overrideAccess: true,
+        req,
       }) as { project?: unknown }
       if (relationshipID(targetModel.project) !== scope.projectID) {
         throw new Error(`Relationship field '${key}' cannot target a model in another project`)
@@ -87,20 +105,31 @@ const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation
   if (!['collection', 'page', 'component'].includes(contentRole)) {
     throw new Error('Invalid content role')
   }
-  const allowedComponents = contentRole === 'page' && Array.isArray(data.allowedComponents)
-    ? data.allowedComponents.map(relationshipID).filter((id): id is string | number => id !== null)
-    : []
+  const rawAllowedComponents: unknown[] = contentRole === 'page' && Array.isArray(data.allowedComponents)
+    ? data.allowedComponents
+    : contentRole === 'page' && Array.isArray(originalDoc?.allowedComponents)
+      ? originalDoc.allowedComponents
+      : []
+  const allowedComponents = rawAllowedComponents
+    .map((value) => relationshipID(value))
+    .filter((id): id is string | number => id !== null)
   if (new Set(allowedComponents.map(String)).size !== allowedComponents.length) {
     throw new Error('Allowed component schemas must be unique')
   }
   for (const componentID of allowedComponents) {
     const component = await req.payload.findByID({
-      collection: 'data-models', id: componentID, depth: 0, overrideAccess: true,
+      collection: 'data-models', id: componentID, depth: 0, overrideAccess: true, req,
     }) as { project?: unknown; kind?: string; contentRole?: string }
     if (relationshipID(component.project) !== scope.projectID || component.kind !== 'content' || component.contentRole !== 'component') {
       throw new Error('Page schemas can only allow component schemas from the same project')
     }
   }
+
+  const schemaChanged = operation === 'update' && originalDoc
+    ? JSON.stringify((fields as Array<Record<string, unknown>>).map(fieldShape)) !== JSON.stringify(((originalDoc.fields ?? []) as Array<Record<string, unknown>>).map(fieldShape))
+      || JSON.stringify(componentShape(allowedComponents)) !== JSON.stringify(componentShape(Array.isArray(originalDoc.allowedComponents) ? originalDoc.allowedComponents : []))
+    : true
+
   data.project = scope.projectID
   data.organizationId = scope.organizationId
   data.argusProjectId = scope.argusProjectId
@@ -110,7 +139,7 @@ const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation
   data.allowedComponents = allowedComponents
   data.publicRead = kind === 'content' && contentRole !== 'component' && data.publicRead === true
   data.schemaVersion = operation === 'update'
-    ? Number(originalDoc?.schemaVersion ?? 1) + 1
+    ? Number(originalDoc?.schemaVersion ?? 1) + (schemaChanged ? 1 : 0)
     : 1
   return data
 }

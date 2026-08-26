@@ -71,8 +71,10 @@ async function validateMediaValues(req: PayloadRequest, projectID: string | numb
     totalReferences += ids.length
     if (totalReferences > 100) throw new Error('A record or component block can reference at most 100 media assets')
     for (const id of ids as string[]) {
-      const media = await req.payload.find({ collection: 'media', depth: 0, limit: 1, overrideAccess: true, pagination: false,
-        where: { and: [{ id: { equals: id } }, { project: { equals: projectID } }] } })
+      const media = await req.payload.find({
+        collection: 'media', depth: 0, limit: 1, overrideAccess: true, pagination: false, req,
+        where: { and: [{ id: { equals: id } }, { project: { equals: projectID } }] },
+      })
       if (media.docs.length !== 1) throw new Error(`Media reference '${key}' must belong to the same project`)
     }
   }
@@ -99,6 +101,7 @@ const validateRecord: CollectionBeforeValidateHook = async ({ data, operation, o
     id: modelID,
     depth: 0,
     overrideAccess: true,
+    req,
   }) as {
     project?: unknown
     schemaVersion?: number
@@ -125,7 +128,9 @@ const validateRecord: CollectionBeforeValidateHook = async ({ data, operation, o
   if (model.contentRole === 'page') {
     if (!Array.isArray(layout) || layout.length > 100) throw new Error('Page layout must contain at most 100 blocks')
     const componentIDs = (model.allowedComponents ?? []).map(relationshipID).filter((id): id is string | number => id !== null)
-    const components = await Promise.all(componentIDs.map((id) => req.payload.findByID({ collection: 'data-models', id, depth: 0, overrideAccess: true }))) as Array<{ slug?: string; status?: string; kind?: string; contentRole?: string; project?: unknown; fields?: ModelField[] }>
+    const components = await Promise.all(componentIDs.map((id) => req.payload.findByID({
+      collection: 'data-models', id, depth: 0, overrideAccess: true, req,
+    }))) as Array<{ slug?: string; status?: string; kind?: string; contentRole?: string; project?: unknown; fields?: ModelField[] }>
     const bySlug = new Map(components.filter((component) => component.status !== 'archived' && component.kind === 'content' && component.contentRole === 'component' && relationshipID(component.project) === scope.projectID && component.slug).map((component) => [component.slug as string, component]))
     data.layout = await Promise.all((layout as PageBlock[]).map(async (block) => {
       if (!isPlainObject(block) || typeof block.id !== 'string' || !UUID_PATTERN.test(block.id) || typeof block.component !== 'string') throw new Error('Page block identity is invalid')

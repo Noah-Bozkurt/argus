@@ -6,6 +6,7 @@ These are the canonical docs for the current Argus codebase. They should describ
 
 - [Installation](installation.md) — install a control plane, connect managed servers, verify an installation, update and uninstall.
 - [Using Argus](usage.md) — navigation and the main project/infrastructure workflows.
+- [Using the CMS](cms.md) — create Project content types, compose visual pages, publish records, use media/forms and integrate a website such as Astro.
 - [Authentication](authentication.md) — login, shared sessions, workspace roles and the current identity boundary.
 - [Roadmap](roadmap.md) — implemented scope, known limits and near-term work.
 
@@ -15,7 +16,7 @@ These are the canonical docs for the current Argus codebase. They should describ
 - [Projects & Delivery](projects-and-delivery.md) — projects, repositories, services, environments, deployments, sites and domains.
 - [Operations](operations.md) — server management, Docker/Compose, maintenance, monitoring, jobs, incidents, notifications and status pages.
 - [Security & Recovery](security-and-recovery.md) — privileged execution, firewall controls, desired state, backups and transactional recovery.
-- [Content Platform](content-platform.md) — Payload-backed application data, CMS workflows, media, forms and public content access.
+- [Content Platform](content-platform.md) — Payload-backed application data, CMS internals, media, forms and public content access.
 - [Development](development.md) — workspace layout, local development, checks, configuration and migrations.
 
 ## Installer

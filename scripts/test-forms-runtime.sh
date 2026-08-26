@@ -8,6 +8,7 @@ OTHER_ORG_ID="00000000-0000-4000-8000-000000000099"
 USER_ID="00000000-0000-4000-8000-000000000002"
 PROJECT_ID="00000000-0000-4000-8000-000000000005"
 INTERNAL="$CONTENT_URL/internal/argus/forms/projects/$PROJECT_ID"
+EXPORT_BASE="$CONTENT_URL/internal/argus/forms/exports/projects/$PROJECT_ID"
 PUBLIC="$CONTENT_URL/public/projects/$PROJECT_ID/forms/contact"
 auth=(-H "Authorization: Bearer $TOKEN" -H "X-Argus-Org-Id: $ORG_ID" -H "X-Argus-User-Id: $USER_ID")
 
@@ -68,13 +69,13 @@ jq -e --arg form "$form_id" --arg first "$first_id" '
 
 export_file="$(mktemp)"
 export_headers="$(mktemp)"
-curl -fsS -D "$export_headers" -o "$export_file" "${auth[@]}" "$INTERNAL/exports/$form_id"
+curl -fsS -D "$export_headers" -o "$export_file" "${auth[@]}" "$EXPORT_BASE/$form_id"
 grep -Fiq 'content-type: text/csv' "$export_headers"
 grep -Fiq 'content-disposition: attachment; filename="contact-submissions.csv"' "$export_headers"
 grep -Fq '"submission_id","status","submitted_at","email","topic","message"' "$export_file"
 grep -Fq '"'"'"'=2+2"' "$export_file"
 [[ "$(wc -l <"$export_file")" -eq 11 ]]
-cross_export="$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" -H "X-Argus-Org-Id: $OTHER_ORG_ID" -H "X-Argus-User-Id: $USER_ID" "$INTERNAL/exports/$form_id")"
+cross_export="$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" -H "X-Argus-Org-Id: $OTHER_ORG_ID" -H "X-Argus-User-Id: $USER_ID" "$EXPORT_BASE/$form_id")"
 [[ "$cross_export" == 404 ]] || { echo "cross-organization form export returned $cross_export" >&2; exit 1; }
 
 curl -fsS -X POST "$INTERNAL" "${auth[@]}" -H 'Content-Type: application/json' \
