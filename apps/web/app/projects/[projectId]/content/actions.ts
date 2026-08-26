@@ -2,15 +2,15 @@
 
 import { revalidatePath } from 'next/cache'
 
-import { createContentModel, createProjectForm, deleteFormSubmission, deleteMedia, saveContentRecord, updateFormSubmissionStatus, updateMedia, updateProjectFormStatus, uploadMedia, type ContentBlock, type ContentField, type ContentModel, type FormField, type FormSubmission, type ProjectForm } from '../../../../lib/content-api'
+import { createContentModel, createProjectForm, deleteContentModel, deleteContentRecord, deleteFormSubmission, deleteMedia, saveContentRecord, setContentModelStatus, setContentRecordStatus, updateContentModel, updateFormSubmissionStatus, updateMedia, updateProjectFormStatus, uploadMedia, type ContentBlock, type ContentField, type ContentModel, type FormField, type FormSubmission, type ProjectForm } from '../../../../lib/content-api'
 
 function text(formData: FormData, name: string): string {
   return String(formData.get(name) ?? '').trim()
 }
 
-export async function createContentModelAction(projectId: string, formData: FormData) {
+function modelFields(formData: FormData): ContentField[] {
   const fields: ContentField[] = []
-  for (let index = 0; index < 5; index += 1) {
+  for (let index = 0; index < 50; index += 1) {
     const key = text(formData, `field_${index}_key`).toLowerCase()
     if (!key) continue
     fields.push({
@@ -22,15 +22,40 @@ export async function createContentModelAction(projectId: string, formData: Form
       has_many: formData.get(`field_${index}_has_many`) === 'on',
     })
   }
-  await createContentModel(projectId, {
+  if (fields.length === 0) throw new Error('A content type needs at least one field')
+  return fields
+}
+
+function modelInput(formData: FormData) {
+  return {
     name: text(formData, 'name'),
     slug: text(formData, 'slug').toLowerCase(),
     description: text(formData, 'description'),
     public_read: formData.get('public_read') === 'on',
     content_role: text(formData, 'content_role') as ContentModel['content_role'],
     allowed_component_ids: formData.getAll('allowed_component_ids').map(String),
-    fields,
-  })
+    fields: modelFields(formData),
+  }
+}
+
+export async function createContentModelAction(projectId: string, formData: FormData) {
+  await createContentModel(projectId, modelInput(formData))
+  revalidatePath(`/projects/${projectId}/content`)
+}
+
+export async function updateContentModelAction(projectId: string, modelId: string, formData: FormData) {
+  await updateContentModel(projectId, modelId, modelInput(formData))
+  revalidatePath(`/projects/${projectId}/content`)
+}
+
+export async function setContentModelStatusAction(projectId: string, modelId: string, status: 'active' | 'archived') {
+  await setContentModelStatus(projectId, modelId, status)
+  revalidatePath(`/projects/${projectId}/content`)
+}
+
+export async function deleteContentModelAction(projectId: string, modelId: string, formData: FormData) {
+  if (formData.get('confirm_delete') !== 'on') throw new Error('Confirm content type deletion')
+  await deleteContentModel(projectId, modelId)
   revalidatePath(`/projects/${projectId}/content`)
 }
 
@@ -65,6 +90,17 @@ export async function saveContentRecordAction(projectId: string, fields: Content
     layout,
     publish: text(formData, 'intent') === 'publish',
   })
+  revalidatePath(`/projects/${projectId}/content`)
+}
+
+export async function setContentRecordStatusAction(projectId: string, recordId: string, status: 'active' | 'archived') {
+  await setContentRecordStatus(projectId, recordId, status)
+  revalidatePath(`/projects/${projectId}/content`)
+}
+
+export async function deleteContentRecordAction(projectId: string, recordId: string, formData: FormData) {
+  if (formData.get('confirm_delete') !== 'on') throw new Error('Confirm record deletion')
+  await deleteContentRecord(projectId, recordId)
   revalidatePath(`/projects/${projectId}/content`)
 }
 
