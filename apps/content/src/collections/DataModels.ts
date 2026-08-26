@@ -10,6 +10,22 @@ import { resolveProjectScope } from '@/lib/projectScope'
 
 const KEY_PATTERN = /^[a-z][a-z0-9_]*$/
 
+function fieldShape(rawField: Record<string, unknown>) {
+  return {
+    key: String(rawField.key ?? '').trim().toLowerCase(),
+    label: String(rawField.label ?? ''),
+    type: String(rawField.type ?? ''),
+    required: rawField.required === true,
+    hasMany: rawField.hasMany === true,
+    targetModel: relationshipID(rawField.targetModel),
+    settings: rawField.settings ?? null,
+  }
+}
+
+function componentShape(values: unknown[]) {
+  return values.map(relationshipID).filter((id): id is string | number => id !== null).map(String).sort()
+}
+
 const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation, originalDoc, req }) => {
   if (!data) return data
   if (operation === 'update' && originalDoc) {
@@ -89,7 +105,9 @@ const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation
   }
   const allowedComponents = contentRole === 'page' && Array.isArray(data.allowedComponents)
     ? data.allowedComponents.map(relationshipID).filter((id): id is string | number => id !== null)
-    : []
+    : contentRole === 'page' && Array.isArray(originalDoc?.allowedComponents)
+      ? originalDoc.allowedComponents.map(relationshipID).filter((id): id is string | number => id !== null)
+      : []
   if (new Set(allowedComponents.map(String)).size !== allowedComponents.length) {
     throw new Error('Allowed component schemas must be unique')
   }
@@ -101,6 +119,12 @@ const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation
       throw new Error('Page schemas can only allow component schemas from the same project')
     }
   }
+
+  const schemaChanged = operation === 'update' && originalDoc
+    ? JSON.stringify((fields as Array<Record<string, unknown>>).map(fieldShape)) !== JSON.stringify(((originalDoc.fields ?? []) as Array<Record<string, unknown>>).map(fieldShape))
+      || JSON.stringify(componentShape(allowedComponents)) !== JSON.stringify(componentShape(Array.isArray(originalDoc.allowedComponents) ? originalDoc.allowedComponents : []))
+    : true
+
   data.project = scope.projectID
   data.organizationId = scope.organizationId
   data.argusProjectId = scope.argusProjectId
@@ -110,7 +134,7 @@ const validateDataModel: CollectionBeforeValidateHook = async ({ data, operation
   data.allowedComponents = allowedComponents
   data.publicRead = kind === 'content' && contentRole !== 'component' && data.publicRead === true
   data.schemaVersion = operation === 'update'
-    ? Number(originalDoc?.schemaVersion ?? 1) + 1
+    ? Number(originalDoc?.schemaVersion ?? 1) + (schemaChanged ? 1 : 0)
     : 1
   return data
 }
