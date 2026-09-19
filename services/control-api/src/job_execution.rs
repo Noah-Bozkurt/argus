@@ -51,6 +51,7 @@ async fn execute_job(
 ) -> Result<Json<ExecuteJobResponse>, ApiError> {
     authorize_worker(&state, &headers)?;
     match request.kind.as_str() {
+        "content.sites.publish" => execute_content_site_publish(request).await,
         "notifications.materialize" => execute_notification_materialization(&state, request).await,
         "site_monitor.check" => execute_site_monitor_check(&state, request).await,
         "site_incident.evaluate" => execute_site_incident_evaluation(&state, request).await,
@@ -500,4 +501,43 @@ fn authorize_worker(state: &AppState, headers: &HeaderMap) -> Result<(), ApiErro
             "invalid worker credential",
         ))
     }
+}
+
+async fn execute_content_site_publish(
+    request: ExecuteJobRequest,
+) -> Result<Json<ExecuteJobResponse>, ApiError> {
+    let failure = || {
+        api_error(
+            StatusCode::BAD_GATEWAY,
+            "JOB_EXECUTION_FAILED",
+            "Content publishing request failed",
+        )
+    };
+    if request.project_id.is_some() {
+        return Err(failure());
+    }
+    let base = std::env::var("ARGUS_CONTENT_URL").map_err(|_| failure())?;
+    let token = std::env::var("ARGUS_CONTENT_SYNC_TOKEN").map_err(|_| failure())?;
+    let endpoint = Url::parse(&base)
+        .and_then(|url| url.join("/internal/argus/sites/process"))
+        .map_err(|_| failure())?;
+    let response = Client::builder()
+        .timeout(Duration::from_secs(45))
+        .redirect(Policy::none())
+        .build()
+        .map_err(|_| failure())?
+        .post(endpoint)
+        .bearer_auth(token)
+        .json(&serde_json::json!({"organization_id": request.organization_id}))
+        .send()
+        .await
+        .map_err(|_| failure())?;
+    if !response.status().is_success() {
+        return Err(failure());
+    }
+    Ok(Json(ExecuteJobResponse {
+        job_id: request.job_id,
+        status: "SUCCEEDED",
+        summary: "Content publications processed".into(),
+    }))
 }

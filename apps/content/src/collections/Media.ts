@@ -1,4 +1,5 @@
 import path from 'path'
+import { retainReleasedMedia } from '@/lib/released-media'
 import type { Access, CollectionBeforeValidateHook, CollectionConfig } from 'payload'
 
 import { createProjectDocument, editProjectDocuments, manageProjectDocuments, readProjectDocuments } from '@/access/projectAccess'
@@ -36,7 +37,7 @@ export const Media: CollectionConfig = {
     update: editProjectDocuments,
     delete: manageProjectDocuments,
   },
-  hooks: { beforeValidate: [scopeMedia] },
+  hooks: { beforeOperation: [retainReleasedMedia], beforeValidate: [scopeMedia] },
   upload: {
     staticDir: path.resolve(process.env.ARGUS_MEDIA_DIR ?? path.resolve(process.cwd(), 'media')),
     mimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/avif'],

@@ -1,0 +1,34 @@
+{
+  "name": "@argus/astro",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.mjs"
+    },
+    "./preview": {
+      "types": "./src/preview.d.ts",
+      "default": "./src/preview.mjs"
+    },
+    "./runtime": {
+      "types": "./src/runtime.d.ts",
+      "import": "./src/runtime.mjs"
+    }
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "node --test src/*.test.mjs"
+  },
+  "peerDependencies": {
+    "astro": ">=6"
+  },
+  "peerDependenciesMeta": {
+    "astro": {
+      "optional": true
+    }
+  }
+}

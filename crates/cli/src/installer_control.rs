@@ -102,6 +102,10 @@ impl Installer {
                 config.content_sync_token.expose_secret(),
             ),
             ("PAYLOAD_SECRET", config.payload_secret.expose_secret()),
+            (
+                "ARGUS_SITE_ENCRYPTION_KEY",
+                config.site_encryption_key.expose_secret(),
+            ),
             ("ARGUS_ORG_ID", config.org_id.as_str()),
             ("ARGUS_USER_ID", config.user_id.as_str()),
             (

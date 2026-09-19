@@ -33,15 +33,13 @@ jobs:
           - control-api
           - worker
           - host-tools
-    runs-on: [self-hosted, linux, x64, argus, general]
+    runs-on: ubuntu-latest
     steps:
       - name: Check out release-gated revision
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Prepare Docker access
-        run: bash scripts/ci-prepare-docker.sh
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -60,14 +58,12 @@ jobs:
 
   verify-immutable-release:
     needs: build-immutable-release
-    runs-on: [self-hosted, linux, x64, argus, general]
+    runs-on: ubuntu-latest
     steps:
       - name: Check out tested revision
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
-      - name: Prepare Docker access
-        run: bash scripts/ci-prepare-docker.sh
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Sign in to GHCR
@@ -89,7 +85,7 @@ jobs:
 
   deploy-installer-pages:
     needs: verify-immutable-release
-    runs-on: [self-hosted, linux, x64, argus, general]
+    runs-on: ubuntu-latest
     env:
       TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -100,8 +96,6 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Prepare Docker access
-        run: bash scripts/ci-prepare-docker.sh
 
       - name: Sign in to GHCR
         uses: docker/login-action@v3
@@ -129,16 +123,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Use writable local pnpm caches
-        shell: bash
-        run: |
-          set -euo pipefail
-          store_dir="${ARGUS_PNPM_STORE_DIR:-$HOME/.cache/argus/pnpm}"
-          cache_dir="${ARGUS_PNPM_CACHE_DIR:-${store_dir%/}/cache}"
-          mkdir -p "$store_dir" "$cache_dir"
-          pnpm config set store-dir "$store_dir"
-          pnpm config set cache-dir "$cache_dir"
-
+          cache: pnpm
       - name: Build Pages deployment from tested binary
         env:
           ARGUS_RELEASE_REVISION: ${{ github.event.workflow_run.head_sha }}
@@ -163,14 +148,12 @@ jobs:
     needs:
       - verify-immutable-release
       - deploy-installer-pages
-    runs-on: [self-hosted, linux, x64, argus, general]
+    runs-on: ubuntu-latest
     steps:
       - name: Check out tested revision
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
-      - name: Prepare Docker access
-        run: bash scripts/ci-prepare-docker.sh
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Sign in to GHCR

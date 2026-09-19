@@ -90,3 +90,9 @@ The following remain future work:
 - client portal and client-specific approval surfaces.
 
 These are sequenced in [Roadmap](roadmap.md).
+
+## Optional project tools
+
+Project presets choose the initial navigation; they are not permanent project types. Website projects start with Content, Deployments and Domains; Software starts with Deployments and Work; Infrastructure starts with Infrastructure and Monitoring. Empty and legacy Client presets start without optional tools. Client association remains independent.
+
+Project Settings persists the selected tools. Existing projects retain all tools on upgrade. Hiding a tool does not delete resources, stop running services, or change authorization. Each tool has its own route so unrelated service failures do not prevent opening another area.

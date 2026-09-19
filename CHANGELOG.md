@@ -8,12 +8,16 @@ The project is under active development and does not yet promise semantic-versio
 
 ### Added
 
+- Configurable project tools, dedicated CMS entry editors, guided Astro connections, real-site draft preview, and queued Cloudflare publications.
+
 - Repository governance, contribution, security, design, agent guidance, and GitHub issue/PR templates.
 - Actionable Docker image-pull diagnostics for normal and verbose transactional updates.
 - A process-wide lifecycle lock now prevents overlapping install, repair, update, and uninstall operations.
 - Typed browser API helpers derive server response types from the generated Control API OpenAPI contract.
 
 ### Changed
+
+- Restored standard GitHub-hosted runners and included public web assets in the production image.
 
 - Installer prompts and arrow-key selections now use `dialoguer`/`console` instead of custom `/dev/tty`, `stty`, and escape-sequence handling.
 - Installer and concise-updater progress now use `indicatif`, while Bollard remains the source of real Docker layer byte progress.

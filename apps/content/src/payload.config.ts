@@ -1,3 +1,5 @@
+import { SiteConnections } from './collections/SiteConnections'
+import { ContentReleases } from './collections/ContentReleases'
 import { postgresAdapter } from '@payloadcms/db-postgres'
 import { lexicalEditor } from '@payloadcms/richtext-lexical'
 import path from 'path'
@@ -43,6 +45,8 @@ export default buildConfig({
     },
   },
   collections: [
+    SiteConnections,
+    ContentReleases,
     WorkspaceUsers,
     ProjectSpaces,
     ProjectMemberships,

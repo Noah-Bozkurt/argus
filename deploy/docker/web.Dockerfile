@@ -9,6 +9,7 @@ COPY apps/content/package.json apps/content/package.json
 COPY apps/installer/package.json apps/installer/package.json
 COPY packages/protocol-ts/package.json packages/protocol-ts/package.json
 COPY packages/ui/package.json packages/ui/package.json
+COPY packages/astro/package.json packages/astro/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY apps/web apps/web
@@ -27,6 +28,8 @@ RUN groupadd --system --gid 10001 argus \
 WORKDIR /app
 COPY --from=build --chown=argus:argus /workspace/apps/web/.next/standalone/ ./
 COPY --from=build --chown=argus:argus /workspace/apps/web/.next/static ./apps/web/.next/static
+
+COPY --from=build --chown=argus:argus /workspace/apps/web/public ./apps/web/public
 
 USER argus
 WORKDIR /app/apps/web

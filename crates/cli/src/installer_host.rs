@@ -371,6 +371,7 @@ impl Installer {
             worker_token: value_or_secret(&existing_values, "ARGUS_WORKER_TOKEN", 64),
             content_sync_token: value_or_secret(&existing_values, "ARGUS_CONTENT_SYNC_TOKEN", 64),
             payload_secret: value_or_secret(&existing_values, "PAYLOAD_SECRET", 64),
+            site_encryption_key: value_or_secret(&existing_values, "ARGUS_SITE_ENCRYPTION_KEY", 64),
             org_id: value_or_uuid(&existing_values, "ARGUS_ORG_ID"),
             user_id: value_or_uuid(&existing_values, "ARGUS_USER_ID"),
             bootstrap_project_id: value_or_uuid(&existing_values, "ARGUS_BOOTSTRAP_PROJECT_ID"),

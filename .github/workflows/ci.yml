@@ -172,17 +172,10 @@ jobs:
       needs.changes.outputs.rust == 'true' ||
       needs.changes.outputs.database == 'true' ||
       needs.changes.outputs.full == 'true'
-    runs-on: [self-hosted, linux, x64, argus, rust]
+    runs-on: ubuntu-latest
     timeout-minutes: 40
-    env:
-      CARGO_HOME: /home/runner/.cache/argus/cargo-home
-      CARGO_TARGET_DIR: /home/runner/.cache/argus/cargo-target
-      CARGO_BUILD_JOBS: '3'
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare Docker access
-        if: needs.changes.outputs.database == 'true' || needs.changes.outputs.full == 'true'
-        run: bash scripts/ci-prepare-docker.sh
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -195,7 +188,7 @@ jobs:
   web:
     needs: changes
     if: needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'
-    runs-on: [self-hosted, linux, x64, argus, general]
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -205,9 +198,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Use local pnpm store
-        run: pnpm config set store-dir "${ARGUS_PNPM_STORE_DIR:-$HOME/.cache/argus/pnpm}"
+          cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Test Astro integration
+        run: node --test packages/astro/src/index.test.mjs
       - name: Typecheck Web
         run: pnpm --filter @argus/web exec tsc --noEmit
 
@@ -217,7 +211,7 @@ jobs:
       needs.changes.outputs.content == 'true' ||
       needs.changes.outputs.cms_runtime == 'true' ||
       needs.changes.outputs.full == 'true'
-    runs-on: [self-hosted, linux, x64, argus, general]
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -227,12 +221,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Use local pnpm store
-        run: pnpm config set store-dir "${ARGUS_PNPM_STORE_DIR:-$HOME/.cache/argus/pnpm}"
+          cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Prepare Docker access
-        if: needs.changes.outputs.cms_runtime == 'true' || needs.changes.outputs.full == 'true'
-        run: bash scripts/ci-prepare-docker.sh
       - name: Validate content and CMS runtime
         env:
           ARGUS_CI_RUN_CONTENT: ${{ needs.changes.outputs.content == 'true' || needs.changes.outputs.full == 'true' }}
@@ -242,7 +232,7 @@ jobs:
   installer:
     needs: changes
     if: needs.changes.outputs.installer == 'true' || needs.changes.outputs.full == 'true'
-    runs-on: [self-hosted, linux, x64, argus, general]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -252,8 +242,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Use local pnpm store
-        run: pnpm config set store-dir "${ARGUS_PNPM_STORE_DIR:-$HOME/.cache/argus/pnpm}"
+          cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Test installer packaging
         run: pnpm --filter @argus/installer test
@@ -261,25 +250,24 @@ jobs:
   acceptance:
     needs: changes
     if: needs.changes.outputs.acceptance == 'true' || needs.changes.outputs.full == 'true'
-    runs-on: [self-hosted, linux, x64, argus, general]
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
       - name: Validate acceptance tooling
         run: bash scripts/ci-acceptance-validation.sh
 
   deployment:
     needs: changes
     if: needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true'
-    runs-on: [self-hosted, linux, x64, argus, general]
+    runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare Docker access
-        run: bash scripts/ci-prepare-docker.sh
       - name: Validate deployment lifecycle
         run: bash scripts/ci-deployment-validation.sh
 
@@ -326,16 +314,10 @@ jobs:
 
   release-gate:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, linux, x64, argus, rust]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      CARGO_HOME: /home/runner/.cache/argus/cargo-home
-      CARGO_TARGET_DIR: /home/runner/.cache/argus/cargo-target
-      CARGO_BUILD_JOBS: '3'
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare Docker access
-        run: bash scripts/ci-prepare-docker.sh
       - uses: dtolnay/rust-toolchain@stable
       - name: Validate release metadata and lifecycle syntax
         run: |

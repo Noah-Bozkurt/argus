@@ -24,6 +24,7 @@ pub struct ProjectSummary {
     pub preset: String,
     pub status: String,
     pub tags: Vec<String>,
+    pub tools: Vec<String>,
     pub client_id: Option<Uuid>,
     pub open_tasks: i64,
     pub created_at: DateTime<Utc>,
@@ -187,7 +188,7 @@ impl ProjectWorkspaceStore {
         organization_id: Uuid,
     ) -> Result<Vec<ProjectSummary>, ProjectWorkspaceError> {
         let rows = sqlx::query(
-            "SELECT p.id,p.name,p.description,p.preset,p.status,p.tags,p.client_id,p.created_at,p.updated_at,COUNT(t.id) FILTER (WHERE t.status NOT IN ('DONE','CANCELLED'))::BIGINT AS open_tasks FROM projects p LEFT JOIN project_tasks t ON t.project_id=p.id AND t.organization_id=p.organization_id WHERE p.organization_id=$1 GROUP BY p.id ORDER BY p.updated_at DESC,p.created_at DESC",
+            "SELECT p.id,p.name,p.description,p.preset,p.status,p.tags,p.tools,p.client_id,p.created_at,p.updated_at,COUNT(t.id) FILTER (WHERE t.status NOT IN ('DONE','CANCELLED'))::BIGINT AS open_tasks FROM projects p LEFT JOIN project_tasks t ON t.project_id=p.id AND t.organization_id=p.organization_id WHERE p.organization_id=$1 GROUP BY p.id ORDER BY p.updated_at DESC,p.created_at DESC",
         )
         .bind(organization_id)
         .fetch_all(&self.pool)
@@ -213,7 +214,7 @@ impl ProjectWorkspaceStore {
         let id = Uuid::new_v4();
         let mut tx = self.pool.begin().await?;
         sqlx::query(
-            "INSERT INTO projects(id,organization_id,name,client_id,description,preset,status,tags,created_at,updated_at) VALUES($1,$2,$3,NULL,$4,$5,'ACTIVE',$6,NOW(),NOW())",
+            "INSERT INTO projects(id,organization_id,name,client_id,description,preset,status,tags,tools,created_at,updated_at) VALUES($1,$2,$3,NULL,$4,$5,'ACTIVE',$6,$7,NOW(),NOW())",
         )
         .bind(id)
         .bind(identity.organization_id)
@@ -221,6 +222,7 @@ impl ProjectWorkspaceStore {
         .bind(&description)
         .bind(&preset)
         .bind(serde_json::to_value(&tags)?)
+        .bind(serde_json::to_value(default_tools(&preset))?)
         .execute(&mut *tx)
         .await?;
         audit_and_event(
@@ -241,7 +243,7 @@ impl ProjectWorkspaceStore {
         project_id: Uuid,
     ) -> Result<ProjectSummary, ProjectWorkspaceError> {
         let row = sqlx::query(
-            "SELECT p.id,p.name,p.description,p.preset,p.status,p.tags,p.client_id,p.created_at,p.updated_at,COUNT(t.id) FILTER (WHERE t.status NOT IN ('DONE','CANCELLED'))::BIGINT AS open_tasks FROM projects p LEFT JOIN project_tasks t ON t.project_id=p.id AND t.organization_id=p.organization_id WHERE p.id=$1 AND p.organization_id=$2 GROUP BY p.id",
+            "SELECT p.id,p.name,p.description,p.preset,p.status,p.tags,p.tools,p.client_id,p.created_at,p.updated_at,COUNT(t.id) FILTER (WHERE t.status NOT IN ('DONE','CANCELLED'))::BIGINT AS open_tasks FROM projects p LEFT JOIN project_tasks t ON t.project_id=p.id AND t.organization_id=p.organization_id WHERE p.id=$1 AND p.organization_id=$2 GROUP BY p.id",
         )
         .bind(project_id)
         .bind(organization_id)
@@ -647,6 +649,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/:project_id", get(get_project_workspace))
+        .route("/projects/:project_id/tools", put(update_tools))
         .route("/projects/:project_id/tasks", post(create_task))
         .route(
             "/projects/:project_id/tasks/:task_id/status",
@@ -659,6 +662,85 @@ pub fn router() -> Router<AppState> {
             "/projects/:project_id/milestones/:milestone_id/status",
             put(update_milestone_status),
         )
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateToolsRequest {
+    tools: Vec<String>,
+}
+
+const PROJECT_TOOLS: &[&str] = &[
+    "content",
+    "forms",
+    "deployments",
+    "domains",
+    "infrastructure",
+    "monitoring",
+    "work",
+];
+
+fn default_tools(preset: &str) -> Vec<&'static str> {
+    match preset {
+        "website" => vec!["content", "deployments", "domains"],
+        "software" => vec!["deployments", "work"],
+        "infrastructure" => vec!["infrastructure", "monitoring"],
+        _ => vec![],
+    }
+}
+
+async fn update_tools(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<Uuid>,
+    Json(request): Json<UpdateToolsRequest>,
+) -> Result<Json<ProjectSummary>, ApiError> {
+    let identity = web_identity(&state, &headers).await?;
+    if request.tools.len() > PROJECT_TOOLS.len()
+        || request
+            .tools
+            .iter()
+            .any(|tool| !PROJECT_TOOLS.contains(&tool.as_str()))
+        || request.tools.iter().collect::<HashSet<_>>().len() != request.tools.len()
+    {
+        return Err(map_workspace(ProjectWorkspaceError::Invalid));
+    }
+    state
+        .workspace
+        .authorize_project(identity.organization_id, project_id)
+        .await
+        .map_err(map_workspace)?;
+    let mut tx = state
+        .workspace
+        .pool
+        .begin()
+        .await
+        .map_err(|error| map_workspace(error.into()))?;
+    sqlx::query("UPDATE projects SET tools=$1,updated_at=NOW() WHERE id=$2 AND organization_id=$3")
+        .bind(serde_json::json!(request.tools))
+        .bind(project_id)
+        .bind(identity.organization_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| map_workspace(error.into()))?;
+    audit_and_event(
+        &mut tx,
+        identity,
+        project_id,
+        "project.tools.updated",
+        serde_json::json!({"tools": request.tools}),
+    )
+    .await
+    .map_err(|error| map_workspace(error.into()))?;
+    tx.commit()
+        .await
+        .map_err(|error| map_workspace(error.into()))?;
+    Ok(Json(
+        state
+            .workspace
+            .project(identity.organization_id, project_id)
+            .await
+            .map_err(map_workspace)?,
+    ))
 }
 
 async fn list_projects(
@@ -806,6 +888,7 @@ fn project_from_row(row: sqlx::postgres::PgRow) -> Result<ProjectSummary, Projec
         preset: row.get("preset"),
         status: row.get("status"),
         tags: serde_json::from_value(tags)?,
+        tools: serde_json::from_value(row.get("tools"))?,
         client_id: row.get("client_id"),
         open_tasks: row.get("open_tasks"),
         created_at: row.get("created_at"),
@@ -1004,5 +1087,23 @@ mod tests {
             "WAT",
             "TODO" | "IN_PROGRESS" | "BLOCKED" | "DONE" | "CANCELLED"
         ));
+    }
+}
+
+#[cfg(test)]
+mod project_tool_tests {
+    use super::*;
+    #[test]
+    fn presets_only_choose_initial_navigation() {
+        assert_eq!(default_tools("empty"), Vec::<&str>::new());
+        assert_eq!(
+            default_tools("website"),
+            vec!["content", "deployments", "domains"]
+        );
+        assert_eq!(
+            default_tools("infrastructure"),
+            vec!["infrastructure", "monitoring"]
+        );
+        assert_eq!(default_tools("client"), Vec::<&str>::new());
     }
 }

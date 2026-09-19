@@ -39,6 +39,7 @@ export type ProjectSummary = {
   id: string
   name: string
   description: string
+  tools: string[]
   preset: 'empty' | 'software' | 'website' | 'infrastructure' | 'client'
   status: string
   tags: string[]
@@ -300,4 +301,8 @@ export async function updateProjectEnvironment(
 
 export async function deleteProjectEnvironment(projectId: string, environmentId: string): Promise<void> {
   await request(`/projects/${projectId}/environments/${environmentId}`, { method: 'DELETE' })
+}
+
+export async function updateProjectTools(projectId: string, tools: string[]): Promise<ProjectSummary> {
+  return request(`/projects/${projectId}/tools`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tools }) })
 }

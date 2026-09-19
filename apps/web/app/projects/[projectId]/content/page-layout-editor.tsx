@@ -1,6 +1,7 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { SitePreview } from './site-preview'
 
 import type { ContentBlock, ContentField, ContentModel, MediaAsset } from '../../../../lib/content-api'
 
@@ -66,8 +67,24 @@ function BlockPreview({ block, component, media, publicBase }: { block: ContentB
   </div>
 }
 
-export function PageLayoutEditor({ components, initialLayout, media, publicBase }: { components: ContentModel[]; initialLayout: ContentBlock[]; media: MediaAsset[]; publicBase?: string }) {
-  const [blocks, setBlocks] = useState(initialLayout)
+export function PageLayoutEditor({ projectId, recordId, components, initialLayout, media, publicBase }: { projectId: string; recordId?: string; components: ContentModel[]; initialLayout: ContentBlock[]; media: MediaAsset[]; publicBase?: string }) {
+  const [blocks, storeBlocks] = useState(initialLayout)
+  const [history, setHistory] = useState<ContentBlock[][]>([])
+  const [future, setFuture] = useState<ContentBlock[][]>([])
+  const [preview, setPreview] = useState(Boolean(recordId))
+  const setBlocks = (change: ContentBlock[] | ((current: ContentBlock[]) => ContentBlock[])) => {
+    setHistory(current => [...current.slice(-49), blocks]); setFuture([])
+    storeBlocks(typeof change === 'function' ? change(blocks) : change)
+  }
+  const move = (index: number, direction: number) => {
+    const next = [...blocks]; const target = index + direction
+    if (target < 0 || target >= next.length) return
+    ;[next[index], next[target]] = [next[target], next[index]]; setBlocks(next)
+  }
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { if (JSON.stringify(blocks) !== JSON.stringify(initialLayout)) { event.preventDefault(); event.returnValue = '' } }
+    window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn)
+  }, [blocks, initialLayout])
   const [selectedId, setSelectedId] = useState<string | null>(initialLayout[0]?.id ?? null)
   const [device, setDevice] = useState<'desktop' | 'tablet' | 'mobile'>('desktop')
   const [dragIndex, setDragIndex] = useState<number | null>(null)
@@ -109,6 +126,7 @@ export function PageLayoutEditor({ components, initialLayout, media, publicBase 
 
   return <fieldset className="visual-editor-fieldset">
     <legend>Visual page editor</legend>
+    <div className="action-row"><button type="button" disabled={!history.length} onClick={() => { setFuture(current => [blocks, ...current]); storeBlocks(history[history.length - 1]); setHistory(current => current.slice(0, -1)) }}>Undo</button><button type="button" disabled={!future.length} onClick={() => { setHistory(current => [...current, blocks]); storeBlocks(future[0]); setFuture(current => current.slice(1)) }}>Redo</button><button type="button" onClick={() => setPreview(!preview)}>{preview ? 'Arrange sections' : 'Website preview'}</button></div>
     <input type="hidden" name="layout" value={JSON.stringify(blocks)} />
     <div className="visual-editor">
       <aside className="visual-editor-palette">
@@ -128,13 +146,13 @@ export function PageLayoutEditor({ components, initialLayout, media, publicBase 
           </div>
         </div>
         <div className={`visual-canvas visual-canvas-${device}`}>
-          {blocks.length === 0 ? <button type="button" className="visual-empty-canvas" onClick={() => components[0] && add(components[0])}><strong>Start composing this page</strong><span>{components.length ? 'Add a block from the left, or click here to add the first one.' : 'Create and allow a component schema before composing the page.'}</span></button> : blocks.map((block, index) => {
+          {preview ? (recordId ? <SitePreview projectId={projectId} recordId={recordId} blocks={blocks} onSelect={setSelectedId} /> : <p>Save this page as a draft to connect its live preview.</p>) : blocks.length === 0 ? <button type="button" className="visual-empty-canvas" onClick={() => components[0] && add(components[0])}><strong>Start composing this page</strong><span>{components.length ? 'Add a block from the left, or click here to add the first one.' : 'Create and allow a component schema before composing the page.'}</span></button> : blocks.map((block, index) => {
             const component = componentMap.get(block.component)
             if (!component) return <div key={block.id} className="visual-block unavailable">Unavailable component: {block.component}</div>
             return <div key={block.id} className={`visual-block ${selectedId === block.id ? 'selected' : ''}`} draggable onDragStart={() => setDragIndex(index)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropAt(index)} onClick={() => setSelectedId(block.id)}>
               <div className="visual-block-handle" title="Drag to reorder">⋮⋮</div>
               <BlockPreview block={block} component={component} media={media} publicBase={publicBase} />
-              <div className="visual-block-actions"><button type="button" className="small" onClick={(event) => { event.stopPropagation(); duplicate(block) }}>Duplicate</button><button type="button" className="small danger" onClick={(event) => { event.stopPropagation(); remove(block.id) }}>Remove</button></div>
+              <div className="visual-block-actions"><button type="button" disabled={index === 0} onClick={(event) => { event.stopPropagation(); move(index, -1) }}>Move up</button><button type="button" disabled={index === blocks.length - 1} onClick={(event) => { event.stopPropagation(); move(index, 1) }}>Move down</button><button type="button" className="small" onClick={(event) => { event.stopPropagation(); duplicate(block) }}>Duplicate</button><button type="button" className="small danger" onClick={(event) => { event.stopPropagation(); remove(block.id) }}>Remove</button></div>
             </div>
           })}
         </div>

@@ -303,6 +303,7 @@ pub(crate) struct ControlConfig {
     pub(crate) worker_token: SecretString,
     pub(crate) content_sync_token: SecretString,
     pub(crate) payload_secret: SecretString,
+    pub(crate) site_encryption_key: SecretString,
     pub(crate) org_id: String,
     pub(crate) user_id: String,
     pub(crate) bootstrap_project_id: String,

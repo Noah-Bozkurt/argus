@@ -183,3 +183,17 @@ New features should update one of the canonical documents in `docs/` instead of 
 The supported installer is published at `https://install.noahbozkurt.nl`. It installs or repairs the native Agent, Helper, CLI, systemd units, and coordinated Compose deployment. Lifecycle changes must preserve preflight validation, immutable revision resolution, snapshots, smoke checks, and rollback behavior.
 
 For installer and update development, see [Installation](installation.md), [Operations](operations.md), and [Security & Recovery](security-and-recovery.md).
+
+## Site publishing validation
+
+The Astro integration is website-independent. Run `node --test packages/astro/src/index.test.mjs` for release loading and preview authorization behavior. Content contract tests also cover scoped credential encryption and preview grants.
+
+After applying the complete Payload migration chain to an isolated PostgreSQL 16 database, run:
+
+```bash
+ARGUS_TEST_DATABASE=1 pnpm --filter @argus/content exec payload run src/lib/site-publishing.runtime.ts
+```
+
+Set the normal content environment and a dedicated `ARGUS_SITE_ENCRYPTION_KEY` in the test process. This runtime test creates isolated test projects and validates snapshot immutability, publication idempotency, cross-project denial, transactional rollback, and uncertain provider-trigger handling. It must not run against production.
+
+CI uses standard GitHub-hosted `ubuntu-latest` runners. No self-hosted labels, persistent machine-specific Cargo paths, or container-network Docker wrappers are required.

@@ -40,23 +40,23 @@ function modelInput(formData: FormData) {
 
 export async function createContentModelAction(projectId: string, formData: FormData) {
   await createContentModel(projectId, modelInput(formData))
-  revalidatePath(`/projects/${projectId}/content`)
+  revalidatePath(`/projects/${projectId}/content`, 'layout')
 }
 
 export async function updateContentModelAction(projectId: string, modelId: string, formData: FormData) {
   await updateContentModel(projectId, modelId, modelInput(formData))
-  revalidatePath(`/projects/${projectId}/content`)
+  revalidatePath(`/projects/${projectId}/content`, 'layout')
 }
 
 export async function setContentModelStatusAction(projectId: string, modelId: string, status: 'active' | 'archived') {
   await setContentModelStatus(projectId, modelId, status)
-  revalidatePath(`/projects/${projectId}/content`)
+  revalidatePath(`/projects/${projectId}/content`, 'layout')
 }
 
 export async function deleteContentModelAction(projectId: string, modelId: string, formData: FormData) {
   if (formData.get('confirm_delete') !== 'on') throw new Error('Confirm content type deletion')
   await deleteContentModel(projectId, modelId)
-  revalidatePath(`/projects/${projectId}/content`)
+  revalidatePath(`/projects/${projectId}/content`, 'layout')
 }
 
 function fieldValue(formData: FormData, field: ContentField): unknown {
@@ -90,31 +90,31 @@ export async function saveContentRecordAction(projectId: string, fields: Content
     layout,
     publish: text(formData, 'intent') === 'publish',
   })
-  revalidatePath(`/projects/${projectId}/content`)
+  revalidatePath(`/projects/${projectId}/content`, 'layout')
 }
 
 export async function setContentRecordStatusAction(projectId: string, recordId: string, status: 'active' | 'archived') {
   await setContentRecordStatus(projectId, recordId, status)
-  revalidatePath(`/projects/${projectId}/content`)
+  revalidatePath(`/projects/${projectId}/content`, 'layout')
 }
 
 export async function deleteContentRecordAction(projectId: string, recordId: string, formData: FormData) {
   if (formData.get('confirm_delete') !== 'on') throw new Error('Confirm record deletion')
   await deleteContentRecord(projectId, recordId)
-  revalidatePath(`/projects/${projectId}/content`)
+  revalidatePath(`/projects/${projectId}/content`, 'layout')
 }
 
 export async function uploadMediaAction(projectId: string, formData: FormData) {
   const file = formData.get('file')
   if (!(file instanceof File) || file.size === 0 || file.size > 10 * 1024 * 1024) throw new Error('Choose an image no larger than 10 MiB')
   await uploadMedia(projectId, formData)
-  revalidatePath(`/projects/${projectId}/content`)
+  revalidatePath(`/projects/${projectId}/content`, 'layout')
 }
 
 export async function deleteMediaAction(projectId: string, mediaId: string, formData: FormData) {
   if (formData.get('confirm_delete') !== 'on') throw new Error('Confirm media deletion')
   await deleteMedia(projectId, mediaId)
-  revalidatePath(`/projects/${projectId}/content`)
+  revalidatePath(`/projects/${projectId}/content`, 'layout')
 }
 
 export async function updateMediaAction(projectId: string, mediaId: string, formData: FormData) {
@@ -122,7 +122,7 @@ export async function updateMediaAction(projectId: string, mediaId: string, form
     media_id: mediaId, alt: text(formData, 'alt'), caption: text(formData, 'caption'),
     public_read: formData.get('public_read') === 'on',
   })
-  revalidatePath(`/projects/${projectId}/content`)
+  revalidatePath(`/projects/${projectId}/content`, 'layout')
 }
 
 export async function createProjectFormAction(projectId: string, formData: FormData) {
@@ -142,21 +142,21 @@ export async function createProjectFormAction(projectId: string, formData: FormD
     description: text(formData, 'form_description'), success_message: text(formData, 'form_success_message'),
     published: formData.get('form_published') === 'on', fields,
   })
-  revalidatePath(`/projects/${projectId}/content`)
+  revalidatePath(`/projects/${projectId}/content`, 'layout')
 }
 
 export async function updateProjectFormStatusAction(projectId: string, formId: string, status: ProjectForm['status']) {
   await updateProjectFormStatus(projectId, formId, status)
-  revalidatePath(`/projects/${projectId}/content`)
+  revalidatePath(`/projects/${projectId}/content`, 'layout')
 }
 
 export async function updateFormSubmissionStatusAction(projectId: string, submissionId: string, status: FormSubmission['status']) {
   await updateFormSubmissionStatus(projectId, submissionId, status)
-  revalidatePath(`/projects/${projectId}/content`)
+  revalidatePath(`/projects/${projectId}/content`, 'layout')
 }
 
 export async function deleteFormSubmissionAction(projectId: string, submissionId: string, formData: FormData) {
   if (formData.get('confirm_delete') !== 'on') throw new Error('Confirm submission deletion')
   await deleteFormSubmission(projectId, submissionId)
-  revalidatePath(`/projects/${projectId}/content`)
+  revalidatePath(`/projects/${projectId}/content`, 'layout')
 }

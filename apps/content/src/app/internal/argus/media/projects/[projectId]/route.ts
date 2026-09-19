@@ -1,3 +1,4 @@
+import { ReleasedMediaError } from '@/lib/released-media'
 import config from '@payload-config'
 import { NextResponse } from 'next/server'
 import { getPayload, type Payload } from 'payload'
@@ -92,8 +93,13 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ pr
     where: { and: [{ id: { equals: mediaId } }, { project: { equals: project.id } }] },
   })
   if (existing.docs.length !== 1) return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
+  try {
   const updated = await payload.update({ collection: 'media', id: mediaId, depth: 0, overrideAccess: true, user: actor as any, data: metadata })
   return NextResponse.json({ media: mediaView(updated as unknown as Record<string, unknown>) })
+  } catch (error) {
+    if (error instanceof ReleasedMediaError) return NextResponse.json({ code: 'MEDIA_RETAINED_BY_RELEASE' }, { status: 409 })
+    throw error
+  }
 }
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ projectId: string }> }) {
@@ -113,6 +119,11 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ p
     where: { and: [{ id: { equals: mediaId } }, { project: { equals: project.id } }] },
   })
   if (existing.docs.length !== 1) return NextResponse.json({ code: 'NOT_FOUND' }, { status: 404 })
-  await payload.delete({ collection: 'media', id: mediaId, overrideAccess: true, user: actor as any })
+  try {
+    await payload.delete({ collection: 'media', id: mediaId, overrideAccess: true, user: actor as any })
+  } catch (error) {
+    if (error instanceof ReleasedMediaError) return NextResponse.json({ code: 'MEDIA_RETAINED_BY_RELEASE' }, { status: 409 })
+    throw error
+  }
   return new NextResponse(null, { status: 204 })
 }

@@ -9,6 +9,7 @@ COPY apps/content/package.json apps/content/package.json
 COPY apps/installer/package.json apps/installer/package.json
 COPY packages/protocol-ts/package.json packages/protocol-ts/package.json
 COPY packages/ui/package.json packages/ui/package.json
+COPY packages/astro/package.json packages/astro/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY apps/content apps/content

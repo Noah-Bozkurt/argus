@@ -125,7 +125,7 @@ async function request<T>(projectId: string, init: RequestInit = {}, query = '')
   return response.json()
 }
 
-export const getContentWorkspace = (projectId: string, recordPage = 1): Promise<ContentWorkspace> => request(projectId, {}, `?record_page=${encodeURIComponent(String(recordPage))}`)
+export const getContentWorkspace = (projectId: string, recordPage = 1, modelId?: string, recordId?: string): Promise<ContentWorkspace> => request(projectId, {}, `?${new URLSearchParams({ record_page: String(recordPage), ...(modelId ? { model_id: modelId } : {}), ...(recordId ? { record_id: recordId } : {}) })}`)
 
 export async function createContentModel(projectId: string, model: {
   name: string
@@ -247,4 +247,22 @@ export async function downloadFormSubmissionsCsv(projectId: string, formId: stri
   })
   if (!response.ok) throw new Error(`Content service ${response.status}: ${await response.text()}`)
   return { body: await response.arrayBuffer(), disposition: response.headers.get('content-disposition') ?? 'attachment; filename="form-submissions.csv"' }
+}
+
+export type SiteConnectionView = {
+  can_connect: boolean
+  site: null | { siteURL: string; previewURL?: string | null; provider: 'pages' | 'workers'; accountId: string; target: string; branch: string; connected: boolean; components: unknown }
+  releases: Array<{ id: string; status: string; createdAt: string; errorCode?: string | null }>
+}
+export async function siteRequest<T>(projectId: string, path = '', body?: unknown): Promise<T> {
+  const response = await fetch(`${contentApi}/internal/argus/sites/projects/${projectId}${path}`, {
+    method: body === undefined ? 'GET' : 'POST', cache: 'no-store',
+    headers: { ...(await headers()), 'content-type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({ code: 'SITE_REQUEST_FAILED' }))
+    throw new Error(typeof result.code === 'string' ? result.code : 'SITE_REQUEST_FAILED')
+  }
+  return response.json()
 }

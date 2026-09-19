@@ -140,6 +140,7 @@ mod tests {
             worker_token: SecretString::from(String::new()),
             content_sync_token: SecretString::from(String::new()),
             payload_secret: SecretString::from(String::new()),
+            site_encryption_key: SecretString::from(String::new()),
             org_id: String::new(),
             user_id: String::new(),
             bootstrap_project_id: String::new(),

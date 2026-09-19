@@ -188,3 +188,11 @@ The Content platform is still pre-production. Notable limits include:
 - no general rich portable long-form field beyond current typed values/JSON/long text.
 
 These limits should extend the existing Project/content ownership model rather than introduce parallel CMS authority.
+
+## Website delivery
+
+Optional project tools are stored by the Control API. Project-owned site connections and immutable public release snapshots live in Payload's `argus_content` schema. Both collections deny normal collection API access; scoped internal routes enforce organization and project membership. Cloudflare credentials and deploy hooks are encrypted at rest with the installation's dedicated site encryption key.
+
+The persisted worker schedules publication reconciliation by organization. The content service processes a bounded concurrent batch of pending projects, preserving per-project serialization. A release becomes deployed only after the public marker matches it. Uncertain triggers hold that site's queue and are never automatically replayed.
+
+Release snapshots exclude private models and unpublished records. Public media included in snapshots cannot be replaced, deleted, or made private through normal media mutations; upload a new asset for revisions. Media mutations and release creation share a PostgreSQL advisory lock to prevent races.

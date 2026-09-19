@@ -67,6 +67,8 @@ export interface Config {
   };
   blocks: {};
   collections: {
+    'site-connections': SiteConnection;
+    'content-releases': ContentRelease;
     'workspace-users': WorkspaceUser;
     'project-spaces': ProjectSpace;
     'project-memberships': ProjectMembership;
@@ -83,6 +85,8 @@ export interface Config {
   };
   collectionsJoins: {};
   collectionsSelect: {
+    'site-connections': SiteConnectionsSelect<false> | SiteConnectionsSelect<true>;
+    'content-releases': ContentReleasesSelect<false> | ContentReleasesSelect<true>;
     'workspace-users': WorkspaceUsersSelect<false> | WorkspaceUsersSelect<true>;
     'project-spaces': ProjectSpacesSelect<false> | ProjectSpacesSelect<true>;
     'project-memberships': ProjectMembershipsSelect<false> | ProjectMembershipsSelect<true>;
@@ -133,6 +137,78 @@ export interface WorkspaceUserAuthOperations {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "site-connections".
+ */
+export interface SiteConnection {
+  id: string;
+  project: string | ProjectSpace;
+  siteURL: string;
+  previewURL?: string | null;
+  provider: 'pages' | 'workers';
+  accountId: string;
+  target: string;
+  branch: string;
+  credential: string;
+  hook?: string | null;
+  components?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "project-spaces".
+ */
+export interface ProjectSpace {
+  id: string;
+  argusProjectId: string;
+  /**
+   * Argus organization UUID. Server-side project sync may stamp this with overrideAccess.
+   */
+  organizationId: string;
+  name: string;
+  /**
+   * Optional client UUID/reference. Personal projects leave this empty.
+   */
+  clientId?: string | null;
+  status: 'active' | 'paused' | 'archived';
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "content-releases".
+ */
+export interface ContentRelease {
+  id: string;
+  project: string | ProjectSpace;
+  requestId: string;
+  snapshot:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  status: 'queued' | 'triggering' | 'building' | 'deployed' | 'failed' | 'unknown';
+  providerId?: string | null;
+  errorCode?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "workspace-users".
  */
 export interface WorkspaceUser {
@@ -165,26 +241,6 @@ export interface WorkspaceUser {
     | null;
   password?: string | null;
   collection: 'workspace-users';
-}
-/**
- * This interface was referenced by `Config`'s JSON-Schema
- * via the `definition` "project-spaces".
- */
-export interface ProjectSpace {
-  id: string;
-  argusProjectId: string;
-  /**
-   * Argus organization UUID. Server-side project sync may stamp this with overrideAccess.
-   */
-  organizationId: string;
-  name: string;
-  /**
-   * Optional client UUID/reference. Personal projects leave this empty.
-   */
-  clientId?: string | null;
-  status: 'active' | 'paused' | 'archived';
-  updatedAt: string;
-  createdAt: string;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -483,6 +539,14 @@ export interface PayloadLockedDocument {
   id: string;
   document?:
     | ({
+        relationTo: 'site-connections';
+        value: string | SiteConnection;
+      } | null)
+    | ({
+        relationTo: 'content-releases';
+        value: string | ContentRelease;
+      } | null)
+    | ({
         relationTo: 'workspace-users';
         value: string | WorkspaceUser;
       } | null)
@@ -559,6 +623,40 @@ export interface PayloadMigration {
   batch?: number | null;
   updatedAt: string;
   createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "site-connections_select".
+ */
+export interface SiteConnectionsSelect<T extends boolean = true> {
+  project?: T;
+  siteURL?: T;
+  previewURL?: T;
+  provider?: T;
+  accountId?: T;
+  target?: T;
+  branch?: T;
+  credential?: T;
+  hook?: T;
+  components?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "content-releases_select".
+ */
+export interface ContentReleasesSelect<T extends boolean = true> {
+  project?: T;
+  requestId?: T;
+  snapshot?: T;
+  status?: T;
+  providerId?: T;
+  errorCode?: T;
+  startedAt?: T;
+  completedAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

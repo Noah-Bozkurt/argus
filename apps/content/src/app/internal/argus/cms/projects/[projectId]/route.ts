@@ -92,13 +92,17 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
   })
   if (models.docs.length > 100) return NextResponse.json({ code: 'MODEL_WORKSPACE_TOO_LARGE', max_models: 100 }, { status: 422 })
   const modelIds = models.docs.filter((model) => (model as Model).contentRole !== 'component').map((model) => String(model.id))
-  const requestedPage = Number.parseInt(new URL(request.url).searchParams.get('record_page') ?? '1', 10)
+  const query = new URL(request.url).searchParams
+  const modelFilter = query.get('model_id')
+  const recordFilter = query.get('record_id')
+  if ((modelFilter && !isUUID(modelFilter)) || (recordFilter && !isUUID(recordFilter))) return NextResponse.json({ code: 'INVALID_REQUEST' }, { status: 400 })
+  const requestedPage = Number.parseInt(query.get('record_page') ?? '1', 10)
   const recordPage = Number.isFinite(requestedPage) ? Math.max(1, requestedPage) : 1
   const records = modelIds.length === 0
     ? { docs: [], page: 1, totalPages: 0, totalDocs: 0, hasNextPage: false, hasPrevPage: false }
     : await payload.find({
         collection: 'data-records', depth: 0, draft: true, limit: 100, page: recordPage, overrideAccess: true,
-        sort: '-updatedAt', where: { and: [{ project: { equals: project.id } }, { model: { in: modelIds } }] },
+        sort: '-updatedAt', where: { and: [{ project: { equals: project.id } }, { model: { in: modelIds } }, ...(modelFilter ? [{ model: { equals: modelFilter } }] : []), ...(recordFilter ? [{ id: { equals: recordFilter } }] : [])] },
       })
   const recordIds = records.docs.map((record) => String(record.id))
   const relations = recordIds.length === 0 ? { docs: [] } : await payload.find({

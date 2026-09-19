@@ -171,7 +171,7 @@ export async function getArgusContent<T>(model: string) {
 }
 ```
 
-For a statically generated Astro site, this fetch runs at build time. Publishing in Argus therefore becomes visible after the site's next build/deployment. An SSR/on-demand-rendered site can fetch at request time instead. Argus does not currently trigger an arbitrary external site's rebuild when content is published.
+For a statically generated Astro site, this fetch runs at build time. Publishing in Argus therefore becomes visible after the site's next build/deployment. An SSR/on-demand-rendered site can fetch at request time instead. For a connected Cloudflare site, Review and publish creates a pinned release and queues its build. Other integrations can continue using this public API with their own deployment process.
 
 ## Example: adapting `Noah-Bozkurt/youpspace.com`
 
@@ -346,3 +346,27 @@ For a site such as YoupSpace, migrate incrementally rather than moving every str
 6. Remove old local data/Markdown only after the Argus-backed build produces the same public site.
 
 This preserves the repository as the source of truth for application code and visual design while making editorial content Project-owned in Argus.
+
+## Focused content workspace and website connection
+
+Content now separates Pages, Collections, Media, optional Forms, Content structure, and Site connection. Open a collection to list its entries, then open an entry in its own editor. Content structure configures schemas; ordinary writing does not require opening schema forms.
+
+Site connection guides an Astro integration: configure the project/content URL, register website components, deploy an isolated preview Worker, select Cloudflare hosting, and verify the public component manifest. Component verification imports missing definitions only when explicitly requested; it never replaces existing schemas. Website-specific content, components, branding and import scripts belong in the consuming website repository, not Argus.
+
+The `@argus/astro` package in `packages/astro` loads a fixed release for each build. Its README describes the component and preview contracts. Until this package is published to a registry, a consuming repository can vendor its distributable source and reference it with a local package dependency; do not include dependency directories in that copy.
+
+Cloudflare connections accept an account-scoped API token and discover Pages projects or Workers. Pages requires Pages Edit; Workers requires Workers CI Write and Workers Scripts Read. The selected target must already have a Git build configured. Configure its production branch explicitly. Connecting creates a named deploy hook but does not deploy automatically.
+
+### Draft preview
+
+Page sections can be rearranged, duplicated, removed, and edited using a field inspector. Saved pages can open the actual website preview. The website registers and renders its own components; Argus does not store executable website code. A separate server-rendered Astro Worker handles draft preview, while production can remain static on Pages or Workers. Preview grants expire after five minutes and are refreshed while editing.
+
+### Publishing
+
+Save edits as drafts, then use Site connection → Review and publish to select entries for one publication. The publication transaction promotes selected drafts and stores an immutable snapshot of public content. Existing published records are included; private models and unpublished records are excluded. The worker processes queued releases every 30 seconds. The build resolves its release once and writes `argus-release.json` to the deployed site root.
+
+Deployment state distinguishes queued, building, deployed, failed, and unknown outcomes. A successful build is not labeled deployed until the site's marker identifies the expected project and release. An uncertain trigger is not blindly repeated because that could create duplicate builds. Unknown releases hold the queue pending reconciliation; investigate the provider before retrying. Public content API reads remain backward-compatible.
+
+Connection credentials are encrypted with `ARGUS_SITE_ENCRYPTION_KEY`, a separate 64-hex-character key. Fresh installations and native repair preserve or generate it. Upgraded installations without this key keep ordinary CMS functionality but must provision it before connecting sites. Keep it with the installation's protected environment backups: replacing it prevents decryption of existing connections.
+
+Media included in a release is retained: replacement, deletion, and permission changes are rejected. Upload a new asset for a later release. This preserves existing release URLs; protected media storage must still be included in installation backups.
